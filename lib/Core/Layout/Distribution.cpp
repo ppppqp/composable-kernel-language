@@ -29,36 +29,37 @@ bool sameTileShape(const Distribution &lhs, const Distribution &rhs) {
 
 DistributionCheck verifyDistribution(const Distribution &distribution, bool requireCovering,
                                      bool requireUnique) {
-  // verify that ownership has expected domain and codomain shapes
-  if (distribution.ownership.domain().rank() !=
-      distribution.executorSpace.rank() + distribution.localSpace.rank())
-    return {false, false, false, "ownership domain must be executor × local"};
+  std::vector<Axis> productAxes = distribution.executorSpace.axes();
+  productAxes.insert(productAxes.end(), distribution.localSpace.axes().begin(),
+                     distribution.localSpace.axes().end());
+  if (!distribution.ownership.domain().sameShape(IndexSpace(productAxes)))
+    return {false, false, false, 0, "ownership domain must be executor × local"};
   if (!distribution.ownership.codomain().sameShape(distribution.tileSpace))
-    return {false, false, false, "ownership codomain must match the tile"};
+    return {false, false, false, 0, "ownership codomain must match the tile"};
 
-  // verify that local storage consumes local shape
   if (!distribution.localStorage.domain().sameShape(distribution.localSpace))
-    return {false, false, false, "local-storage domain must match local space"};
+    return {false, false, false, 0, "local-storage domain must match local space"};
 
   std::map<std::string, std::size_t> owners;
   for (const auto &executor : enumerate(distribution.executorSpace)) {
     for (const auto &local : enumerate(distribution.localSpace)) {
-      auto tile = distribution.ownership.apply(concatenate(executor, local));
-      ++owners[key(tile)];
+      auto tile = distribution.ownership.tryApply(concatenate(executor, local));
+      if (tile)
+        ++owners[key(*tile)];
     }
   }
 
-  // every tile point has at least one owner
   bool covering = owners.size() == static_cast<std::size_t>(distribution.tileSpace.volume());
-
-  // every observed tile point has exactly one owner (bijection)
   bool unique = true;
+  std::size_t maximumReplication = 0;
   for (const auto &[unused, count] : owners) {
     (void)unused;
     unique &= count == 1;
+    maximumReplication = std::max(maximumReplication, count);
   }
-  bool valid = (!requireCovering || covering) && (!requireUnique || unique);
-  return {valid, covering, unique,
+  bool valid = (!requireCovering || covering) &&
+               (!requireUnique || unique || distribution.allowReplication);
+  return {valid, covering, unique, maximumReplication,
           valid       ? "distribution satisfies requested invariants"
           : !covering ? "distribution does not cover its tile"
                       : "distribution has replicated owners"};
@@ -67,45 +68,71 @@ DistributionCheck verifyDistribution(const Distribution &distribution, bool requ
 ConversionPlan classifyConversion(const Distribution &source, const Distribution &target,
                                   std::int64_t subgroupSize) {
   if (!sameTileShape(source, target))
-    return {ConversionKind::Unsupported, "tile shapes differ"};
+    return {ConversionKind::Unsupported, "tile shapes differ", {}};
   if (!source.executorSpace.sameShape(target.executorSpace) ||
       !source.localSpace.sameShape(target.localSpace))
-    return {ConversionKind::SharedMemoryExchange, "executor or per-agent cardinality differs"};
+    return {ConversionKind::SharedMemoryExchange, "executor or per-agent cardinality differs", {}};
 
   bool sameOwnership = true;
   bool sameLocalStorage = true;
   bool staysInSubgroup = true;
-  std::map<std::string, std::int64_t> sourceOwners;
+  struct Owner {
+    std::int64_t linear;
+    std::vector<std::int64_t> executor;
+    std::vector<std::int64_t> local;
+  };
+  std::map<std::string, Owner> sourceOwners;
   std::int64_t executorLinear = 0;
   for (const auto &executor : enumerate(source.executorSpace)) {
     for (const auto &local : enumerate(source.localSpace)) {
       auto input = concatenate(executor, local);
-      sourceOwners[key(source.ownership.apply(input))] = executorLinear;
-      sameOwnership &= source.ownership.apply(input) == target.ownership.apply(input);
+      auto sourceTile = source.ownership.tryApply(input);
+      auto targetTile = target.ownership.tryApply(input);
+      if (sourceTile)
+        sourceOwners[key(*sourceTile)] = Owner{executorLinear, executor, local};
+      sameOwnership &= sourceTile == targetTile;
       sameLocalStorage &= source.localStorage.apply(local) == target.localStorage.apply(local);
     }
     ++executorLinear;
   }
 
-  if (sameOwnership)
+  if (sameOwnership) {
+    std::vector<ConversionPlan::Move> moves;
+    if (!sameLocalStorage) {
+      for (const auto &executor : enumerate(source.executorSpace)) {
+        for (const auto &local : enumerate(source.localSpace)) {
+          auto tile = source.ownership.tryApply(concatenate(executor, local));
+          if (tile)
+            moves.push_back({*tile, executor, source.localStorage.apply(local), executor,
+                             target.localStorage.apply(local)});
+        }
+      }
+    }
     return {sameLocalStorage ? ConversionKind::Identity : ConversionKind::LocalPermutation,
             sameLocalStorage ? "ownership and local slots agree"
-                             : "ownership agrees but local slots differ"};
+                             : "ownership agrees but local slots differ", std::move(moves)};
+  }
 
+  std::vector<ConversionPlan::Move> moves;
   executorLinear = 0;
   for (const auto &executor : enumerate(target.executorSpace)) {
     for (const auto &local : enumerate(target.localSpace)) {
-      auto targetTile = target.ownership.apply(concatenate(executor, local));
-      auto it = sourceOwners.find(key(targetTile));
+      auto targetTile = target.ownership.tryApply(concatenate(executor, local));
+      if (!targetTile)
+        continue;
+      auto it = sourceOwners.find(key(*targetTile));
       if (it == sourceOwners.end())
-        return {ConversionKind::Unsupported, "source does not cover a required target point"};
-      staysInSubgroup &= it->second / subgroupSize == executorLinear / subgroupSize;
+        return {ConversionKind::Unsupported, "source does not cover a required target point", {}};
+      staysInSubgroup &= it->second.linear / subgroupSize == executorLinear / subgroupSize;
+      moves.push_back({*targetTile, it->second.executor,
+                       source.localStorage.apply(it->second.local), executor,
+                       target.localStorage.apply(local)});
     }
     ++executorLinear;
   }
   return {staysInSubgroup ? ConversionKind::SubgroupExchange : ConversionKind::SharedMemoryExchange,
           staysInSubgroup ? "ownership changes within each subgroup"
-                          : "ownership crosses subgroup boundaries"};
+                          : "ownership crosses subgroup boundaries", std::move(moves)};
 }
 
 const char *toString(ConversionKind kind) {

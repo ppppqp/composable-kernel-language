@@ -12,11 +12,37 @@ bool Axis::operator==(const Axis &other) const {
   return name == other.name && extent == other.extent;
 }
 
-IndexSpace::IndexSpace(std::vector<Axis> axes) : axes_(std::move(axes)) {
+namespace {
+std::size_t combineHash(std::size_t seed, std::size_t value) {
+  return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+}
+} // namespace
+
+IndexSpace::IndexSpace(std::vector<Axis> axes) : axes_(std::move(axes)), profile_("[") {
   for (const Axis &axis : axes_) {
     if (axis.extent <= 0)
       throw std::invalid_argument("index-space extents must be positive");
+    if (profile_.size() > 1)
+      profile_ += ',';
+    profile_ += '*';
   }
+  profile_ += ']';
+}
+
+IndexSpace::IndexSpace(std::vector<Axis> axes, std::string profile)
+    : axes_(std::move(axes)), profile_(std::move(profile)) {}
+
+IndexSpace IndexSpace::product(std::string name, std::vector<IndexSpace> children) {
+  std::vector<Axis> axes;
+  std::string profile = name + '(';
+  for (std::size_t i = 0; i < children.size(); ++i) {
+    if (i)
+      profile += ',';
+    profile += children[i].profile();
+    axes.insert(axes.end(), children[i].axes().begin(), children[i].axes().end());
+  }
+  profile += ')';
+  return IndexSpace(std::move(axes), std::move(profile));
 }
 
 std::int64_t IndexSpace::volume() const {
@@ -44,6 +70,13 @@ bool IndexSpace::sameShape(const IndexSpace &other) const {
       return false;
   }
   return true;
+}
+
+std::size_t IndexSpace::hash() const {
+  std::size_t result = std::hash<std::string>{}(profile_);
+  for (const Axis &axis : axes_)
+    result = combineHash(result, std::hash<std::int64_t>{}(axis.extent));
+  return result;
 }
 
 std::string IndexSpace::str() const {
@@ -156,6 +189,37 @@ IndexExpr IndexExpr::substitute(const std::vector<IndexExpr> &replacements) cons
   return rewrite(node_);
 }
 
+IndexExpr IndexExpr::normalize() const {
+  // TODO: constant propagation and other simplifications
+  switch (node_->kind) {
+  case Kind::Input:
+    return input(static_cast<std::size_t>(node_->value));
+  case Kind::Constant:
+    return constant(node_->value);
+  case Kind::FloorDiv:
+    return floorDiv(IndexExpr(node_->lhs).normalize(), node_->value);
+  case Kind::Modulo:
+    return modulo(IndexExpr(node_->lhs).normalize(), node_->value);
+  case Kind::Add:
+  case Kind::Multiply:
+  case Kind::Xor: {
+    // commutative operators are normalized by sorting the string representations of their operands
+    IndexExpr lhs = IndexExpr(node_->lhs).normalize();
+    IndexExpr rhs = IndexExpr(node_->rhs).normalize();
+    if (rhs.str() < lhs.str())
+      std::swap(lhs, rhs);
+    if (node_->kind == Kind::Add)
+      return add(lhs, rhs);
+    if (node_->kind == Kind::Multiply)
+      return multiply(lhs, rhs);
+    return bitXor(lhs, rhs);
+  }
+  }
+  throw std::logic_error("unknown index expression kind");
+}
+
+std::size_t IndexExpr::hash() const { return std::hash<std::string>{}(normalize().str()); }
+
 std::string IndexExpr::str() const {
   std::function<std::string(const std::shared_ptr<const Node> &)> print =
       [&](const std::shared_ptr<const Node> &node) -> std::string {
@@ -175,8 +239,97 @@ std::string IndexExpr::str() const {
   return print(node_);
 }
 
-IndexMap::IndexMap(IndexSpace domain, IndexSpace codomain, std::vector<IndexExpr> results)
-    : domain_(std::move(domain)), codomain_(std::move(codomain)), results_(std::move(results)) {
+struct IndexPredicate::Node {
+  enum class Kind { Always, Compare, And } kind = Kind::Always;
+  Comparison comparison = Comparison::Equal;
+  std::optional<IndexExpr> lhs;
+  std::optional<IndexExpr> rhs;
+  std::shared_ptr<const Node> leftPredicate;
+  std::shared_ptr<const Node> rightPredicate;
+};
+
+IndexPredicate::IndexPredicate(std::shared_ptr<const Node> node) : node_(std::move(node)) {}
+
+IndexPredicate IndexPredicate::always() { return IndexPredicate(std::make_shared<Node>(Node{})); }
+
+IndexPredicate IndexPredicate::compare(IndexExpr lhs, Comparison comparison, IndexExpr rhs) {
+  Node node{};
+  node.kind = Node::Kind::Compare;
+  node.comparison = comparison;
+  node.lhs = std::move(lhs);
+  node.rhs = std::move(rhs);
+  return IndexPredicate(std::make_shared<Node>(std::move(node)));
+}
+
+IndexPredicate IndexPredicate::logicalAnd(IndexPredicate lhs, IndexPredicate rhs) {
+  Node node{};
+  node.kind = Node::Kind::And;
+  node.leftPredicate = lhs.node_;
+  node.rightPredicate = rhs.node_;
+  return IndexPredicate(std::make_shared<Node>(std::move(node)));
+}
+
+bool IndexPredicate::evaluate(const std::vector<std::int64_t> &inputs) const {
+  std::function<bool(const std::shared_ptr<const Node> &)> eval =
+      [&](const std::shared_ptr<const Node> &node) {
+        if (node->kind == Node::Kind::Always)
+          return true;
+        if (node->kind == Node::Kind::And)
+          return eval(node->leftPredicate) && eval(node->rightPredicate);
+        const auto lhs = node->lhs->evaluate(inputs);
+        const auto rhs = node->rhs->evaluate(inputs);
+        switch (node->comparison) {
+        case Comparison::Less:
+          return lhs < rhs;
+        case Comparison::LessEqual:
+          return lhs <= rhs;
+        case Comparison::Equal:
+          return lhs == rhs;
+        case Comparison::NotEqual:
+          return lhs != rhs;
+        case Comparison::GreaterEqual:
+          return lhs >= rhs;
+        case Comparison::Greater:
+          return lhs > rhs;
+        }
+        return false;
+      };
+  return eval(node_);
+}
+
+IndexPredicate IndexPredicate::substitute(const std::vector<IndexExpr> &replacements) const {
+  std::function<IndexPredicate(const std::shared_ptr<const Node> &)> rewrite =
+      [&](const std::shared_ptr<const Node> &node) {
+        if (node->kind == Node::Kind::Always)
+          return always();
+        if (node->kind == Node::Kind::And)
+          return logicalAnd(rewrite(node->leftPredicate), rewrite(node->rightPredicate));
+        return compare(node->lhs->substitute(replacements), node->comparison,
+                       node->rhs->substitute(replacements));
+      };
+  return rewrite(node_);
+}
+
+std::string IndexPredicate::str() const {
+  std::function<std::string(const std::shared_ptr<const Node> &)> print =
+      [&](const std::shared_ptr<const Node> &node) -> std::string {
+    if (node->kind == Node::Kind::Always)
+      return "true";
+    if (node->kind == Node::Kind::And)
+      return '(' + print(node->leftPredicate) + " and " + print(node->rightPredicate) + ')';
+    static const char *symbols[] = {"<", "<=", "==", "!=", ">=", ">"};
+    return '(' + node->lhs->str() + ' ' + symbols[static_cast<int>(node->comparison)] + ' ' +
+           node->rhs->str() + ')';
+  };
+  return print(node_);
+}
+
+std::size_t IndexPredicate::hash() const { return std::hash<std::string>{}(str()); }
+
+IndexMap::IndexMap(IndexSpace domain, IndexSpace codomain, std::vector<IndexExpr> results,
+                   IndexPredicate predicate)
+    : domain_(std::move(domain)), codomain_(std::move(codomain)), results_(std::move(results)),
+      predicate_(std::move(predicate)) {
   if (results_.size() != codomain_.rank())
     throw std::invalid_argument("index map must produce one expression per codomain axis");
 }
@@ -252,12 +405,35 @@ IndexMap IndexMap::strided(IndexSpace domain, std::vector<std::int64_t> strides,
 std::vector<std::int64_t> IndexMap::apply(const std::vector<std::int64_t> &point) const {
   if (!domain_.contains(point))
     throw std::out_of_range("point is outside index-map domain");
+  if (!predicate_.evaluate(point))
+    throw std::out_of_range("point is outside index-map predicate");
   std::vector<std::int64_t> result;
   for (const IndexExpr &expr : results_)
     result.push_back(expr.evaluate(point));
   if (!codomain_.contains(result))
     throw std::out_of_range("index map produced a point outside its codomain");
   return result;
+}
+
+std::optional<std::vector<std::int64_t>>
+IndexMap::tryApply(const std::vector<std::int64_t> &point) const {
+  if (!domain_.contains(point) || !predicate_.evaluate(point))
+    return std::nullopt;
+  return apply(point);
+}
+
+IndexMap IndexMap::normalize() const {
+  std::vector<IndexExpr> normalized;
+  for (const auto &result : results_)
+    normalized.push_back(result.normalize());
+  return IndexMap(domain_, codomain_, std::move(normalized), predicate_);
+}
+
+std::size_t IndexMap::hash() const {
+  std::size_t result = combineHash(domain_.hash(), codomain_.hash());
+  for (const auto &expr : results_)
+    result = combineHash(result, expr.hash());
+  return combineHash(result, predicate_.hash());
 }
 
 std::string IndexMap::str() const {
@@ -288,7 +464,9 @@ IndexMap compose(const IndexMap &outer, const IndexMap &inner) {
   for (const IndexExpr &expr : outer.results())
     // for each axis in the outer map, substitute the inner map's expressions for its inputs
     results.push_back(expr.substitute(replacements));
-  return IndexMap(inner.domain(), outer.codomain(), std::move(results));
+  IndexPredicate predicate =
+      IndexPredicate::logicalAnd(inner.predicate(), outer.predicate().substitute(replacements));
+  return IndexMap(inner.domain(), outer.codomain(), std::move(results), std::move(predicate));
 }
 
 std::vector<std::vector<std::int64_t>> enumerate(const IndexSpace &space) {
@@ -319,7 +497,9 @@ EquivalenceResult proveEquivalent(const IndexMap &lhs, const IndexMap &rhs,
     return {EquivalenceResult::Status::Unknown, std::nullopt,
             "domain exceeds exhaustive proof limit"};
   for (const auto &point : enumerate(lhs.domain())) {
-    if (lhs.apply(point) != rhs.apply(point))
+    auto lhsValue = lhs.tryApply(point);
+    auto rhsValue = rhs.tryApply(point);
+    if (lhsValue != rhsValue)
       return {EquivalenceResult::Status::NotEquivalent, point, "maps differ at witness point"};
   }
   return {EquivalenceResult::Status::Equivalent, std::nullopt, "exhaustive finite-domain proof"};

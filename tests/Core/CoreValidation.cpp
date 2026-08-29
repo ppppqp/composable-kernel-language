@@ -1,4 +1,6 @@
 #include "ckl/Core/Layout/Distribution.h"
+#include "ckl/Core/Layout/StorageLayout.h"
+#include "ckl/Core/Composition/Task.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -155,6 +157,133 @@ void testUnknownProofLimit() {
         "proof limits fail conservatively");
 }
 
+void testNestingNormalizationAndHashing() {
+  IndexSpace mn = IndexSpace::product(
+      "tile", {IndexSpace({{"m", 4}}), IndexSpace::product(
+                                            "n-factors", {IndexSpace({{"n0", 2}}),
+                                                          IndexSpace({{"n1", 4}})})});
+  check(mn.sameShape(space({4, 2, 4})) && mn.profile() == "tile([*],n-factors([*],[*]))",
+        "nested products preserve a profile while exposing a flat coordinate space");
+
+  IndexExpr a = IndexExpr::add(IndexExpr::input(0), IndexExpr::input(1));
+  IndexExpr b = IndexExpr::add(IndexExpr::input(1), IndexExpr::input(0));
+  check(a.normalize().str() == b.normalize().str() && a.hash() == b.hash(),
+        "commutative expression normalization provides stable structural hashes");
+}
+
+void testPartialMaps() {
+  IndexSpace domain = space({8});
+  IndexPredicate firstFive = IndexPredicate::compare(
+      IndexExpr::input(0), IndexPredicate::Comparison::Less, IndexExpr::constant(5));
+  IndexMap partial(domain, domain, {IndexExpr::input(0)}, firstFive);
+  check(partial.tryApply({4}).has_value() && !partial.tryApply({5}).has_value(),
+        "partial maps distinguish valid and masked points");
+  IndexMap address = IndexMap::strided(domain, {2});
+  IndexMap composed = compose(address, partial);
+  check(composed.tryApply({3}) == std::optional<std::vector<std::int64_t>>({{6}}) &&
+            !composed.tryApply({7}),
+        "predicates propagate through composition");
+}
+
+void testReplication() {
+  Distribution replicated = contiguousDistribution(4, 2);
+  replicated.tileSpace = space({4}, "x");
+  IndexSpace product({{"p0", 4}, {"y0", 2}});
+  replicated.ownership = IndexMap(
+      product, replicated.tileSpace,
+      {IndexExpr::add(IndexExpr::multiply(IndexExpr::modulo(IndexExpr::input(0), 2),
+                                          IndexExpr::constant(2)),
+                      IndexExpr::input(1))});
+  replicated.allowReplication = true;
+  DistributionCheck checkResult = verifyDistribution(replicated);
+  check(checkResult.valid && checkResult.covering && !checkResult.unique &&
+            checkResult.maximumReplication == 2,
+        "declared replication is accepted and its maximum multiplicity is measured");
+}
+
+void testXorSwizzle() {
+  IndexSpace domain = space({8});
+  IndexExpr swizzled = IndexExpr::bitXor(IndexExpr::input(0), IndexExpr::constant(3));
+  IndexMap xorMap(domain, domain, {swizzled});
+  IndexMap twice = compose(xorMap, xorMap);
+  check(proveEquivalent(twice, IndexMap::identity(domain)).status ==
+            EquivalenceResult::Status::Equivalent,
+        "bounded XOR swizzle is validated pointwise as an involution");
+}
+
+void testStorageLayouts() {
+  IndexSpace logical = space({4, 4});
+  StorageLayout packed{logical, AddressSpace::Shared, AddressUnit::Element,
+                       IndexMap::strided(logical, {4, 1}), 16, AliasPolicy::Unique, "tile"};
+  StorageCheck packedCheck = verifyStorageLayout(packed);
+  check(packedCheck.valid && packedCheck.injective && packedCheck.maximumAddress == 15,
+        "packed shared layout is injective and bounded");
+
+  IndexMap broadcast(logical, space({1}, "address"), {IndexExpr::constant(0)});
+  StorageLayout illegalAlias{logical, AddressSpace::Shared, AddressUnit::Element, broadcast, 4,
+                             AliasPolicy::Unique, std::nullopt};
+  check(!verifyStorageLayout(illegalAlias).valid,
+        "writable unique storage rejects aliasing");
+  illegalAlias.aliasPolicy = AliasPolicy::ReadOnlyAliasing;
+  check(verifyStorageLayout(illegalAlias).valid && !serialize(illegalAlias).empty(),
+        "declared read-only aliasing is legal and serializable");
+}
+
+void testConcreteConversionPlans() {
+  Distribution base = contiguousDistribution(4, 2);
+  Distribution reversed = contiguousDistribution(4, 2, true);
+  ConversionPlan local = classifyConversion(base, reversed, 4);
+  check(local.kind == ConversionKind::LocalPermutation && local.moves.size() == 8 &&
+            local.moves.front().sourceLocal != local.moves.front().targetLocal,
+        "local conversion contains concrete source and target slots");
+
+  Distribution rotated = base;
+  IndexSpace product({{"p0", 4}, {"y0", 2}});
+  rotated.ownership = IndexMap(
+      product, base.tileSpace,
+      {IndexExpr::add(IndexExpr::multiply(IndexExpr::modulo(
+                                              IndexExpr::add(IndexExpr::input(0),
+                                                             IndexExpr::constant(1)),
+                                              4),
+                                          IndexExpr::constant(2)),
+                      IndexExpr::input(1))});
+  ConversionPlan exchange = classifyConversion(base, rotated, 4);
+  check(exchange.kind == ConversionKind::SubgroupExchange && exchange.moves.size() == 8,
+        "subgroup conversion enumerates every logical value movement");
+}
+
+void testTaskComposition() {
+  Distribution direct = contiguousDistribution(4, 2);
+  Distribution permuted = contiguousDistribution(4, 2, true);
+  TaskAlternative producerDirect{"dequant", "direct", {},
+                                 {{"weight", direct, Placement::Private, 2}}, 16, 0};
+  TaskAlternative producerExpensive{"dequant", "expensive", {},
+                                    {{"weight", permuted, Placement::Shared, 2}}, 80, 8192};
+  TaskAlternative consumer{"mma", "operand", {{"rhs", direct, Placement::Private, 2}}, {}, 32, 0};
+  CompositionDecision decision = selectComposition(
+      {producerExpensive, producerDirect}, {consumer}, "weight", "rhs", 4, 64, 4096);
+  check(decision.selected.has_value() && decision.selected->producerAlternative == 1 &&
+            decision.selected->conversion.kind == ConversionKind::Identity &&
+            decision.considered.size() == 2,
+        "task composition selects the direct legal boundary and records rejected alternatives");
+}
+
+void testCkStyleHierarchicalFixture() {
+  IndexSpace executor({{"warp", 2}, {"lane", 4}});
+  IndexSpace local({{"value", 2}});
+  IndexSpace tile({{"row", 4}, {"column", 4}});
+  IndexSpace product({{"warp", 2}, {"lane", 4}, {"value", 2}});
+  IndexMap ownership(
+      product, tile,
+      {IndexExpr::add(IndexExpr::multiply(IndexExpr::input(0), IndexExpr::constant(2)),
+                      IndexExpr::input(2)),
+       IndexExpr::input(1)});
+  Distribution fixture{executor, local, tile, ownership, IndexMap::identity(local)};
+  DistributionCheck result = verifyDistribution(fixture);
+  check(result.valid && result.covering && result.unique,
+        "CK-style (warp,lane) x value to 2-D tile fixture is a unique cover");
+}
+
 } // namespace
 
 int main() {
@@ -166,6 +295,14 @@ int main() {
     testEquivalenceWitness();
     testDistributionAndConversions();
     testUnknownProofLimit();
+    testNestingNormalizationAndHashing();
+    testPartialMaps();
+    testReplication();
+    testXorSwizzle();
+    testStorageLayouts();
+    testConcreteConversionPlans();
+    testTaskComposition();
+    testCkStyleHierarchicalFixture();
   } catch (const std::exception &error) {
     std::cerr << "UNCAUGHT: " << error.what() << '\n';
     return EXIT_FAILURE;

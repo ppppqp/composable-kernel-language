@@ -14,12 +14,14 @@ struct Distribution {
   IndexMap ownership; // maps executor × local to tile, e.g. which thread owns which tile element
   IndexMap
       localStorage; // maps local to private storage, e.g. which register holds which local value
+  bool allowReplication = false;
 };
 
 struct DistributionCheck {
   bool valid;
   bool covering;
   bool unique;
+  std::size_t maximumReplication;
   std::string message;
 };
 
@@ -37,6 +39,14 @@ enum class ConversionKind {
 struct ConversionPlan {
   ConversionKind kind;
   std::string reason;
+  struct Move {
+    std::vector<std::int64_t> tile;
+    std::vector<std::int64_t> sourceExecutor;
+    std::vector<std::int64_t> sourceLocal;
+    std::vector<std::int64_t> targetExecutor;
+    std::vector<std::int64_t> targetLocal;
+  };
+  std::vector<Move> moves;
 };
 
 // layout conversion

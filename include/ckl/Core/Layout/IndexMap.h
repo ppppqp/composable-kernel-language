@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -20,15 +21,34 @@ class IndexSpace {
 public:
   explicit IndexSpace(std::vector<Axis> axes = {});
 
+  /*
+  Preserves factor grouping.
+  For example:
+  IndexSpace mn = IndexSpace::product("tile", {IndexSpace({{"m", 4}}), IndexSpace::product(
+                                            "n-factors", {IndexSpace({{"n0", 2}}),
+                                                          IndexSpace({{"n1", 4}})})});
+  represents: tile(m:4, n-factors(n0:2, n1:4)) with a flat coordinate space of (m, n0, n1) and a
+  profile of "tile([*],n-factors([*],[*]))".
+
+  It is not yet the full refinement model: the nesting profile is currently a string rather than a
+  structured tree, and composition still inserts a row-major reshape between equal-volume
+  intermediate spaces.
+  */
+  static IndexSpace product(std::string name, std::vector<IndexSpace> children);
+
   const std::vector<Axis> &axes() const { return axes_; }
   std::size_t rank() const { return axes_.size(); }            // number of axes
   std::int64_t volume() const;                                 // product of all extents
   bool contains(const std::vector<std::int64_t> &point) const; // bounds checking
   bool sameShape(const IndexSpace &other) const; // compares extents, ignoring axis names
+  const std::string &profile() const { return profile_; }
+  std::size_t hash() const;
   std::string str() const;
 
 private:
+  IndexSpace(std::vector<Axis> axes, std::string profile);
   std::vector<Axis> axes_;
+  std::string profile_;
 };
 
 /*
@@ -61,6 +81,8 @@ public:
   expression tree for 2 * z + 1.
   */
   IndexExpr substitute(const std::vector<IndexExpr> &replacements) const;
+  IndexExpr normalize() const;
+  std::size_t hash() const;
   std::string str() const;
 
 private:
@@ -70,11 +92,32 @@ private:
 };
 
 /*
-
+e.g. firstFive = IndexPredicate::compare(IndexExpr::input(0), IndexPredicate::Comparison::Less,
+                                 IndexExpr::constant(5));
 */
+class IndexPredicate {
+public:
+  enum class Comparison { Less, LessEqual, Equal, NotEqual, GreaterEqual, Greater };
+
+  static IndexPredicate always();
+  static IndexPredicate compare(IndexExpr lhs, Comparison comparison, IndexExpr rhs);
+  static IndexPredicate logicalAnd(IndexPredicate lhs, IndexPredicate rhs);
+
+  bool evaluate(const std::vector<std::int64_t> &inputs) const;
+  IndexPredicate substitute(const std::vector<IndexExpr> &replacements) const;
+  std::string str() const;
+  std::size_t hash() const;
+
+private:
+  struct Node;
+  explicit IndexPredicate(std::shared_ptr<const Node> node);
+  std::shared_ptr<const Node> node_;
+};
+
 class IndexMap {
 public:
-  IndexMap(IndexSpace domain, IndexSpace codomain, std::vector<IndexExpr> results);
+  IndexMap(IndexSpace domain, IndexSpace codomain, std::vector<IndexExpr> results,
+           IndexPredicate predicate = IndexPredicate::always());
 
   static IndexMap identity(IndexSpace space);
   static IndexMap permutation(IndexSpace domain, std::vector<std::size_t> order,
@@ -92,10 +135,14 @@ public:
   const IndexSpace &domain() const { return domain_; }
   const IndexSpace &codomain() const { return codomain_; }
   const std::vector<IndexExpr> &results() const { return results_; }
+  const IndexPredicate &predicate() const { return predicate_; }
 
   // Evaluates the map at a single point. Throws std::out_of_range if the point is outside the
   // domain
   std::vector<std::int64_t> apply(const std::vector<std::int64_t> &point) const;
+  std::optional<std::vector<std::int64_t>> tryApply(const std::vector<std::int64_t> &point) const;
+  IndexMap normalize() const;
+  std::size_t hash() const;
   std::string str() const;
 
 private:
@@ -104,12 +151,15 @@ private:
 
   // A map must have exactly one expression per codomain axis, in order.
   std::vector<IndexExpr> results_;
+  IndexPredicate predicate_;
 };
 
 // Returns `outer(inner(x))`. Intermediate spaces need only have the same volume;
 // a canonical row-major refinement is inserted when their factorization differs.
 // e.g. inner: A -> (2, 3, 6) outter: (6, 6) -> B produces a map A -> B via the refinement (2, 3, 6)
 // -> (6, 6).
+// Predicate is transformed as well. E.g. if inner is valid under Pinner(x) and outer is valid under
+// Pouter(y), then the composition is valid under Pinner(x) && Pouter(inner(x)).
 IndexMap compose(const IndexMap &outer, const IndexMap &inner);
 
 struct EquivalenceResult {
