@@ -9,6 +9,21 @@
 namespace ckl::core {
 
 enum class Placement { Private, Shared, Global };
+enum class EffectKind { Read, Write, Consume, ChannelPut, ChannelGet, ChannelRelease };
+
+// For interference detection between overlapping resources
+struct ResourceLifetime {
+  std::string name;
+  std::int64_t bytes;
+  std::int64_t begin;
+  std::int64_t end;
+};
+
+struct TaskEffect {
+  EffectKind kind;
+  std::string resource;
+  std::int64_t stage = 0;
+};
 
 struct PortRealization {
   std::string name;
@@ -28,6 +43,9 @@ struct TaskAlternative {
   std::vector<PortRealization> outputs;
   std::int64_t registersPerThread = 0;
   std::int64_t sharedMemoryBytes = 0;
+  std::vector<std::string> requiredCapabilities; // e.g. "mma", "async-copy", "wgmma"
+  std::vector<ResourceLifetime> resources;
+  std::vector<TaskEffect> effects;
 };
 
 struct CompositionCandidate {
@@ -36,6 +54,7 @@ struct CompositionCandidate {
   ConversionPlan conversion;
   std::int64_t score;
   std::string explanation;
+  std::vector<std::string> provenance;
 };
 
 struct CompositionDecision {
@@ -47,6 +66,7 @@ CompositionDecision selectComposition(const std::vector<TaskAlternative> &produc
                                       const std::vector<TaskAlternative> &consumers,
                                       const std::string &producerPort,
                                       const std::string &consumerPort, std::int64_t subgroupSize,
-                                      std::int64_t registerLimit, std::int64_t sharedMemoryLimit);
+                                      std::int64_t registerLimit, std::int64_t sharedMemoryLimit,
+                                      const std::vector<std::string> &availableCapabilities = {});
 
 } // namespace ckl::core

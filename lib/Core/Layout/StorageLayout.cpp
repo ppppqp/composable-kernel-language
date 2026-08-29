@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <map>
 #include <sstream>
+#include <stdexcept>
 
 namespace ckl::core {
 
@@ -17,6 +18,9 @@ StorageCheck verifyStorageLayout(const StorageLayout &layout) {
   std::map<std::int64_t, std::size_t> uses;
   std::int64_t minimum = 0;
   std::int64_t maximum = 0;
+
+  // The first flag is used to detect the first point, so that we can
+  // initialize the minimum and maximum addresses correctly.
   bool first = true;
   for (const auto &point : enumerate(layout.logicalSpace)) {
     auto address = layout.address.tryApply(point);
@@ -34,17 +38,42 @@ StorageCheck verifyStorageLayout(const StorageLayout &layout) {
     injective &= count == 1;
   }
   const bool valid = injective || layout.aliasPolicy != AliasPolicy::Unique;
-  return {valid, injective, minimum, maximum,
-          valid ? "storage layout satisfies alias policy" : "unique storage layout aliases"};
+
+  // The inBounds flag checks whether the maximum address is within the allocated elements, if
+  // specified.
+  const bool inBounds = !layout.allocationElements || first || maximum < *layout.allocationElements;
+  return {valid && inBounds, injective, minimum, maximum,
+          !valid      ? "unique storage layout aliases"
+          : !inBounds ? "storage layout exceeds its allocation"
+                      : "storage layout satisfies alias and allocation policy"};
+}
+
+// The bank conflict analysis is a simple pointwise simulation of the layout's address map.
+// It counts how many points map to each bank, and reports the maximum count.
+BankConflictReport
+analyzeBankConflicts(const StorageLayout &layout,
+                     const std::vector<std::vector<std::int64_t>> &simultaneousPoints,
+                     std::size_t bankCount, std::size_t elementsPerBankUnit) {
+  if (bankCount == 0 || elementsPerBankUnit == 0)
+    throw std::invalid_argument("bank geometry must be nonzero");
+  BankConflictReport report{0, std::vector<std::size_t>(bankCount)};
+  for (const auto &point : simultaneousPoints) {
+    auto address = layout.address.tryApply(point);
+    if (!address)
+      continue;
+
+    const auto bank = static_cast<std::size_t>(address->front() / elementsPerBankUnit) % bankCount;
+    report.maximumConflict = std::max(report.maximumConflict, ++report.bankUseCounts[bank]);
+  }
+  return report;
 }
 
 std::string serialize(const StorageLayout &layout) {
   std::ostringstream os;
   os << "storage<space=" << layout.logicalSpace.str() << ", address=" << layout.address.str()
-     << ", alignment=" << layout.alignment << ", alias="
-     << static_cast<int>(layout.aliasPolicy) << '>';
+     << ", alignment=" << layout.alignment << ", alias=" << static_cast<int>(layout.aliasPolicy)
+     << '>';
   return os.str();
 }
 
 } // namespace ckl::core
-

@@ -19,30 +19,41 @@ std::size_t combineHash(std::size_t seed, std::size_t value) {
 } // namespace
 
 IndexSpace::IndexSpace(std::vector<Axis> axes) : axes_(std::move(axes)), profile_("[") {
+  auto root = std::make_shared<Structure>();
+  root->name = "flat";
   for (const Axis &axis : axes_) {
     if (axis.extent <= 0)
       throw std::invalid_argument("index-space extents must be positive");
     if (profile_.size() > 1)
       profile_ += ',';
     profile_ += '*';
+    auto leaf = std::make_shared<Structure>();
+    leaf->name = axis.name;
+    leaf->axis = axis;
+    root->children.push_back(std::move(leaf));
   }
   profile_ += ']';
+  structure_ = std::move(root);
 }
 
-IndexSpace::IndexSpace(std::vector<Axis> axes, std::string profile)
-    : axes_(std::move(axes)), profile_(std::move(profile)) {}
+IndexSpace::IndexSpace(std::vector<Axis> axes, std::string profile,
+                       std::shared_ptr<const Structure> structure)
+    : axes_(std::move(axes)), profile_(std::move(profile)), structure_(std::move(structure)) {}
 
 IndexSpace IndexSpace::product(std::string name, std::vector<IndexSpace> children) {
   std::vector<Axis> axes;
   std::string profile = name + '(';
+  auto root = std::make_shared<Structure>();
+  root->name = name;
   for (std::size_t i = 0; i < children.size(); ++i) {
     if (i)
       profile += ',';
     profile += children[i].profile();
     axes.insert(axes.end(), children[i].axes().begin(), children[i].axes().end());
+    root->children.push_back(children[i].structure());
   }
   profile += ')';
-  return IndexSpace(std::move(axes), std::move(profile));
+  return IndexSpace(std::move(axes), std::move(profile), std::move(root));
 }
 
 std::int64_t IndexSpace::volume() const {
@@ -455,9 +466,13 @@ IndexMap compose(const IndexMap &outer, const IndexMap &inner) {
     throw std::invalid_argument("composition intermediate spaces have different volumes");
   std::vector<IndexExpr> replacements = inner.results();
   if (!inner.codomain().sameShape(outer.domain())) {
-    IndexMap refinement = IndexMap::reshape(inner.codomain(), outer.domain());
+    auto refinement = computeMutualRefinement(inner.codomain(), outer.domain());
+    if (!refinement)
+      throw std::invalid_argument("composition has no common factor refinement");
+    IndexMap bridge =
+        compose(IndexMap::reshape(refinement->commonSpace, outer.domain()), refinement->fromLeft);
     replacements.clear();
-    for (const IndexExpr &expr : refinement.results())
+    for (const IndexExpr &expr : bridge.results())
       replacements.push_back(expr.substitute(inner.results()));
   }
   std::vector<IndexExpr> results;
@@ -467,6 +482,34 @@ IndexMap compose(const IndexMap &outer, const IndexMap &inner) {
   IndexPredicate predicate =
       IndexPredicate::logicalAnd(inner.predicate(), outer.predicate().substitute(replacements));
   return IndexMap(inner.domain(), outer.codomain(), std::move(results), std::move(predicate));
+}
+
+// TODO: this is a canonical prime-factor refinement. It's still simpler than the full
+// pullback/pushforward described by layout-categories here
+// https://arxiv.org/pdf/2601.05972
+std::optional<FactorRefinement> computeMutualRefinement(const IndexSpace &left,
+                                                        const IndexSpace &right) {
+  if (left.volume() != right.volume())
+    return std::nullopt;
+  std::int64_t remaining = left.volume();
+  std::vector<std::int64_t> factors;
+  for (std::int64_t divisor = 2; divisor * divisor <= remaining; ++divisor) {
+    while (remaining % divisor == 0) {
+      factors.push_back(divisor);
+      remaining /= divisor;
+    }
+  }
+  if (remaining > 1)
+    factors.push_back(remaining);
+  if (factors.empty())
+    factors.push_back(1);
+  std::vector<Axis> axes;
+  for (std::size_t i = 0; i < factors.size(); ++i)
+    axes.push_back({"f" + std::to_string(i), factors[i]});
+  IndexSpace common = IndexSpace::product("refinement", {IndexSpace(std::move(axes))});
+  IndexMap fromLeft = IndexMap::reshape(left, common);
+  IndexMap fromRight = IndexMap::reshape(right, common);
+  return FactorRefinement{common, std::move(fromLeft), std::move(fromRight), std::move(factors)};
 }
 
 std::vector<std::vector<std::int64_t>> enumerate(const IndexSpace &space) {

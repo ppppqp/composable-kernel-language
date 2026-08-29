@@ -19,6 +19,12 @@ struct Axis {
 
 class IndexSpace {
 public:
+  struct Structure {
+    std::string name;
+    std::optional<Axis> axis;
+    std::vector<std::shared_ptr<const Structure>> children;
+  };
+
   explicit IndexSpace(std::vector<Axis> axes = {});
 
   /*
@@ -29,10 +35,7 @@ public:
                                                           IndexSpace({{"n1", 4}})})});
   represents: tile(m:4, n-factors(n0:2, n1:4)) with a flat coordinate space of (m, n0, n1) and a
   profile of "tile([*],n-factors([*],[*]))".
-
-  It is not yet the full refinement model: the nesting profile is currently a string rather than a
-  structured tree, and composition still inserts a row-major reshape between equal-volume
-  intermediate spaces.
+  It is represented as a tree of Structure nodes, where each leaf node corresponds to an axis.
   */
   static IndexSpace product(std::string name, std::vector<IndexSpace> children);
 
@@ -42,13 +45,16 @@ public:
   bool contains(const std::vector<std::int64_t> &point) const; // bounds checking
   bool sameShape(const IndexSpace &other) const; // compares extents, ignoring axis names
   const std::string &profile() const { return profile_; }
+  const std::shared_ptr<const Structure> &structure() const { return structure_; }
   std::size_t hash() const;
   std::string str() const;
 
 private:
-  IndexSpace(std::vector<Axis> axes, std::string profile);
+  IndexSpace(std::vector<Axis> axes, std::string profile,
+             std::shared_ptr<const Structure> structure);
   std::vector<Axis> axes_;
   std::string profile_;
+  std::shared_ptr<const Structure> structure_;
 };
 
 /*
@@ -161,6 +167,25 @@ private:
 // Predicate is transformed as well. E.g. if inner is valid under Pinner(x) and outer is valid under
 // Pouter(y), then the composition is valid under Pinner(x) && Pouter(inner(x)).
 IndexMap compose(const IndexMap &outer, const IndexMap &inner);
+
+/*
+For reshape, we can not silently insert a row-major refinement between equal-volume spaces, because
+the factorization of the two spaces may differ. For example, the spaces (6, 2) and (4, 3) have equal
+volume but no common refinement.
+FactorRefinement provides an explicit canonical prime-factor refinement of two equal-volume spaces.
+For example, the spaces (6, 2) and (4, 3) have a common refinement (2, 2, 3) with maps
+(6, 2) -> (2, 2, 3) and (4, 3) -> (2, 2, 3).
+*/
+struct FactorRefinement {
+  IndexSpace commonSpace;
+  IndexMap fromLeft;
+  IndexMap fromRight;
+  std::vector<std::int64_t> primeFactors;
+};
+
+// Produces an explicit common prime-factor space and maps from both equal-volume spaces.
+std::optional<FactorRefinement> computeMutualRefinement(const IndexSpace &left,
+                                                        const IndexSpace &right);
 
 struct EquivalenceResult {
   enum class Status { Equivalent, NotEquivalent, Unknown } status;

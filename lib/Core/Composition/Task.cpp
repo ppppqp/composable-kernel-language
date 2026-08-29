@@ -23,6 +23,22 @@ std::int64_t conversionCost(ConversionKind kind) {
   return 1'000'000;
 }
 
+bool supports(const TaskAlternative &alternative,
+              const std::vector<std::string> &availableCapabilities) {
+  return std::all_of(alternative.requiredCapabilities.begin(),
+                     alternative.requiredCapabilities.end(), [&](const std::string &required) {
+    return std::find(availableCapabilities.begin(), availableCapabilities.end(), required) !=
+           availableCapabilities.end();
+  });
+}
+
+bool validLifetimes(const TaskAlternative &alternative) {
+  return std::all_of(alternative.resources.begin(), alternative.resources.end(),
+                     [](const ResourceLifetime &resource) {
+    return resource.bytes >= 0 && resource.begin >= 0 && resource.end > resource.begin;
+  });
+}
+
 } // namespace
 
 CompositionDecision selectComposition(const std::vector<TaskAlternative> &producers,
@@ -31,7 +47,8 @@ CompositionDecision selectComposition(const std::vector<TaskAlternative> &produc
                                       const std::string &consumerPort,
                                       std::int64_t subgroupSize,
                                       std::int64_t registerLimit,
-                                      std::int64_t sharedMemoryLimit) {
+                                      std::int64_t sharedMemoryLimit,
+                                      const std::vector<std::string> &availableCapabilities) {
   CompositionDecision decision;
   for (std::size_t p = 0; p < producers.size(); ++p) {
     for (std::size_t c = 0; c < consumers.size(); ++c) {
@@ -43,17 +60,33 @@ CompositionDecision selectComposition(const std::vector<TaskAlternative> &produc
       const bool resourcesFit =
           producers[p].registersPerThread + consumers[c].registersPerThread <= registerLimit &&
           producers[p].sharedMemoryBytes + consumers[c].sharedMemoryBytes <= sharedMemoryLimit;
+      const bool capabilitiesFit = supports(producers[p], availableCapabilities) &&
+                                   supports(consumers[c], availableCapabilities);
+      const bool lifetimesValid = validLifetimes(producers[p]) && validLifetimes(consumers[c]);
       std::int64_t score = conversionCost(plan.kind);
       if (out->placement == Placement::Global || in->placement == Placement::Global)
         score += 100'000;
-      if (!resourcesFit || plan.kind == ConversionKind::Unsupported)
+      if (!resourcesFit || !capabilitiesFit || !lifetimesValid ||
+          plan.kind == ConversionKind::Unsupported)
         score = 1'000'000;
       std::string explanation = !resourcesFit
                                     ? "resource limit exceeded"
+                                    : !capabilitiesFit
+                                          ? "target capability unavailable"
+                                          : !lifetimesValid
+                                                ? "invalid resource lifetime"
                                     : plan.kind == ConversionKind::Unsupported
                                           ? "no legal boundary conversion"
                                           : "legal candidate";
-      CompositionCandidate candidate{p, c, std::move(plan), score, std::move(explanation)};
+      std::vector<std::string> provenance{
+          "producer=" + producers[p].task + ":" + producers[p].name,
+          "consumer=" + consumers[c].task + ":" + consumers[c].name,
+          "conversion=" + std::string(toString(plan.kind)),
+          "resources=" + std::to_string(producers[p].registersPerThread +
+                                          consumers[c].registersPerThread) +
+              " registers/thread"};
+      CompositionCandidate candidate{p, c, std::move(plan), score, std::move(explanation),
+                                     std::move(provenance)};
       decision.considered.push_back(candidate);
       if (score < 1'000'000 && (!decision.selected || score < decision.selected->score))
         decision.selected = candidate;
