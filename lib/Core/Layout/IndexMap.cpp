@@ -72,7 +72,8 @@ static IndexExpr makeLeaf(IndexExpr::Kind kind, std::int64_t value) {
 }
 
 IndexExpr IndexExpr::input(std::size_t index) {
-  return IndexExpr(std::make_shared<Node>(Node{Kind::Input, static_cast<std::int64_t>(index), {}, {}}));
+  return IndexExpr(
+      std::make_shared<Node>(Node{Kind::Input, static_cast<std::int64_t>(index), {}, {}}));
 }
 
 IndexExpr IndexExpr::constant(std::int64_t value) {
@@ -166,7 +167,9 @@ std::string IndexExpr::str() const {
       return "floordiv(" + print(node->lhs) + ", " + std::to_string(node->value) + ')';
     if (node->kind == Kind::Modulo)
       return "mod(" + print(node->lhs) + ", " + std::to_string(node->value) + ')';
-    const char *op = node->kind == Kind::Add ? " + " : node->kind == Kind::Multiply ? " * " : " xor ";
+    const char *op = node->kind == Kind::Add        ? " + "
+                     : node->kind == Kind::Multiply ? " * "
+                                                    : " xor ";
     return '(' + print(node->lhs) + op + print(node->rhs) + ')';
   };
   return print(node_);
@@ -268,6 +271,9 @@ std::string IndexMap::str() const {
   return os.str() + '}';
 }
 
+// NOTE: This assumes a canonical row-major correspondence between factorizations of the same
+// volume. A more general implementation must preserve nested factor structure and prove that a
+// refinement is compatible.
 IndexMap compose(const IndexMap &outer, const IndexMap &inner) {
   if (inner.codomain().volume() != outer.domain().volume())
     throw std::invalid_argument("composition intermediate spaces have different volumes");
@@ -280,6 +286,7 @@ IndexMap compose(const IndexMap &outer, const IndexMap &inner) {
   }
   std::vector<IndexExpr> results;
   for (const IndexExpr &expr : outer.results())
+    // for each axis in the outer map, substitute the inner map's expressions for its inputs
     results.push_back(expr.substitute(replacements));
   return IndexMap(inner.domain(), outer.codomain(), std::move(results));
 }
@@ -301,12 +308,16 @@ std::vector<std::vector<std::int64_t>> enumerate(const IndexSpace &space) {
   return points;
 }
 
+// NOTE: currently the implementation enumerates every point and compare the results
+// Not scalable. Move to a more efficient symbolic proof in the future (Presburger reasoning)
 EquivalenceResult proveEquivalent(const IndexMap &lhs, const IndexMap &rhs,
                                   std::int64_t exhaustiveLimit) {
   if (!lhs.domain().sameShape(rhs.domain()) || !lhs.codomain().sameShape(rhs.codomain()))
-    return {EquivalenceResult::Status::NotEquivalent, std::nullopt, "source or result shapes differ"};
+    return {EquivalenceResult::Status::NotEquivalent, std::nullopt,
+            "source or result shapes differ"};
   if (lhs.domain().volume() > exhaustiveLimit)
-    return {EquivalenceResult::Status::Unknown, std::nullopt, "domain exceeds exhaustive proof limit"};
+    return {EquivalenceResult::Status::Unknown, std::nullopt,
+            "domain exceeds exhaustive proof limit"};
   for (const auto &point : enumerate(lhs.domain())) {
     if (lhs.apply(point) != rhs.apply(point))
       return {EquivalenceResult::Status::NotEquivalent, point, "maps differ at witness point"};

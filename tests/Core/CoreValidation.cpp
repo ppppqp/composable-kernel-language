@@ -18,8 +18,7 @@ void check(bool condition, const std::string &message) {
   }
 }
 
-IndexSpace space(std::initializer_list<std::int64_t> extents,
-                 const std::string &prefix = "d") {
+IndexSpace space(std::initializer_list<std::int64_t> extents, const std::string &prefix = "d") {
   std::vector<Axis> axes;
   std::size_t index = 0;
   for (std::int64_t extent : extents)
@@ -33,15 +32,15 @@ Distribution contiguousDistribution(std::int64_t executors, std::int64_t localVa
   IndexSpace local = space({localValues}, "y");
   IndexSpace tile = space({executors * localValues}, "x");
   IndexSpace product({{"p0", executors}, {"y0", localValues}});
-  IndexExpr owner = IndexExpr::add(
-      IndexExpr::multiply(IndexExpr::input(0), IndexExpr::constant(localValues)),
-      IndexExpr::input(1));
+  IndexExpr owner =
+      IndexExpr::add(IndexExpr::multiply(IndexExpr::input(0), IndexExpr::constant(localValues)),
+                     IndexExpr::input(1));
   IndexMap ownership(product, tile, {owner});
-  IndexExpr slot = reverseLocalStorage
-                       ? IndexExpr::add(IndexExpr::constant(localValues - 1),
-                                        IndexExpr::multiply(IndexExpr::input(0),
-                                                            IndexExpr::constant(-1)))
-                       : IndexExpr::input(0);
+  IndexExpr slot =
+      reverseLocalStorage
+          ? IndexExpr::add(IndexExpr::constant(localValues - 1),
+                           IndexExpr::multiply(IndexExpr::input(0), IndexExpr::constant(-1)))
+          : IndexExpr::input(0);
   IndexMap localStorage(local, space({localValues}, "r"), {slot});
   return {executor, local, tile, ownership, localStorage};
 }
@@ -54,8 +53,7 @@ void testIdentityAndAssociativity() {
   IndexMap bc = IndexMap::reshape(b, c);
   IndexMap id = IndexMap::identity(a);
 
-  check(proveEquivalent(compose(ab, id), ab).status ==
-            EquivalenceResult::Status::Equivalent,
+  check(proveEquivalent(compose(ab, id), ab).status == EquivalenceResult::Status::Equivalent,
         "right identity law");
   check(proveEquivalent(compose(IndexMap::identity(b), ab), ab).status ==
             EquivalenceResult::Status::Equivalent,
@@ -122,33 +120,31 @@ void testDistributionAndConversions() {
 
   Distribution replicated = base;
   IndexSpace product({{"p0", 4}, {"y0", 2}});
-  replicated.ownership = IndexMap(
-      product, base.tileSpace,
-      {IndexExpr::add(IndexExpr::multiply(IndexExpr::modulo(IndexExpr::input(0), 2),
-                                          IndexExpr::constant(2)),
-                      IndexExpr::input(1))});
+  replicated.ownership =
+      IndexMap(product, base.tileSpace,
+               {IndexExpr::add(IndexExpr::multiply(IndexExpr::modulo(IndexExpr::input(0), 2),
+                                                   IndexExpr::constant(2)),
+                               IndexExpr::input(1))});
   DistributionCheck replicationCheck = verifyDistribution(replicated);
   check(!replicationCheck.valid && !replicationCheck.covering && !replicationCheck.unique,
-        "invalid replicated/incomplete ownership is rejected by unique-cover verification");
+        "invalid replicated/incomplete ownership is rejected by unique-cover "
+        "verification");
 
   Distribution reversedSlots = contiguousDistribution(4, 2, true);
-  check(classifyConversion(base, reversedSlots, 4).kind ==
-            ConversionKind::LocalPermutation,
+  check(classifyConversion(base, reversedSlots, 4).kind == ConversionKind::LocalPermutation,
         "local register order is distinct from ownership");
 
   Distribution swappedOwners = base;
   IndexExpr swapped = IndexExpr::add(
-      IndexExpr::multiply(IndexExpr::modulo(
-                              IndexExpr::add(IndexExpr::input(0), IndexExpr::constant(1)), 4),
-                          IndexExpr::constant(2)),
+      IndexExpr::multiply(
+          IndexExpr::modulo(IndexExpr::add(IndexExpr::input(0), IndexExpr::constant(1)), 4),
+          IndexExpr::constant(2)),
       IndexExpr::input(1));
   swappedOwners.ownership = IndexMap(product, base.tileSpace, {swapped});
-  check(classifyConversion(base, swappedOwners, 4).kind ==
-            ConversionKind::SubgroupExchange,
+  check(classifyConversion(base, swappedOwners, 4).kind == ConversionKind::SubgroupExchange,
         "lane ownership change is a subgroup exchange");
 
-  check(classifyConversion(base, swappedOwners, 2).kind ==
-            ConversionKind::SharedMemoryExchange,
+  check(classifyConversion(base, swappedOwners, 2).kind == ConversionKind::SharedMemoryExchange,
         "ownership crossing subgroup boundaries requires shared memory");
 }
 

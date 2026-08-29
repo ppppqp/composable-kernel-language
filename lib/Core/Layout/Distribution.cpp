@@ -29,11 +29,14 @@ bool sameTileShape(const Distribution &lhs, const Distribution &rhs) {
 
 DistributionCheck verifyDistribution(const Distribution &distribution, bool requireCovering,
                                      bool requireUnique) {
+  // verify that ownership has expected domain and codomain shapes
   if (distribution.ownership.domain().rank() !=
       distribution.executorSpace.rank() + distribution.localSpace.rank())
     return {false, false, false, "ownership domain must be executor × local"};
   if (!distribution.ownership.codomain().sameShape(distribution.tileSpace))
     return {false, false, false, "ownership codomain must match the tile"};
+
+  // verify that local storage consumes local shape
   if (!distribution.localStorage.domain().sameShape(distribution.localSpace))
     return {false, false, false, "local-storage domain must match local space"};
 
@@ -45,7 +48,10 @@ DistributionCheck verifyDistribution(const Distribution &distribution, bool requ
     }
   }
 
+  // every tile point has at least one owner
   bool covering = owners.size() == static_cast<std::size_t>(distribution.tileSpace.volume());
+
+  // every observed tile point has exactly one owner (bijection)
   bool unique = true;
   for (const auto &[unused, count] : owners) {
     (void)unused;
@@ -53,9 +59,9 @@ DistributionCheck verifyDistribution(const Distribution &distribution, bool requ
   }
   bool valid = (!requireCovering || covering) && (!requireUnique || unique);
   return {valid, covering, unique,
-          valid ? "distribution satisfies requested invariants"
-                : !covering ? "distribution does not cover its tile"
-                            : "distribution has replicated owners"};
+          valid       ? "distribution satisfies requested invariants"
+          : !covering ? "distribution does not cover its tile"
+                      : "distribution has replicated owners"};
 }
 
 ConversionPlan classifyConversion(const Distribution &source, const Distribution &target,
@@ -64,8 +70,7 @@ ConversionPlan classifyConversion(const Distribution &source, const Distribution
     return {ConversionKind::Unsupported, "tile shapes differ"};
   if (!source.executorSpace.sameShape(target.executorSpace) ||
       !source.localSpace.sameShape(target.localSpace))
-    return {ConversionKind::SharedMemoryExchange,
-            "executor or per-agent cardinality differs"};
+    return {ConversionKind::SharedMemoryExchange, "executor or per-agent cardinality differs"};
 
   bool sameOwnership = true;
   bool sameLocalStorage = true;
@@ -98,8 +103,7 @@ ConversionPlan classifyConversion(const Distribution &source, const Distribution
     }
     ++executorLinear;
   }
-  return {staysInSubgroup ? ConversionKind::SubgroupExchange
-                          : ConversionKind::SharedMemoryExchange,
+  return {staysInSubgroup ? ConversionKind::SubgroupExchange : ConversionKind::SharedMemoryExchange,
           staysInSubgroup ? "ownership changes within each subgroup"
                           : "ownership crosses subgroup boundaries"};
 }
@@ -121,4 +125,3 @@ const char *toString(ConversionKind kind) {
 }
 
 } // namespace ckl::core
-

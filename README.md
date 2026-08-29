@@ -1,6 +1,6 @@
-# CKL
+# Composable Kernel Language
 
-CKL is an experimental compiler for composing layout-aware GPU tile tasks.
+Composable Kernel Language(CKL) is an experimental compiler for composing layout-aware GPU tile tasks.
 
 ```text
 include/ckl/Core/   public layout and distribution APIs
