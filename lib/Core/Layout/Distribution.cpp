@@ -69,9 +69,18 @@ ConversionPlan classifyConversion(const Distribution &source, const Distribution
                                   std::int64_t subgroupSize) {
   if (!sameTileShape(source, target))
     return {ConversionKind::Unsupported, "tile shapes differ", {}};
+  const bool crossesScope = source.scope != target.scope;
+  const bool requiresGlobal =
+      crossesScope && (source.scope == ExecutionScope::Cluster ||
+                       source.scope == ExecutionScope::Grid ||
+                       target.scope == ExecutionScope::Cluster ||
+                       target.scope == ExecutionScope::Grid);
   if (!source.executorSpace.sameShape(target.executorSpace) ||
       !source.localSpace.sameShape(target.localSpace))
-    return {ConversionKind::SharedMemoryExchange, "executor or per-agent cardinality differs", {}};
+    return {requiresGlobal ? ConversionKind::GlobalMemoryExchange
+                             : ConversionKind::SharedMemoryExchange,
+            requiresGlobal ? "execution scope and cardinality differ"
+                             : "executor or per-agent cardinality differs", {}};
 
   bool sameOwnership = true;
   bool sameLocalStorage = true;
@@ -98,7 +107,7 @@ ConversionPlan classifyConversion(const Distribution &source, const Distribution
 
   if (sameOwnership) {
     std::vector<ConversionPlan::Move> moves;
-    if (!sameLocalStorage) {
+    if (!sameLocalStorage || crossesScope) {
       for (const auto &executor : enumerate(source.executorSpace)) {
         for (const auto &local : enumerate(source.localSpace)) {
           auto tile = source.ownership.tryApply(concatenate(executor, local));
@@ -108,6 +117,12 @@ ConversionPlan classifyConversion(const Distribution &source, const Distribution
         }
       }
     }
+    if (crossesScope)
+      return {requiresGlobal ? ConversionKind::GlobalMemoryExchange
+                             : ConversionKind::SharedMemoryExchange,
+              requiresGlobal ? "ownership crosses workgroup execution scopes"
+                             : "ownership crosses subgroup execution scope",
+              std::move(moves)};
     return {sameLocalStorage ? ConversionKind::Identity : ConversionKind::LocalPermutation,
             sameLocalStorage ? "ownership and local slots agree"
                              : "ownership agrees but local slots differ", std::move(moves)};
@@ -130,9 +145,14 @@ ConversionPlan classifyConversion(const Distribution &source, const Distribution
     }
     ++executorLinear;
   }
-  return {staysInSubgroup ? ConversionKind::SubgroupExchange : ConversionKind::SharedMemoryExchange,
-          staysInSubgroup ? "ownership changes within each subgroup"
-                          : "ownership crosses subgroup boundaries", std::move(moves)};
+  return {requiresGlobal ? ConversionKind::GlobalMemoryExchange
+                           : crossesScope ? ConversionKind::SharedMemoryExchange
+                           : staysInSubgroup ? ConversionKind::SubgroupExchange
+                                             : ConversionKind::SharedMemoryExchange,
+          requiresGlobal ? "ownership crosses workgroup execution scopes"
+          : crossesScope ? "ownership crosses subgroup execution scope"
+          : staysInSubgroup ? "ownership changes within each subgroup"
+                            : "ownership crosses subgroup boundaries", std::move(moves)};
 }
 
 const char *toString(ConversionKind kind) {
@@ -145,6 +165,8 @@ const char *toString(ConversionKind kind) {
     return "subgroup-exchange";
   case ConversionKind::SharedMemoryExchange:
     return "shared-memory-exchange";
+  case ConversionKind::GlobalMemoryExchange:
+    return "global-memory-exchange";
   case ConversionKind::Unsupported:
     return "unsupported";
   }

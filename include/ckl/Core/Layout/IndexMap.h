@@ -6,13 +6,24 @@
 #include <optional>
 #include <ostream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ckl::core {
 
+// Represents a single axis of an index space, with a name and an extent. The extent can be either
+// a positive integer or a symbolic name, which can be instantiated later.
+// It can not be enumerated or have its volume computed until all symbolic extents are instantiated.
 struct Axis {
+  Axis() = default;
+  Axis(std::string name, std::int64_t extent);
+
   std::string name;
-  std::int64_t extent;
+  std::int64_t extent = -1;
+  std::optional<std::string> extentSymbol;
+
+  static Axis symbolic(std::string name, std::string extentSymbol);
+  bool isStatic() const { return !extentSymbol.has_value(); }
 
   bool operator==(const Axis &other) const;
 };
@@ -40,14 +51,17 @@ public:
   static IndexSpace product(std::string name, std::vector<IndexSpace> children);
 
   const std::vector<Axis> &axes() const { return axes_; }
-  std::size_t rank() const { return axes_.size(); }            // number of axes
-  std::int64_t volume() const;                                 // product of all extents
+  std::size_t rank() const { return axes_.size(); } // number of axes
+  std::int64_t volume() const;                      // product of all extents
+  bool isStatic() const;
+  IndexSpace instantiate(const std::unordered_map<std::string, std::int64_t> &bindings) const;
   bool contains(const std::vector<std::int64_t> &point) const; // bounds checking
   bool sameShape(const IndexSpace &other) const; // compares extents, ignoring axis names
   const std::string &profile() const { return profile_; }
   const std::shared_ptr<const Structure> &structure() const { return structure_; }
   std::size_t hash() const;
   std::string str() const;
+  std::string serialize() const;
 
 private:
   IndexSpace(std::vector<Axis> axes, std::string profile,
@@ -89,6 +103,7 @@ public:
   IndexExpr substitute(const std::vector<IndexExpr> &replacements) const;
   IndexExpr normalize() const;
   std::size_t hash() const;
+  std::string serialize() const;
   std::string str() const;
 
 private:
@@ -111,6 +126,7 @@ public:
 
   bool evaluate(const std::vector<std::int64_t> &inputs) const;
   IndexPredicate substitute(const std::vector<IndexExpr> &replacements) const;
+  std::string serialize() const;
   std::string str() const;
   std::size_t hash() const;
 
@@ -150,6 +166,13 @@ public:
   IndexMap normalize() const;
   std::size_t hash() const;
   std::string str() const;
+  std::string serialize() const;
+  static IndexMap deserialize(const std::string &text);
+
+  /*
+  Prints bounded map as a coordinate table
+  */
+  std::string diagram(std::int64_t pointLimit = 256) const;
 
 private:
   IndexSpace domain_;

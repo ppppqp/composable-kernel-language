@@ -6,6 +6,8 @@
 
 namespace ckl::core {
 
+enum class ExecutionScope { Subgroup, Workgroup, Cluster, Grid };
+
 // Space separation inspired by composable kernel (AMD) design.
 struct Distribution {
   IndexSpace executorSpace; // space of independent executors, e.g. threads or workgroups
@@ -15,6 +17,7 @@ struct Distribution {
   IndexMap
       localStorage; // maps local to private storage, e.g. which register holds which local value
   bool allowReplication = false;
+  ExecutionScope scope = ExecutionScope::Workgroup;
 };
 
 struct DistributionCheck {
@@ -33,6 +36,7 @@ enum class ConversionKind {
   LocalPermutation,     // ownership agrees but local storage differs (register rename/permutation)
   SubgroupExchange,     // ownership changes within each subgroup (warp shuffle)
   SharedMemoryExchange, // ownership changes across subgroup boundaries (smem exchange)
+  GlobalMemoryExchange, // ownership crosses workgroup/cluster scope and requires global memory
   Unsupported, // ownership changes in a way that cannot be implemented with a single exchange
 };
 

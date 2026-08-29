@@ -50,6 +50,9 @@ StorageCheck verifyStorageLayout(const StorageLayout &layout) {
 
 // The bank conflict analysis is a simple pointwise simulation of the layout's address map.
 // It counts how many points map to each bank, and reports the maximum count.
+// TODO: make it AddressUnit-aware
+// TODO: make it more precise by considering the actual address values, not just the bank indices.
+// since several lanes might read the same address by broadcasting, which is not a conflict.
 BankConflictReport
 analyzeBankConflicts(const StorageLayout &layout,
                      const std::vector<std::vector<std::int64_t>> &simultaneousPoints,
@@ -61,7 +64,7 @@ analyzeBankConflicts(const StorageLayout &layout,
     auto address = layout.address.tryApply(point);
     if (!address)
       continue;
-
+    // only need the first coordinate of the address, since the codomain is 1-D
     const auto bank = static_cast<std::size_t>(address->front() / elementsPerBankUnit) % bankCount;
     report.maximumConflict = std::max(report.maximumConflict, ++report.bankUseCounts[bank]);
   }

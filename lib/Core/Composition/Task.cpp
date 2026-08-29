@@ -18,6 +18,7 @@ std::int64_t conversionCost(ConversionKind kind) {
   case ConversionKind::LocalPermutation: return 10;
   case ConversionKind::SubgroupExchange: return 100;
   case ConversionKind::SharedMemoryExchange: return 1000;
+  case ConversionKind::GlobalMemoryExchange: return 100'000;
   case ConversionKind::Unsupported: return 1'000'000;
   }
   return 1'000'000;

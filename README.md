@@ -69,5 +69,8 @@ MLIR is not required for the default build.
 
 ## Acknowledgments
 
-The design is informed by AMD Composable Kernel and CK Tile, NVIDIA CUTLASS/CuTe, ROCm
-FlyDSL, and Colfax Research's *Categorical Foundations for CuTe Layouts*.
+The design is informed by the following awesome projects:
+- [AMD Composable Kernel and CK Tile](https://github.com/ROCm/rocm-libraries/tree/develop/projects/composablekernel)
+- [NVIDIA CUTLASS/CuTe](https://github.com/nvidia/cutlass)
+- [ROCm FlyDSL](https://github.com/ROCm/FlyDSL)
+- Colfax Research's [*Categorical Foundations for CuTe Layouts*](https://arxiv.org/pdf/2601.05972).

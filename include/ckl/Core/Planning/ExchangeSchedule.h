@@ -14,6 +14,10 @@ enum class ExchangeStepKind {
   SharedStore,
   Barrier,
   SharedLoad,
+  GlobalStore,
+  KernelBoundary, // kernel boundary is a synchronization point between two kernels, e.g. a global
+                  // store followed by a global load
+  GlobalLoad,
 };
 
 struct ExchangeStep {
@@ -32,6 +36,7 @@ struct ExchangeSchedule {
   ConversionKind kind;
   std::vector<ExchangeStep> steps;
   std::int64_t sharedElements = 0;
+  std::int64_t globalElements = 0;
   bool requiresBarrier = false;
   std::string explanation;
 };

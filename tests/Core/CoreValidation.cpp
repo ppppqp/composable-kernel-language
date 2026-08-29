@@ -1,4 +1,5 @@
 #include "ckl/Core/Layout/Distribution.h"
+#include "ckl/Extensions/AMD/MfmaLayouts.h"
 #include "ckl/Core/Layout/StorageLayout.h"
 #include "ckl/Core/Composition/Task.h"
 #include "ckl/Core/Planning/ExchangeSchedule.h"
@@ -13,6 +14,7 @@
 #include <string>
 
 using namespace ckl::core;
+using ckl::extensions::amd::makeMfmaAccumulatorDistribution;
 
 namespace {
 
@@ -296,6 +298,92 @@ void testConcreteConversionPlans() {
   check(shared.requiresBarrier && shared.sharedElements == 8 && shared.steps.size() == 17 &&
             shared.steps[8].kind == ExchangeStepKind::Barrier,
         "cross-subgroup movements lower to store/barrier/load shared-memory schedule");
+
+  Distribution gridTarget = rotated;
+  gridTarget.scope = ExecutionScope::Grid;
+  ConversionPlan globalPlan = classifyConversion(base, gridTarget, 4);
+  ExchangeSchedule global = scheduleConversion(globalPlan);
+  check(globalPlan.kind == ConversionKind::GlobalMemoryExchange &&
+            global.globalElements == 8 && global.steps.size() == 17 &&
+            global.steps[8].kind == ExchangeStepKind::KernelBoundary,
+        "cross-scope ownership lowers to global store/kernel-boundary/load materialization");
+
+  Distribution identicalGridTarget = base;
+  identicalGridTarget.scope = ExecutionScope::Grid;
+  check(classifyConversion(base, identicalGridTarget, 4).kind ==
+            ConversionKind::GlobalMemoryExchange,
+        "scope changes require materialization even when coordinate ownership is identical");
+  identicalGridTarget.scope = ExecutionScope::Workgroup;
+  base.scope = ExecutionScope::Subgroup;
+  check(classifyConversion(base, identicalGridTarget, 4).kind ==
+            ConversionKind::SharedMemoryExchange,
+        "subgroup-to-workgroup scope changes materialize in shared memory");
+  base.scope = ExecutionScope::Grid;
+  identicalGridTarget.scope = ExecutionScope::Grid;
+  check(classifyConversion(base, identicalGridTarget, 4).kind == ConversionKind::Identity,
+        "equal grid scopes do not force a spurious global round trip");
+}
+
+void testStableSerializationAndDiagram() {
+  IndexSpace domain = space({8}, "lane");
+  IndexPredicate active = IndexPredicate::compare(
+      IndexExpr::input(0), IndexPredicate::Comparison::Less, IndexExpr::constant(5));
+  IndexMap map(domain, domain,
+               {IndexExpr::bitXor(IndexExpr::input(0), IndexExpr::constant(3))}, active);
+  std::string serialized = map.serialize();
+  IndexMap parsed = IndexMap::deserialize(serialized);
+  check(parsed.serialize() == serialized &&
+            proveEquivalent(map, parsed).status == EquivalenceResult::Status::Equivalent,
+        "index maps have a deterministic semantic parse/print round-trip");
+  std::string picture = parsed.diagram();
+  check(picture.find("[0] -> [3]") != std::string::npos &&
+            picture.find("[5] -> inactive") != std::string::npos,
+        "map diagrams expose active mappings and predicate-masked coordinates");
+
+  bool rejected = false;
+  try {
+    (void)IndexMap::deserialize(serialized + "junk");
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  check(rejected, "index-map parser rejects trailing malformed input");
+}
+
+void testSymbolicIndexSpaces() {
+  IndexSpace symbolic({{"m", 4}, Axis::symbolic("n", "N")});
+  check(!symbolic.isStatic() && symbolic.str() == "(m:4, n:$N)",
+        "index spaces retain named symbolic extents");
+  IndexSpace concrete = symbolic.instantiate({{"N", 8}});
+  check(concrete.isStatic() && concrete.volume() == 32 && concrete.axes()[1].extent == 8,
+        "symbolic index spaces instantiate to ordinary enumerable spaces");
+  IndexMap symbolicIdentity = IndexMap::identity(symbolic);
+  check(IndexMap::deserialize(symbolicIdentity.serialize()).serialize() ==
+            symbolicIdentity.serialize(),
+        "symbolic extents survive index-map parse/print round-trips");
+
+  bool rejected = false;
+  try {
+    (void)symbolic.instantiate({{"N", 0}});
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  check(rejected, "symbolic extent bindings must be positive");
+}
+
+void testCkMfmaAccumulatorFamily() {
+  // CK WarpGemmAttributeMfmaImplF32F32F32M16N16K4 uses {1,4,4,16}.
+  Distribution mfma16 = makeMfmaAccumulatorDistribution({1, 4, 4, 16});
+  DistributionCheck check16 = verifyDistribution(mfma16);
+  check(check16.valid && check16.covering && check16.unique &&
+            mfma16.ownership.apply({37, 0, 3}) == std::vector<std::int64_t>({11, 5}),
+        "CK MFMA 16x16 accumulator encoding is a unique wave-level tile cover");
+
+  // CK's M32N32 implementations use {4,2,4,32}.
+  Distribution mfma32 = makeMfmaAccumulatorDistribution({4, 2, 4, 32});
+  DistributionCheck check32 = verifyDistribution(mfma32);
+  check(check32.valid && check32.covering && check32.unique &&
+            mfma32.ownership.apply({17, 3, 2}) == std::vector<std::int64_t>({26, 17}),
+        "the same CK factor encoding composes into the 32x32 MFMA family");
 }
 
 void testTaskComposition() {
@@ -368,6 +456,13 @@ void testSymbolicPresburgerProof() {
   SymbolicProofResult unequal = proveAffineEqual(domain, {{1, 0, 0}}, {{0, 0, 0}});
   check(equal.proven && !unequal.proven,
         "MLIR Presburger proves symbolic affine equality and finds a counter-domain");
+
+  IndexSpaceDomain bounds =
+      makeIndexSpaceDomain(IndexSpace({{"m", 4}, Axis::symbolic("n", "N")}));
+  check(bounds.extentSymbols == std::vector<std::string>({"N"}) &&
+            bounds.domain.dimensions == 2 && bounds.domain.symbols == 1 &&
+            bounds.domain.inequalities.size() == 5,
+        "symbolic IndexSpace extents lower to Presburger coordinate and positivity bounds");
 }
 #endif
 
@@ -389,6 +484,9 @@ int main() {
     testXorSwizzle();
     testStorageLayouts();
     testConcreteConversionPlans();
+    testStableSerializationAndDiagram();
+    testSymbolicIndexSpaces();
+    testCkMfmaAccumulatorFamily();
     testTaskComposition();
     testCkStyleHierarchicalFixture();
 #ifdef CKL_ENABLE_MLIR

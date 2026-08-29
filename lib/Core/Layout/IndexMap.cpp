@@ -1,6 +1,7 @@
 #include "ckl/Core/Layout/IndexMap.h"
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <numeric>
 #include <sstream>
@@ -8,8 +9,18 @@
 
 namespace ckl::core {
 
+Axis::Axis(std::string name, std::int64_t extent) : name(std::move(name)), extent(extent) {}
+
 bool Axis::operator==(const Axis &other) const {
-  return name == other.name && extent == other.extent;
+  return name == other.name && extent == other.extent && extentSymbol == other.extentSymbol;
+}
+
+Axis Axis::symbolic(std::string name, std::string extentSymbol) {
+  if (extentSymbol.empty())
+    throw std::invalid_argument("symbolic extent name must not be empty");
+  Axis axis(std::move(name), -1);
+  axis.extentSymbol = std::move(extentSymbol);
+  return axis;
 }
 
 namespace {
@@ -22,7 +33,7 @@ IndexSpace::IndexSpace(std::vector<Axis> axes) : axes_(std::move(axes)), profile
   auto root = std::make_shared<Structure>();
   root->name = "flat";
   for (const Axis &axis : axes_) {
-    if (axis.extent <= 0)
+    if (axis.isStatic() && axis.extent <= 0)
       throw std::invalid_argument("index-space extents must be positive");
     if (profile_.size() > 1)
       profile_ += ',';
@@ -57,10 +68,34 @@ IndexSpace IndexSpace::product(std::string name, std::vector<IndexSpace> childre
 }
 
 std::int64_t IndexSpace::volume() const {
+  if (!isStatic())
+    throw std::logic_error("symbolic index space must be instantiated before enumeration");
   std::int64_t result = 1;
   for (const Axis &axis : axes_)
     result *= axis.extent;
   return result;
+}
+
+bool IndexSpace::isStatic() const {
+  return std::all_of(axes_.begin(), axes_.end(), [](const Axis &axis) { return axis.isStatic(); });
+}
+
+IndexSpace
+IndexSpace::instantiate(const std::unordered_map<std::string, std::int64_t> &bindings) const {
+  std::vector<Axis> axes;
+  axes.reserve(axes_.size());
+  for (const Axis &axis : axes_) {
+    if (axis.isStatic()) {
+      axes.push_back(axis);
+      continue;
+    }
+    auto binding = bindings.find(*axis.extentSymbol);
+    if (binding == bindings.end() || binding->second <= 0)
+      throw std::invalid_argument("missing or non-positive symbolic extent binding: " +
+                                  *axis.extentSymbol);
+    axes.push_back({axis.name, binding->second});
+  }
+  return IndexSpace(std::move(axes));
 }
 
 bool IndexSpace::contains(const std::vector<std::int64_t> &point) const {
@@ -77,7 +112,8 @@ bool IndexSpace::sameShape(const IndexSpace &other) const {
   if (rank() != other.rank())
     return false;
   for (std::size_t i = 0; i < rank(); ++i) {
-    if (axes_[i].extent != other.axes_[i].extent)
+    if (axes_[i].extent != other.axes_[i].extent ||
+        axes_[i].extentSymbol != other.axes_[i].extentSymbol)
       return false;
   }
   return true;
@@ -86,7 +122,8 @@ bool IndexSpace::sameShape(const IndexSpace &other) const {
 std::size_t IndexSpace::hash() const {
   std::size_t result = std::hash<std::string>{}(profile_);
   for (const Axis &axis : axes_)
-    result = combineHash(result, std::hash<std::int64_t>{}(axis.extent));
+    result = combineHash(result, axis.isStatic() ? std::hash<std::int64_t>{}(axis.extent)
+                                                 : std::hash<std::string>{}(*axis.extentSymbol));
   return result;
 }
 
@@ -96,7 +133,26 @@ std::string IndexSpace::str() const {
   for (std::size_t i = 0; i < axes_.size(); ++i) {
     if (i)
       os << ", ";
-    os << axes_[i].name << ':' << axes_[i].extent;
+    os << axes_[i].name << ':';
+    if (axes_[i].isStatic())
+      os << axes_[i].extent;
+    else
+      os << '$' << *axes_[i].extentSymbol;
+  }
+  return os.str() + ')';
+}
+
+std::string IndexSpace::serialize() const {
+  std::ostringstream os;
+  os << "s(";
+  for (std::size_t i = 0; i < axes_.size(); ++i) {
+    if (i)
+      os << ',';
+    os << axes_[i].name << ':';
+    if (axes_[i].isStatic())
+      os << axes_[i].extent;
+    else
+      os << '$' << *axes_[i].extentSymbol;
   }
   return os.str() + ')';
 }
@@ -231,6 +287,35 @@ IndexExpr IndexExpr::normalize() const {
 
 std::size_t IndexExpr::hash() const { return std::hash<std::string>{}(normalize().str()); }
 
+/*
+  i(0)             input dimension 0
+  c(3)             constant 3
+  a(i(0),c(1))     d0 + 1
+  m(i(0),c(4))     d0 * 4
+  d(i(0),c...)     floor division
+  r(i(0),...)      modulo
+  x(i(0),c(3))     XOR swizzle
+*/
+std::string IndexExpr::serialize() const {
+  switch (node_->kind) {
+  case Kind::Input:
+    return "i(" + std::to_string(node_->value) + ')';
+  case Kind::Constant:
+    return "c(" + std::to_string(node_->value) + ')';
+  case Kind::Add:
+    return "a(" + IndexExpr(node_->lhs).serialize() + ',' + IndexExpr(node_->rhs).serialize() + ')';
+  case Kind::Multiply:
+    return "m(" + IndexExpr(node_->lhs).serialize() + ',' + IndexExpr(node_->rhs).serialize() + ')';
+  case Kind::FloorDiv:
+    return "d(" + IndexExpr(node_->lhs).serialize() + ',' + std::to_string(node_->value) + ')';
+  case Kind::Modulo:
+    return "r(" + IndexExpr(node_->lhs).serialize() + ',' + std::to_string(node_->value) + ')';
+  case Kind::Xor:
+    return "x(" + IndexExpr(node_->lhs).serialize() + ',' + IndexExpr(node_->rhs).serialize() + ')';
+  }
+  throw std::logic_error("unknown index expression kind");
+}
+
 std::string IndexExpr::str() const {
   std::function<std::string(const std::shared_ptr<const Node> &)> print =
       [&](const std::shared_ptr<const Node> &node) -> std::string {
@@ -337,6 +422,16 @@ std::string IndexPredicate::str() const {
 
 std::size_t IndexPredicate::hash() const { return std::hash<std::string>{}(str()); }
 
+std::string IndexPredicate::serialize() const {
+  if (node_->kind == Node::Kind::Always)
+    return "t";
+  if (node_->kind == Node::Kind::And)
+    return "and(" + IndexPredicate(node_->leftPredicate).serialize() + ',' +
+           IndexPredicate(node_->rightPredicate).serialize() + ')';
+  return "cmp(" + std::to_string(static_cast<int>(node_->comparison)) + ',' +
+         node_->lhs->serialize() + ',' + node_->rhs->serialize() + ')';
+}
+
 IndexMap::IndexMap(IndexSpace domain, IndexSpace codomain, std::vector<IndexExpr> results,
                    IndexPredicate predicate)
     : domain_(std::move(domain)), codomain_(std::move(codomain)), results_(std::move(results)),
@@ -363,8 +458,9 @@ IndexMap IndexMap::permutation(IndexSpace domain, std::vector<std::size_t> order
     if (order[i] >= order.size() || seen[order[i]])
       throw std::invalid_argument("invalid permutation");
     seen[order[i]] = true;
-    axes.push_back({resultNames.empty() ? domain.axes()[order[i]].name : resultNames[i],
-                    domain.axes()[order[i]].extent});
+    Axis axis = domain.axes()[order[i]];
+    axis.name = resultNames.empty() ? axis.name : resultNames[i];
+    axes.push_back(std::move(axis));
     results.push_back(IndexExpr::input(order[i]));
   }
   return IndexMap(std::move(domain), IndexSpace(std::move(axes)), std::move(results));
@@ -456,6 +552,185 @@ std::string IndexMap::str() const {
     os << results_[i].str();
   }
   return os.str() + '}';
+}
+
+namespace {
+class MapParser {
+public:
+  explicit MapParser(const std::string &text) : text(text) {}
+
+  void expect(char value) {
+    if (position >= text.size() || text[position++] != value)
+      throw std::invalid_argument("invalid serialized index map");
+  }
+  void expect(const std::string &value) {
+    if (text.compare(position, value.size(), value) != 0)
+      throw std::invalid_argument("invalid serialized index map");
+    position += value.size();
+  }
+  std::int64_t integer() {
+    std::size_t begin = position;
+    if (position < text.size() && text[position] == '-')
+      ++position;
+    while (position < text.size() && std::isdigit(static_cast<unsigned char>(text[position])))
+      ++position;
+    if (begin == position || (text[begin] == '-' && begin + 1 == position))
+      throw std::invalid_argument("expected integer in serialized index map");
+    return std::stoll(text.substr(begin, position - begin));
+  }
+  std::string identifier() {
+    std::size_t begin = position;
+    while (position < text.size() && text[position] != ':' && text[position] != ',' &&
+           text[position] != ')')
+      ++position;
+    if (begin == position)
+      throw std::invalid_argument("expected axis name in serialized index map");
+    return text.substr(begin, position - begin);
+  }
+  IndexSpace space() {
+    expect("s(");
+    std::vector<Axis> axes;
+    if (position < text.size() && text[position] != ')') {
+      while (true) {
+        std::string name = identifier();
+        expect(':');
+        if (text.at(position) == '$') {
+          ++position;
+          axes.push_back(Axis::symbolic(std::move(name), identifier()));
+        } else {
+          axes.push_back({std::move(name), integer()});
+        }
+        if (text[position] != ',')
+          break;
+        ++position;
+      }
+    }
+    expect(')');
+    return IndexSpace(std::move(axes));
+  }
+  IndexExpr expression() {
+    const char kind = text.at(position++);
+    expect('(');
+    if (kind == 'i' || kind == 'c') {
+      auto value = integer();
+      expect(')');
+      return kind == 'i' ? IndexExpr::input(static_cast<std::size_t>(value))
+                         : IndexExpr::constant(value);
+    }
+    IndexExpr lhs = expression();
+    expect(',');
+    if (kind == 'd' || kind == 'r') {
+      auto value = integer();
+      expect(')');
+      return kind == 'd' ? IndexExpr::floorDiv(lhs, value) : IndexExpr::modulo(lhs, value);
+    }
+    IndexExpr rhs = expression();
+    expect(')');
+    if (kind == 'a')
+      return IndexExpr::add(lhs, rhs);
+    if (kind == 'm')
+      return IndexExpr::multiply(lhs, rhs);
+    if (kind == 'x')
+      return IndexExpr::bitXor(lhs, rhs);
+    throw std::invalid_argument("unknown expression in serialized index map");
+  }
+  IndexPredicate predicate() {
+    if (text.at(position) == 't') {
+      ++position;
+      return IndexPredicate::always();
+    }
+    if (text.compare(position, 4, "and(") == 0) {
+      position += 4;
+      auto lhs = predicate();
+      expect(',');
+      auto rhs = predicate();
+      expect(')');
+      return IndexPredicate::logicalAnd(lhs, rhs);
+    }
+    expect("cmp(");
+    auto comparison = static_cast<IndexPredicate::Comparison>(integer());
+    expect(',');
+    auto lhs = expression();
+    expect(',');
+    auto rhs = expression();
+    expect(')');
+    return IndexPredicate::compare(lhs, comparison, rhs);
+  }
+  bool done() const { return position == text.size(); }
+
+private:
+  const std::string &text;
+  std::size_t position = 0;
+};
+
+std::string serializeSpace(const IndexSpace &space) { return space.serialize(); }
+} // namespace
+
+std::string IndexMap::serialize() const {
+  std::ostringstream os;
+  os << "map(" << serializeSpace(domain_) << ';' << serializeSpace(codomain_) << ";[";
+  for (std::size_t i = 0; i < results_.size(); ++i) {
+    if (i)
+      os << ',';
+    os << results_[i].serialize();
+  }
+  return os.str() + "];" + predicate_.serialize() + ')';
+}
+
+IndexMap IndexMap::deserialize(const std::string &text) {
+  MapParser parser(text);
+  parser.expect("map(");
+  IndexSpace domain = parser.space();
+  parser.expect(';');
+  IndexSpace codomain = parser.space();
+  parser.expect(';');
+  parser.expect('[');
+  std::vector<IndexExpr> results;
+  if (codomain.rank() != 0) {
+    for (std::size_t i = 0; i < codomain.rank(); ++i) {
+      if (i)
+        parser.expect(',');
+      results.push_back(parser.expression());
+    }
+  }
+  parser.expect(']');
+  parser.expect(';');
+  IndexPredicate predicate = parser.predicate();
+  parser.expect(')');
+  if (!parser.done())
+    throw std::invalid_argument("trailing text in serialized index map");
+  return IndexMap(std::move(domain), std::move(codomain), std::move(results), std::move(predicate));
+}
+
+std::string IndexMap::diagram(std::int64_t pointLimit) const {
+  std::ostringstream os;
+  os << domain_.str() << " -> " << codomain_.str() << '\n';
+  if (domain_.volume() > pointLimit) {
+    os << "<diagram omitted: " << domain_.volume() << " points exceeds limit>\n";
+    return os.str();
+  }
+  for (const auto &point : enumerate(domain_)) {
+    os << '[';
+    for (std::size_t i = 0; i < point.size(); ++i) {
+      if (i)
+        os << ',';
+      os << point[i];
+    }
+    os << "] -> ";
+    auto result = tryApply(point);
+    if (!result) {
+      os << "inactive\n";
+      continue;
+    }
+    os << '[';
+    for (std::size_t i = 0; i < result->size(); ++i) {
+      if (i)
+        os << ',';
+      os << (*result)[i];
+    }
+    os << "]\n";
+  }
+  return os.str();
 }
 
 // NOTE: This assumes a canonical row-major correspondence between factorizations of the same

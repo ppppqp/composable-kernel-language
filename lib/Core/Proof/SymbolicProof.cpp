@@ -3,6 +3,7 @@
 #include "mlir/Analysis/Presburger/IntegerRelation.h"
 #include "mlir/Analysis/Presburger/PresburgerSpace.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace ckl::core {
@@ -32,6 +33,62 @@ IntegerPolyhedron buildSet(const SymbolicDomain &domain) {
 }
 
 } // namespace
+
+/*
+Translates an IndexSpace into a Presburger domain.
+(m: 4, n: $N) is equivalent to the Presburger domain:
+  d0 >= 0
+  d0 <= 3
+  d1 >= 0
+  d1 <= N - 1
+  N >= 1
+*/
+IndexSpaceDomain makeIndexSpaceDomain(const IndexSpace &space) {
+  std::vector<std::string> symbols;
+  // collect all symbols in all axes
+  for (const Axis &axis : space.axes()) {
+    if (!axis.isStatic() &&
+        std::find(symbols.begin(), symbols.end(), *axis.extentSymbol) == symbols.end())
+      symbols.push_back(*axis.extentSymbol);
+  }
+  SymbolicDomain domain{space.rank(), symbols.size(), {}, {}};
+  const std::size_t width = domain.dimensions + domain.symbols + 1;
+  for (std::size_t dimension = 0; dimension < space.rank(); ++dimension) {
+    // the lower/upper is organized as dimension coeff, symbol coeff, constant term
+    // d0...dn-1, s0...sm-1, constant
+    std::vector<std::int64_t> lower(width);
+
+    // for each dimension, we add a lower bound of 0 and an upper bound of extent - 1
+    lower[dimension] = 1;
+    // inequalities is a list of affine expressions constrained to be >= 0, so we add the lower
+    // bound as -d_i <= 0
+    domain.inequalities.push_back({std::move(lower)});
+
+    std::vector<std::int64_t> upper(width);
+    upper[dimension] = -1;
+    const Axis &axis = space.axes()[dimension];
+    if (axis.isStatic()) {
+      // static, no need to add symbol
+      // -d + extent - 1 >= 0
+      upper.back() = axis.extent - 1;
+    } else {
+      // add symbol
+      // -d + N - 1 >= 0
+      auto symbol = std::find(symbols.begin(), symbols.end(), *axis.extentSymbol);
+      upper[domain.dimensions + static_cast<std::size_t>(symbol - symbols.begin())] = 1;
+      upper.back() = -1;
+    }
+    domain.inequalities.push_back({std::move(upper)});
+  }
+  for (std::size_t symbol = 0; symbol < symbols.size(); ++symbol) {
+    //  N - 1 >= 0
+    std::vector<std::int64_t> positive(width);
+    positive[domain.dimensions + symbol] = 1;
+    positive.back() = -1;
+    domain.inequalities.push_back({std::move(positive)});
+  }
+  return {std::move(domain), std::move(symbols)};
+}
 
 /*
 difference = lhs - rhs
