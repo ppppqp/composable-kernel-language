@@ -57,5 +57,7 @@ struct ConversionPlan {
 ConversionPlan classifyConversion(const Distribution &source, const Distribution &target,
                                   std::int64_t subgroupSize);
 const char *toString(ConversionKind kind);
+std::string serialize(const Distribution &distribution);
+Distribution deserializeDistribution(const std::string &text);
 
 } // namespace ckl::core

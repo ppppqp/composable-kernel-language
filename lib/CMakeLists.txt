@@ -1,2 +1,5 @@
 add_subdirectory(Core)
 add_subdirectory(Extensions)
+if(CKL_ENABLE_MLIR)
+  add_subdirectory(Dialect)
+endif()

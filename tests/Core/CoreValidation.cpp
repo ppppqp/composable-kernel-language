@@ -123,6 +123,8 @@ void testEquivalenceWitness() {
 
 void testDistributionAndConversions() {
   Distribution base = contiguousDistribution(4, 2);
+  check(serialize(deserializeDistribution(serialize(base))) == serialize(base),
+        "distributions have a deterministic semantic serialization round-trip");
   DistributionCheck validity = verifyDistribution(base);
   check(validity.valid && validity.covering && validity.unique,
         "CK-style P x Y to X distribution is a unique cover");

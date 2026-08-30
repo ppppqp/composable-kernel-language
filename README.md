@@ -34,19 +34,32 @@ compiler or performance model.
 
 ### DSL and compiler
 
-Not implemented yet. This layer is expected to contain the frontend, MLIR dialects,
-inference and transformation passes, target lowering, and runtime integration.
+The compiler layer currently contains an initial MLIR dialect and an optimizer driver. It
+uses the standalone core for semantic verification and layout-conversion planning. The
+frontend DSL, target lowering, and runtime integration are still under development.
 
-The eventual DSL and dialects should encode semantics established by the core rather than
-define a competing layout model.
+The DSL and dialect follow a few design principles:
+
+1. The DSL is a thin, inspectable frontend over MLIR rather than a second layout algebra.
+2. Logical tile shape is separate from physical ownership, local storage, and memory
+   placement.
+3. Layout negotiation and communication costs remain explicit in compiler IR.
+4. Generic composition semantics stay target-independent; hardware-specific layouts and
+   lowering live in extensions.
+5. Dialect verification and planning reuse the same semantics validated by the core.
 
 ## Repository layout
 
 ```text
 include/ckl/Core/       public core APIs
 lib/Core/               core implementations
+include/ckl/Dialect/    MLIR dialect definitions and public APIs
+lib/Dialect/            dialect implementations and transformations
+include/ckl/Extensions/ target-specific extension APIs
+lib/Extensions/         target-specific extension implementations
+tools/ckl-opt/          CKL optimizer driver
 tests/Core/             semantic and property-style validation
-tests/Core/fixtures/    checked-in reference coordinate tables
+tests/Dialect/          MLIR round-trip, verification, and transformation tests
 ```
 
 ## Building the standalone core
@@ -66,6 +79,33 @@ ctest --test-dir build --output-on-failure
 ```
 
 MLIR is not required for the default build.
+
+## Building with a local MLIR checkout
+
+The optional compiler build requires an LLVM/MLIR build tree containing
+`MLIRConfig.cmake`, the MLIR libraries, and TableGen tools. Point `LLVM_BUILD` at the LLVM
+build directory and pass its MLIR package directory to CMake:
+
+```bash
+export LLVM_BUILD=/path/to/llvm-project/build
+
+cmake -S . -B build -G Ninja \
+   -DCMAKE_BUILD_TYPE=Debug \
+   -DCKL_ENABLE_MLIR=ON \  # specify this to enable DSL build
+   -DMLIR_DIR="$LLVM_BUILD/lib/cmake/mlir"
+
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+The resulting optimizer is available at:
+
+```text
+build-mlir/tools/ckl-opt/ckl-opt
+```
+
+`MLIR_DIR` selects the MLIR package. Its `MLIRConfig.cmake` locates the matching LLVM
+package and supplies the LLVM/MLIR include directories, libraries, and CMake build helpers.
 
 ## Acknowledgments
 
