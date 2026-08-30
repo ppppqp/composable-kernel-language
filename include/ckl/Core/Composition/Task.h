@@ -49,6 +49,9 @@ struct TaskAlternative {
   // Target-independent relative estimate used for bounded planning. Target
   // extensions may calibrate this scale, but lower is always better.
   std::int64_t estimatedExecutionCost = 0;
+  // Stable identity for provenance and cache keys. When empty, planners use
+  // task:name as the deterministic fallback.
+  std::string implementationId;
 };
 
 struct CompositionCandidate {
@@ -71,5 +74,31 @@ CompositionDecision selectComposition(const std::vector<TaskAlternative> &produc
                                       const std::string &consumerPort, std::int64_t subgroupSize,
                                       std::int64_t registerLimit, std::int64_t sharedMemoryLimit,
                                       const std::vector<std::string> &availableCapabilities = {});
+
+struct PipelineStage {
+  std::string invocation;
+  std::vector<TaskAlternative> alternatives;
+  std::string inputPort;
+  std::string outputPort;
+};
+
+struct PipelineSelection {
+  std::vector<std::size_t> alternatives;
+  std::vector<ConversionPlan> conversions;
+  std::int64_t score = 0;
+  std::vector<std::string> provenance;
+};
+
+struct PipelineDecision {
+  std::optional<PipelineSelection> selected;
+  std::vector<std::string> diagnostics;
+};
+
+// Globally selects a realization for each stage in a linear task pipeline.
+// Each boundary connects stages[i].outputPort to stages[i + 1].inputPort.
+PipelineDecision selectLinearPipeline(
+    const std::vector<PipelineStage> &stages, std::int64_t subgroupSize,
+    std::int64_t registerLimit, std::int64_t sharedMemoryLimit,
+    const std::vector<std::string> &availableCapabilities = {});
 
 } // namespace ckl::core

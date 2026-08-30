@@ -11,6 +11,7 @@ foreach(expected
     "ckl.compose"
     "ckl.producer_alternative = \"direct\""
     "ckl.consumer_alternative = \"operand\""
+    "ckl.producer_implementation_id = \"producer.direct.v1\""
     "score = 35"
     "explanation = \"resource limit exceeded\"")
   string(FIND "${selection_output}" "${expected}" position)

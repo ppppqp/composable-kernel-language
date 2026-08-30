@@ -54,6 +54,20 @@ Distribution contiguousDistribution(std::int64_t executors, std::int64_t localVa
   return {executor, local, tile, ownership, localStorage};
 }
 
+Distribution rotateExecutorOwnership(Distribution distribution) {
+  const std::int64_t executors = distribution.executorSpace.axes().front().extent;
+  const std::int64_t localValues = distribution.localSpace.axes().front().extent;
+  IndexSpace product({{"p0", executors}, {"y0", localValues}});
+  IndexExpr owner = IndexExpr::add(
+      IndexExpr::multiply(
+          IndexExpr::modulo(IndexExpr::add(IndexExpr::input(0), IndexExpr::constant(1)),
+                            executors),
+          IndexExpr::constant(localValues)),
+      IndexExpr::input(1));
+  distribution.ownership = IndexMap(product, distribution.tileSpace, {owner});
+  return distribution;
+}
+
 void testIdentityAndAssociativity() {
   IndexSpace a = space({2, 3});
   IndexSpace b = space({3, 2});
@@ -392,13 +406,14 @@ void testTaskComposition() {
   Distribution direct = contiguousDistribution(4, 2);
   Distribution permuted = contiguousDistribution(4, 2, true);
   TaskAlternative producerDirect{"dequant", "direct", {},
-                                 {{"weight", direct, Placement::Private, 2}}, 16, 0, {}, {}, {}};
+                                 {{"weight", direct, Placement::Private, 2}}, 16, 0, {}, {}, {}, 0,
+                                 ""};
   TaskAlternative producerExpensive{"dequant", "expensive", {},
                                     {{"weight", permuted, Placement::Shared, 2}}, 80, 8192,
                                     {"async-copy"}, {{"scratch", 8192, 0, 2}},
-                                    {{EffectKind::Write, "scratch", 0}}};
+                                    {{EffectKind::Write, "scratch", 0}}, 0, ""};
   TaskAlternative consumer{"mma", "operand", {{"rhs", direct, Placement::Private, 2}}, {}, 32, 0,
-                           {"mma"}, {}, {{EffectKind::Consume, "rhs", 0}}};
+                           {"mma"}, {}, {{EffectKind::Consume, "rhs", 0}}, 0, ""};
   CompositionDecision decision = selectComposition(
       {producerExpensive, producerDirect}, {consumer}, "weight", "rhs", 4, 64, 4096, {"mma"});
   check(decision.selected.has_value() && decision.selected->producerAlternative == 1 &&
@@ -422,6 +437,44 @@ void testTaskComposition() {
             costAware.selected->conversion.kind == ConversionKind::LocalPermutation &&
             costAware.selected->score == 10,
         "task composition includes internal execution cost instead of greedily preferring identity");
+}
+
+void testLinearPipelineSelection() {
+  Distribution direct = contiguousDistribution(4, 2);
+  Distribution permuted = contiguousDistribution(4, 2, true);
+  Distribution rotated = rotateExecutorOwnership(direct);
+
+  TaskAlternative source{"source", "only", {}, {{"out", direct, Placement::Private}},
+                         8, 0, {}, {}, {}, 0, ""};
+  source.implementationId = "source.impl.v1";
+  TaskAlternative greedyMiddle{"middle", "greedy", {{"in", direct, Placement::Private}},
+                               {{"out", rotated, Placement::Private}}, 8, 0, {}, {}, {}, 0, ""};
+  greedyMiddle.implementationId = "middle.greedy.v1";
+  TaskAlternative globalMiddle{"middle", "global", {{"in", permuted, Placement::Private}},
+                               {{"out", direct, Placement::Private}}, 8, 0, {}, {}, {}, 0, ""};
+  globalMiddle.implementationId = "middle.global.v1";
+  TaskAlternative sink{"sink", "only", {{"in", direct, Placement::Private}}, {},
+                       8, 0, {}, {}, {}, 0, ""};
+  sink.implementationId = "sink.impl.v1";
+
+  CompositionDecision edgeLocal = selectComposition(
+      {source}, {greedyMiddle, globalMiddle}, "out", "in", 4, 64, 4096);
+  check(edgeLocal.selected && edgeLocal.selected->consumerAlternative == 0,
+        "edge-local selection greedily prefers the identity input boundary");
+
+  PipelineDecision global = selectLinearPipeline(
+      {{"source-call", {source}, "", "out"},
+       {"middle-call", {greedyMiddle, globalMiddle}, "in", "out"},
+       {"sink-call", {sink}, "in", ""}},
+      4, 64, 4096);
+  check(global.selected && global.selected->alternatives == std::vector<std::size_t>({0, 1, 0}) &&
+            global.selected->score == 10 && global.selected->conversions.size() == 2 &&
+            global.selected->conversions[0].kind == ConversionKind::LocalPermutation &&
+            global.selected->conversions[1].kind == ConversionKind::Identity,
+        "linear dynamic programming chooses the globally cheaper layout path");
+  check(global.selected && global.selected->provenance.size() == 3 &&
+            global.selected->provenance[1].find("middle.global.v1") != std::string::npos,
+        "pipeline decisions retain stable invocation and implementation identities");
 }
 
 void testCkStyleHierarchicalFixture() {
@@ -504,6 +557,7 @@ int main() {
     testSymbolicIndexSpaces();
     testCkMfmaAccumulatorFamily();
     testTaskComposition();
+    testLinearPipelineSelection();
     testCkStyleHierarchicalFixture();
 #ifdef CKL_ENABLE_MLIR
     testSymbolicPresburgerProof();

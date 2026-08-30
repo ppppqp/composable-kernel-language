@@ -62,6 +62,7 @@ LogicalResult BindSymbolsOp::verify() {
 
 LogicalResult TaskOp::verify() {
   llvm::StringSet<> names;
+  llvm::StringSet<> implementationIds;
   for (Attribute attribute : getAlternatives()) {
     auto dictionary = mlir::dyn_cast<DictionaryAttr>(attribute);
     auto name = dictionary ? dictionary.getAs<StringAttr>("name") : StringAttr{};
@@ -69,6 +70,14 @@ LogicalResult TaskOp::verify() {
       return emitOpError("each alternative must be a dictionary with a string 'name'");
     if (!names.insert(name.getValue()).second)
       return emitOpError("has duplicate alternative '") << name.getValue() << "'";
+    if (Attribute value = dictionary.get("implementation_id")) {
+      auto id = mlir::dyn_cast<StringAttr>(value);
+      if (!id || id.getValue().empty())
+        return emitOpError("alternative '") << name.getValue()
+               << "' implementation_id must be a non-empty string";
+      if (!implementationIds.insert(id.getValue()).second)
+        return emitOpError("has duplicate implementation_id '") << id.getValue() << "'";
+    }
     if (auto origin = dictionary.getAs<StringAttr>("origin")) {
       if (origin.getValue() != "user" && origin.getValue() != "compiler" &&
           origin.getValue() != "extension" && origin.getValue() != "library")

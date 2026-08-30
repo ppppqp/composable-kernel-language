@@ -1,7 +1,7 @@
 #include "ckl/Dialect/CKL/Transforms/Passes.h"
 
-#include "ckl/Core/Layout/Distribution.h"
 #include "ckl/Core/Composition/Task.h"
+#include "ckl/Core/Layout/Distribution.h"
 #include "ckl/Dialect/CKL/IR/CKLOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
@@ -12,20 +12,26 @@ namespace {
 
 FailureOr<::ckl::core::Placement> importPlacement(DictionaryAttr port, Operation *anchor) {
   auto value = port.getAs<StringAttr>("placement");
-  if (!value || value.getValue() == "private") return ::ckl::core::Placement::Private;
-  if (value.getValue() == "shared") return ::ckl::core::Placement::Shared;
-  if (value.getValue() == "global") return ::ckl::core::Placement::Global;
+  if (!value || value.getValue() == "private")
+    return ::ckl::core::Placement::Private;
+  if (value.getValue() == "shared")
+    return ::ckl::core::Placement::Shared;
+  if (value.getValue() == "global")
+    return ::ckl::core::Placement::Global;
   anchor->emitError("unknown task port placement '") << value.getValue() << "'";
   return failure();
 }
 
-FailureOr<::ckl::core::TaskAlternative>
-importAlternative(TaskOp task, DictionaryAttr attribute, Operation *anchor) {
+FailureOr<::ckl::core::TaskAlternative> importAlternative(TaskOp task, DictionaryAttr attribute,
+                                                          Operation *anchor) {
   auto name = attribute.getAs<StringAttr>("name");
-  if (!name) return failure(); // TaskOp verifier diagnoses this first.
+  if (!name)
+    return failure(); // TaskOp verifier diagnoses this first.
   ::ckl::core::TaskAlternative result;
   result.task = task.getSymName().str();
   result.name = name.getValue().str();
+  if (auto value = attribute.getAs<StringAttr>("implementation_id"))
+    result.implementationId = value.getValue().str();
   if (auto value = attribute.getAs<IntegerAttr>("registers_per_thread"))
     result.registersPerThread = value.getInt();
   if (auto value = attribute.getAs<IntegerAttr>("shared_memory_bytes"))
@@ -60,21 +66,23 @@ importAlternative(TaskOp task, DictionaryAttr attribute, Operation *anchor) {
         anchor->emitError("task effect requires string kind and resource");
         return failure();
       }
-      auto importedKind = kind.getValue() == "read" ? ::ckl::core::EffectKind::Read
-          : kind.getValue() == "write" ? ::ckl::core::EffectKind::Write
-          : kind.getValue() == "consume" ? ::ckl::core::EffectKind::Consume
-          : kind.getValue() == "channel-put" ? ::ckl::core::EffectKind::ChannelPut
-          : kind.getValue() == "channel-get" ? ::ckl::core::EffectKind::ChannelGet
-          : kind.getValue() == "channel-release" ? ::ckl::core::EffectKind::ChannelRelease
-          : ::ckl::core::EffectKind::Read;
-      result.effects.push_back({importedKind, resource.getValue().str(),
-                                stage ? stage.getInt() : 0});
+      auto importedKind = kind.getValue() == "read"          ? ::ckl::core::EffectKind::Read
+                          : kind.getValue() == "write"       ? ::ckl::core::EffectKind::Write
+                          : kind.getValue() == "consume"     ? ::ckl::core::EffectKind::Consume
+                          : kind.getValue() == "channel-put" ? ::ckl::core::EffectKind::ChannelPut
+                          : kind.getValue() == "channel-get" ? ::ckl::core::EffectKind::ChannelGet
+                          : kind.getValue() == "channel-release"
+                              ? ::ckl::core::EffectKind::ChannelRelease
+                              : ::ckl::core::EffectKind::Read;
+      result.effects.push_back(
+          {importedKind, resource.getValue().str(), stage ? stage.getInt() : 0});
     }
   }
 
   auto importPorts = [&](StringRef field, std::vector<::ckl::core::PortRealization> &ports) {
     auto values = attribute.getAs<ArrayAttr>(field);
-    if (!values) return success();
+    if (!values)
+      return success();
     for (Attribute value : values) {
       auto port = mlir::dyn_cast<DictionaryAttr>(value);
       auto portName = port ? port.getAs<StringAttr>("name") : StringAttr{};
@@ -84,9 +92,11 @@ importAlternative(TaskOp task, DictionaryAttr attribute, Operation *anchor) {
         return failure();
       }
       auto placement = importPlacement(port, anchor);
-      if (failed(placement)) return failure();
+      if (failed(placement))
+        return failure();
       std::int64_t vectorWidth = 1;
-      if (auto value = port.getAs<IntegerAttr>("vector_width")) vectorWidth = value.getInt();
+      if (auto value = port.getAs<IntegerAttr>("vector_width"))
+        vectorWidth = value.getInt();
       if (vectorWidth <= 0) {
         anchor->emitError("task port vector_width must be positive");
         return failure();
@@ -103,8 +113,7 @@ importAlternative(TaskOp task, DictionaryAttr attribute, Operation *anchor) {
   return result;
 }
 
-class SelectAlternativesPass
-    : public PassWrapper<SelectAlternativesPass, OperationPass<ModuleOp>> {
+class SelectAlternativesPass : public PassWrapper<SelectAlternativesPass, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SelectAlternativesPass)
   StringRef getArgument() const final { return "ckl-select-alternatives"; }
@@ -114,6 +123,7 @@ public:
 
   void runOnOperation() final {
     SmallVector<TaskComposeOp> boundaries;
+    // collect all task composition boundaries in the module before mutating the IR
     getOperation().walk([&](TaskComposeOp op) { boundaries.push_back(op); });
     IRRewriter rewriter(&getContext());
     for (TaskComposeOp op : boundaries) {
@@ -123,12 +133,18 @@ public:
       try {
         for (Attribute value : producer.getAlternatives()) {
           auto imported = importAlternative(producer, mlir::cast<DictionaryAttr>(value), op);
-          if (failed(imported)) { signalPassFailure(); return; }
+          if (failed(imported)) {
+            signalPassFailure();
+            return;
+          }
           producers.push_back(std::move(*imported));
         }
         for (Attribute value : consumer.getAlternatives()) {
           auto imported = importAlternative(consumer, mlir::cast<DictionaryAttr>(value), op);
-          if (failed(imported)) { signalPassFailure(); return; }
+          if (failed(imported)) {
+            signalPassFailure();
+            return;
+          }
           consumers.push_back(std::move(*imported));
         }
         std::vector<std::string> capabilities;
@@ -142,37 +158,55 @@ public:
           for (const auto &candidate : decision.considered)
             diagnostic.attachNote(op.getLoc())
                 << producers[candidate.producerAlternative].name << " -> "
-                << consumers[candidate.consumerAlternative].name << ": "
-                << candidate.explanation;
+                << consumers[candidate.consumerAlternative].name << ": " << candidate.explanation;
           signalPassFailure();
           return;
         }
         const auto &selected = *decision.selected;
         const auto &source = producers[selected.producerAlternative].outputs;
         const auto &target = consumers[selected.consumerAlternative].inputs;
-        auto sourcePort = llvm::find_if(source, [&](const auto &p) { return p.name == op.getProducerPort(); });
-        auto targetPort = llvm::find_if(target, [&](const auto &p) { return p.name == op.getConsumerPort(); });
+        auto sourcePort =
+            llvm::find_if(source, [&](const auto &p) { return p.name == op.getProducerPort(); });
+        auto targetPort =
+            llvm::find_if(target, [&](const auto &p) { return p.name == op.getConsumerPort(); });
         OperationState state(op.getLoc(), ComposeOp::getOperationName());
         state.addOperands(op.getInput());
         state.addTypes(op.getResult().getType());
-        state.addAttribute("source", DistributionAttr::get(
-            &getContext(), ::ckl::core::serialize(sourcePort->distribution)));
-        state.addAttribute("target", DistributionAttr::get(
-            &getContext(), ::ckl::core::serialize(targetPort->distribution)));
+        state.addAttribute(
+            "source",
+            DistributionAttr::get(&getContext(), ::ckl::core::serialize(sourcePort->distribution)));
+        state.addAttribute(
+            "target",
+            DistributionAttr::get(&getContext(), ::ckl::core::serialize(targetPort->distribution)));
         state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(op.getSubgroupSize()));
         state.addAttribute("ckl.producer_alternative",
                            rewriter.getStringAttr(producers[selected.producerAlternative].name));
         state.addAttribute("ckl.consumer_alternative",
                            rewriter.getStringAttr(consumers[selected.consumerAlternative].name));
+        const auto &selectedProducer = producers[selected.producerAlternative];
+        const auto &selectedConsumer = consumers[selected.consumerAlternative];
+        state.addAttribute(
+            "ckl.producer_implementation_id",
+            rewriter.getStringAttr(selectedProducer.implementationId.empty()
+                                       ? selectedProducer.task + ":" + selectedProducer.name
+                                       : selectedProducer.implementationId));
+        state.addAttribute(
+            "ckl.consumer_implementation_id",
+            rewriter.getStringAttr(selectedConsumer.implementationId.empty()
+                                       ? selectedConsumer.task + ":" + selectedConsumer.name
+                                       : selectedConsumer.implementationId));
         SmallVector<Attribute> considered;
         for (const auto &candidate : decision.considered)
-          considered.push_back(rewriter.getDictionaryAttr({
-              rewriter.getNamedAttr("producer", rewriter.getStringAttr(
-                  producers[candidate.producerAlternative].name)),
-              rewriter.getNamedAttr("consumer", rewriter.getStringAttr(
-                  consumers[candidate.consumerAlternative].name)),
-              rewriter.getNamedAttr("score", rewriter.getI64IntegerAttr(candidate.score)),
-              rewriter.getNamedAttr("explanation", rewriter.getStringAttr(candidate.explanation))}));
+          considered.push_back(rewriter.getDictionaryAttr(
+              {rewriter.getNamedAttr(
+                   "producer",
+                   rewriter.getStringAttr(producers[candidate.producerAlternative].name)),
+               rewriter.getNamedAttr(
+                   "consumer",
+                   rewriter.getStringAttr(consumers[candidate.consumerAlternative].name)),
+               rewriter.getNamedAttr("score", rewriter.getI64IntegerAttr(candidate.score)),
+               rewriter.getNamedAttr("explanation",
+                                     rewriter.getStringAttr(candidate.explanation))}));
         state.addAttribute("ckl.considered_alternatives", rewriter.getArrayAttr(considered));
         rewriter.setInsertionPoint(op);
         Operation *replacement = rewriter.create(state);
@@ -186,8 +220,7 @@ public:
   }
 };
 
-class PlanCompositionsPass
-    : public PassWrapper<PlanCompositionsPass, OperationPass<ModuleOp>> {
+class PlanCompositionsPass : public PassWrapper<PlanCompositionsPass, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PlanCompositionsPass)
 
@@ -254,11 +287,11 @@ public:
         continue;
       }
       StringRef operationName =
-          op.getKind() == "local-permutation" ? LocalPermuteOp::getOperationName()
-        : op.getKind() == "subgroup-exchange" ? SubgroupExchangeOp::getOperationName()
-        : op.getKind() == "shared-memory-exchange" ? SharedExchangeOp::getOperationName()
-        : op.getKind() == "global-memory-exchange" ? GlobalExchangeOp::getOperationName()
-        : StringRef{};
+          op.getKind() == "local-permutation"        ? LocalPermuteOp::getOperationName()
+          : op.getKind() == "subgroup-exchange"      ? SubgroupExchangeOp::getOperationName()
+          : op.getKind() == "shared-memory-exchange" ? SharedExchangeOp::getOperationName()
+          : op.getKind() == "global-memory-exchange" ? GlobalExchangeOp::getOperationName()
+                                                     : StringRef{};
       if (operationName.empty()) {
         op.emitError("has no scheduling operation for conversion kind '") << op.getKind() << "'";
         signalPassFailure();

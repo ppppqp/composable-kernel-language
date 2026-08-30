@@ -11,16 +11,14 @@ Existing systems such as AMD Composable Kernel, CuTe, and FlyDSL provide strong 
 algebras and tile-programming abstractions. CKL builds on that prior art and focuses on a
 different boundary: compiler-mediated composition between separately specified tile tasks.
 
-The intended design emphasizes:
+CKL emphasizes:
 
-1. Separate representations for execution ownership, per-executor values, logical tile
-   coordinates, and storage addressing.
-2. Compiler-visible layout composition, equivalence proofs, conversion plans, and decision
-   provenance.
-3. A reusable core library whose semantics can be tested independently of frontend syntax
-   and MLIR dialect design.
-4. Logical tasks that can use compiler-derived, target-provided, imported, or explicitly
-   authored alternatives, with automatic, partially constrained, or pinned selection.
+1. **Layout Abstraction**: Separate representations for execution ownership, per-executor values, logical tile
+   coordinates, and storage addressing. This lays the groundwork for layout inference and optimization.
+2. **Visibility**: Compiler-visible layout composition, equivalence proofs, conversion plans, and decision
+   provenance. We consider this important for experts and KDA to work on kernel optimization.
+3. **Composability**: Logical tasks that can use compiler-derived, target-provided, imported, or explicitly
+   authored alternatives, with automatic, partially constrained, or pinned selection. Any arch-specific kernels can fit in the optimization pipeline seamlessly with just a declaration on contract and a tunable cost model.
 
 ## Architecture
 
@@ -38,15 +36,6 @@ The compiler layer currently contains an initial MLIR dialect and an optimizer d
 uses the standalone core for semantic verification and layout-conversion planning. The
 frontend DSL, target lowering, and runtime integration are still under development.
 
-The DSL and dialect follow a few design principles:
-
-1. The DSL is a thin, inspectable frontend over MLIR rather than a second layout algebra.
-2. Logical tile shape is separate from physical ownership, local storage, and memory
-   placement.
-3. Layout negotiation and communication costs remain explicit in compiler IR.
-4. Generic composition semantics stay target-independent; hardware-specific layouts and
-   lowering live in extensions.
-5. Dialect verification and planning reuse the same semantics validated by the core.
 
 ## Repository layout
 
