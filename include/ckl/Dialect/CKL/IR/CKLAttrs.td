@@ -7,21 +7,21 @@ include "CKLDialect.td"
 def CKL_SpaceAttr : CKL_Attr<"Space", "space"> {
   let summary = "A serialized CKL index space";
   let parameters = (ins StringRefParameter<"canonical CKLCore space spelling">:$value);
-  let assemblyFormat = "`<` $value `>`";
+  let hasCustomAssemblyFormat = 1;
   let genVerifyDecl = 1;
 }
 
 def CKL_IndexMapAttr : CKL_Attr<"IndexMap", "index_map"> {
   let summary = "A serialized CKL index map";
   let parameters = (ins StringRefParameter<"canonical CKLCore map spelling">:$value);
-  let assemblyFormat = "`<` $value `>`";
+  let hasCustomAssemblyFormat = 1;
   let genVerifyDecl = 1;
 }
 
 def CKL_DistributionAttr : CKL_Attr<"Distribution", "distribution"> {
   let summary = "A serialized CKL physical tile distribution";
   let parameters = (ins StringRefParameter<"canonical CKLCore distribution spelling">:$value);
-  let assemblyFormat = "`<` $value `>`";
+  let hasCustomAssemblyFormat = 1;
   let genVerifyDecl = 1;
 }
 
