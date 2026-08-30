@@ -113,118 +113,11 @@ FailureOr<::ckl::core::TaskAlternative> importAlternative(TaskOp task, Dictionar
   return result;
 }
 
-class SelectAlternativesPass : public PassWrapper<SelectAlternativesPass, OperationPass<ModuleOp>> {
+class SelectAlternativesPass
+    : public PassWrapper<SelectAlternativesPass, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SelectAlternativesPass)
   StringRef getArgument() const final { return "ckl-select-alternatives"; }
-  StringRef getDescription() const final {
-    return "Jointly select task alternatives using CKLCore";
-  }
-
-  void runOnOperation() final {
-    SmallVector<TaskComposeOp> boundaries;
-    // collect all task composition boundaries in the module before mutating the IR
-    getOperation().walk([&](TaskComposeOp op) { boundaries.push_back(op); });
-    IRRewriter rewriter(&getContext());
-    for (TaskComposeOp op : boundaries) {
-      auto producer = SymbolTable::lookupNearestSymbolFrom<TaskOp>(op, op.getProducerAttr());
-      auto consumer = SymbolTable::lookupNearestSymbolFrom<TaskOp>(op, op.getConsumerAttr());
-      std::vector<::ckl::core::TaskAlternative> producers, consumers;
-      try {
-        for (Attribute value : producer.getAlternatives()) {
-          auto imported = importAlternative(producer, mlir::cast<DictionaryAttr>(value), op);
-          if (failed(imported)) {
-            signalPassFailure();
-            return;
-          }
-          producers.push_back(std::move(*imported));
-        }
-        for (Attribute value : consumer.getAlternatives()) {
-          auto imported = importAlternative(consumer, mlir::cast<DictionaryAttr>(value), op);
-          if (failed(imported)) {
-            signalPassFailure();
-            return;
-          }
-          consumers.push_back(std::move(*imported));
-        }
-        std::vector<std::string> capabilities;
-        for (Attribute value : op.getCapabilities())
-          capabilities.push_back(mlir::cast<StringAttr>(value).getValue().str());
-        auto decision = ::ckl::core::selectComposition(
-            producers, consumers, op.getProducerPort().str(), op.getConsumerPort().str(),
-            op.getSubgroupSize(), op.getRegisterLimit(), op.getSharedMemoryLimit(), capabilities);
-        if (!decision.selected) {
-          auto diagnostic = op.emitError("no legal task-alternative pair");
-          for (const auto &candidate : decision.considered)
-            diagnostic.attachNote(op.getLoc())
-                << producers[candidate.producerAlternative].name << " -> "
-                << consumers[candidate.consumerAlternative].name << ": " << candidate.explanation;
-          signalPassFailure();
-          return;
-        }
-        const auto &selected = *decision.selected;
-        const auto &source = producers[selected.producerAlternative].outputs;
-        const auto &target = consumers[selected.consumerAlternative].inputs;
-        auto sourcePort =
-            llvm::find_if(source, [&](const auto &p) { return p.name == op.getProducerPort(); });
-        auto targetPort =
-            llvm::find_if(target, [&](const auto &p) { return p.name == op.getConsumerPort(); });
-        OperationState state(op.getLoc(), ComposeOp::getOperationName());
-        state.addOperands(op.getInput());
-        state.addTypes(op.getResult().getType());
-        state.addAttribute(
-            "source",
-            DistributionAttr::get(&getContext(), ::ckl::core::serialize(sourcePort->distribution)));
-        state.addAttribute(
-            "target",
-            DistributionAttr::get(&getContext(), ::ckl::core::serialize(targetPort->distribution)));
-        state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(op.getSubgroupSize()));
-        state.addAttribute("ckl.producer_alternative",
-                           rewriter.getStringAttr(producers[selected.producerAlternative].name));
-        state.addAttribute("ckl.consumer_alternative",
-                           rewriter.getStringAttr(consumers[selected.consumerAlternative].name));
-        const auto &selectedProducer = producers[selected.producerAlternative];
-        const auto &selectedConsumer = consumers[selected.consumerAlternative];
-        state.addAttribute(
-            "ckl.producer_implementation_id",
-            rewriter.getStringAttr(selectedProducer.implementationId.empty()
-                                       ? selectedProducer.task + ":" + selectedProducer.name
-                                       : selectedProducer.implementationId));
-        state.addAttribute(
-            "ckl.consumer_implementation_id",
-            rewriter.getStringAttr(selectedConsumer.implementationId.empty()
-                                       ? selectedConsumer.task + ":" + selectedConsumer.name
-                                       : selectedConsumer.implementationId));
-        SmallVector<Attribute> considered;
-        for (const auto &candidate : decision.considered)
-          considered.push_back(rewriter.getDictionaryAttr(
-              {rewriter.getNamedAttr(
-                   "producer",
-                   rewriter.getStringAttr(producers[candidate.producerAlternative].name)),
-               rewriter.getNamedAttr(
-                   "consumer",
-                   rewriter.getStringAttr(consumers[candidate.consumerAlternative].name)),
-               rewriter.getNamedAttr("score", rewriter.getI64IntegerAttr(candidate.score)),
-               rewriter.getNamedAttr("explanation",
-                                     rewriter.getStringAttr(candidate.explanation))}));
-        state.addAttribute("ckl.considered_alternatives", rewriter.getArrayAttr(considered));
-        rewriter.setInsertionPoint(op);
-        Operation *replacement = rewriter.create(state);
-        rewriter.replaceOp(op, replacement->getResults());
-      } catch (const std::exception &error) {
-        op.emitError("failed to import task alternatives: ") << error.what();
-        signalPassFailure();
-        return;
-      }
-    }
-  }
-};
-
-class SelectLinearPipelinesPass
-    : public PassWrapper<SelectLinearPipelinesPass, OperationPass<ModuleOp>> {
-public:
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SelectLinearPipelinesPass)
-  StringRef getArgument() const final { return "ckl-select-linear-pipelines"; }
   StringRef getDescription() const final {
     return "Globally select alternatives for linear CKL task-composition chains";
   }
@@ -238,6 +131,13 @@ public:
       ::ckl::core::PipelineSelection selection;
     };
     SmallVector<Prepared> prepared;
+    struct PreparedSingle {
+      TaskComposeOp edge;
+      std::vector<::ckl::core::TaskAlternative> producers;
+      std::vector<::ckl::core::TaskAlternative> consumers;
+      ::ckl::core::CompositionDecision decision;
+    };
+    SmallVector<PreparedSingle> singles;
 
     // Solve all chains before rewriting any of them: failure leaves the IR
     // entirely unresolved instead of committing a partial global decision.
@@ -252,7 +152,57 @@ public:
         chain.push_back(next);
         current = next;
       }
-      if (chain.size() < 2) continue;
+      if (chain.size() < 2) {
+        bool hasTaskSuccessor = llvm::any_of(root.getResult().getUsers(), [](Operation *user) {
+          return mlir::isa<TaskComposeOp>(user);
+        });
+        if (hasTaskSuccessor) {
+          root.emitError("non-linear task composition requires the future DAG selector");
+          signalPassFailure();
+          return;
+        }
+        PreparedSingle single;
+        single.edge = root;
+        auto producer = SymbolTable::lookupNearestSymbolFrom<TaskOp>(root, root.getProducerAttr());
+        auto consumer = SymbolTable::lookupNearestSymbolFrom<TaskOp>(root, root.getConsumerAttr());
+        try {
+          for (Attribute value : producer.getAlternatives()) {
+            auto imported = importAlternative(
+                producer, mlir::cast<DictionaryAttr>(value), root);
+            if (failed(imported)) { signalPassFailure(); return; }
+            single.producers.push_back(std::move(*imported));
+          }
+          for (Attribute value : consumer.getAlternatives()) {
+            auto imported = importAlternative(
+                consumer, mlir::cast<DictionaryAttr>(value), root);
+            if (failed(imported)) { signalPassFailure(); return; }
+            single.consumers.push_back(std::move(*imported));
+          }
+        } catch (const std::exception &error) {
+          root.emitError("failed to import task alternatives: ") << error.what();
+          signalPassFailure();
+          return;
+        }
+        std::vector<std::string> capabilities;
+        for (Attribute value : root.getCapabilities())
+          capabilities.push_back(mlir::cast<StringAttr>(value).getValue().str());
+        single.decision = ::ckl::core::selectComposition(
+            single.producers, single.consumers, root.getProducerPort().str(),
+            root.getConsumerPort().str(), root.getSubgroupSize(), root.getRegisterLimit(),
+            root.getSharedMemoryLimit(), capabilities);
+        if (!single.decision.selected) {
+          auto diagnostic = root.emitError("no legal task-alternative pair");
+          for (const auto &candidate : single.decision.considered)
+            diagnostic.attachNote(root.getLoc())
+                << single.producers[candidate.producerAlternative].name << " -> "
+                << single.consumers[candidate.consumerAlternative].name << ": "
+                << candidate.explanation;
+          signalPassFailure();
+          return;
+        }
+        singles.push_back(std::move(single));
+        continue;
+      }
 
       auto subgroupSize = chain.front().getSubgroupSize();
       auto registerLimit = chain.front().getRegisterLimit();
@@ -361,6 +311,48 @@ public:
         rewriter.replaceOp(edge, replacement->getResults());
       }
     }
+    for (PreparedSingle &single : singles) {
+      TaskComposeOp edge = single.edge;
+      const auto &selected = *single.decision.selected;
+      const auto &producer = single.producers[selected.producerAlternative];
+      const auto &consumer = single.consumers[selected.consumerAlternative];
+      auto source = llvm::find_if(producer.outputs, [&](const auto &port) {
+        return port.name == edge.getProducerPort();
+      });
+      auto target = llvm::find_if(consumer.inputs, [&](const auto &port) {
+        return port.name == edge.getConsumerPort();
+      });
+      OperationState state(edge.getLoc(), ComposeOp::getOperationName());
+      state.addOperands(edge.getInput());
+      state.addTypes(edge.getResult().getType());
+      state.addAttribute("source", DistributionAttr::get(
+          &getContext(), ::ckl::core::serialize(source->distribution)));
+      state.addAttribute("target", DistributionAttr::get(
+          &getContext(), ::ckl::core::serialize(target->distribution)));
+      state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(edge.getSubgroupSize()));
+      state.addAttribute("ckl.producer_alternative", rewriter.getStringAttr(producer.name));
+      state.addAttribute("ckl.consumer_alternative", rewriter.getStringAttr(consumer.name));
+      state.addAttribute("ckl.producer_implementation_id", rewriter.getStringAttr(
+          producer.implementationId.empty() ? producer.task + ":" + producer.name
+                                            : producer.implementationId));
+      state.addAttribute("ckl.consumer_implementation_id", rewriter.getStringAttr(
+          consumer.implementationId.empty() ? consumer.task + ":" + consumer.name
+                                            : consumer.implementationId));
+      SmallVector<Attribute> considered;
+      for (const auto &candidate : single.decision.considered)
+        considered.push_back(rewriter.getDictionaryAttr({
+            rewriter.getNamedAttr("producer", rewriter.getStringAttr(
+                single.producers[candidate.producerAlternative].name)),
+            rewriter.getNamedAttr("consumer", rewriter.getStringAttr(
+                single.consumers[candidate.consumerAlternative].name)),
+            rewriter.getNamedAttr("score", rewriter.getI64IntegerAttr(candidate.score)),
+            rewriter.getNamedAttr("explanation",
+                                  rewriter.getStringAttr(candidate.explanation))}));
+      state.addAttribute("ckl.considered_alternatives", rewriter.getArrayAttr(considered));
+      rewriter.setInsertionPoint(edge);
+      Operation *replacement = rewriter.create(state);
+      rewriter.replaceOp(edge, replacement->getResults());
+    }
   }
 };
 
@@ -468,17 +460,12 @@ std::unique_ptr<Pass> createSelectAlternativesPass() {
   return std::make_unique<SelectAlternativesPass>();
 }
 
-std::unique_ptr<Pass> createSelectLinearPipelinesPass() {
-  return std::make_unique<SelectLinearPipelinesPass>();
-}
-
 std::unique_ptr<Pass> createScheduleConversionsPass() {
   return std::make_unique<ScheduleConversionsPass>();
 }
 
 void registerCKLPasses() {
   PassRegistration<SelectAlternativesPass>();
-  PassRegistration<SelectLinearPipelinesPass>();
   PassRegistration<PlanCompositionsPass>();
   PassRegistration<ScheduleConversionsPass>();
 }

@@ -1,5 +1,5 @@
 execute_process(
-  COMMAND "${CKL_OPT}" --ckl-select-linear-pipelines "${INPUT_FILE}"
+  COMMAND "${CKL_OPT}" --ckl-select-alternatives "${INPUT_FILE}"
   RESULT_VARIABLE pipeline_result
   OUTPUT_VARIABLE pipeline_output
   ERROR_VARIABLE pipeline_error
@@ -26,7 +26,7 @@ foreach(expected
 endforeach()
 
 execute_process(
-  COMMAND "${CKL_OPT}" --ckl-select-linear-pipelines --ckl-plan-compositions "${INPUT_FILE}"
+  COMMAND "${CKL_OPT}" --ckl-select-alternatives --ckl-plan-compositions "${INPUT_FILE}"
   RESULT_VARIABLE planned_result
   OUTPUT_VARIABLE planned_output
   ERROR_VARIABLE planned_error
