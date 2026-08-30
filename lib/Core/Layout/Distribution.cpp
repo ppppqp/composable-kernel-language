@@ -1,6 +1,7 @@
 #include "ckl/Core/Layout/Distribution.h"
 
 #include <map>
+#include <stdexcept>
 #include <sstream>
 #include <stdexcept>
 
@@ -171,6 +172,73 @@ const char *toString(ConversionKind kind) {
     return "unsupported";
   }
   return "unknown";
+}
+
+namespace {
+void appendField(std::string &result, const std::string &value) {
+  result += std::to_string(value.size()) + ':' + value;
+}
+
+std::string readField(const std::string &text, std::size_t &position) {
+  std::size_t colon = text.find(':', position);
+  if (colon == std::string::npos)
+    throw std::invalid_argument("invalid length-prefixed distribution field");
+  std::size_t length = std::stoull(text.substr(position, colon - position));
+  position = colon + 1;
+  if (length > text.size() - position)
+    throw std::invalid_argument("truncated distribution field");
+  std::string value = text.substr(position, length);
+  position += length;
+  return value;
+}
+} // namespace
+
+std::string serialize(const Distribution &distribution) {
+  std::string result = "dist(" + std::to_string(static_cast<int>(distribution.scope)) + ',' +
+                       (distribution.allowReplication ? "1," : "0,");
+  appendField(result, distribution.executorSpace.serialize());
+  result += ',';
+  appendField(result, distribution.localSpace.serialize());
+  result += ',';
+  appendField(result, distribution.tileSpace.serialize());
+  result += ',';
+  appendField(result, distribution.ownership.serialize());
+  result += ',';
+  appendField(result, distribution.localStorage.serialize());
+  return result + ')';
+}
+
+Distribution deserializeDistribution(const std::string &text) {
+  if (text.rfind("dist(", 0) != 0)
+    throw std::invalid_argument("serialized distribution must start with dist(");
+  std::size_t position = 5;
+  std::size_t comma = text.find(',', position);
+  if (comma == std::string::npos)
+    throw std::invalid_argument("serialized distribution has no scope delimiter");
+  int scopeValue = std::stoi(text.substr(position, comma - position));
+  if (scopeValue < static_cast<int>(ExecutionScope::Subgroup) ||
+      scopeValue > static_cast<int>(ExecutionScope::Grid))
+    throw std::invalid_argument("serialized distribution has invalid execution scope");
+  position = comma + 1;
+  if (position + 1 >= text.size() || (text[position] != '0' && text[position] != '1') ||
+      text[position + 1] != ',')
+    throw std::invalid_argument("serialized distribution has invalid replication flag");
+  bool replication = text[position] == '1';
+  position += 2;
+  std::string executor = readField(text, position);
+  if (text.at(position++) != ',') throw std::invalid_argument("invalid distribution delimiter");
+  std::string local = readField(text, position);
+  if (text.at(position++) != ',') throw std::invalid_argument("invalid distribution delimiter");
+  std::string tile = readField(text, position);
+  if (text.at(position++) != ',') throw std::invalid_argument("invalid distribution delimiter");
+  std::string ownership = readField(text, position);
+  if (text.at(position++) != ',') throw std::invalid_argument("invalid distribution delimiter");
+  std::string storage = readField(text, position);
+  if (position + 1 != text.size() || text[position] != ')')
+    throw std::invalid_argument("trailing text in serialized distribution");
+  return {IndexSpace::deserialize(executor), IndexSpace::deserialize(local),
+          IndexSpace::deserialize(tile), IndexMap::deserialize(ownership),
+          IndexMap::deserialize(storage), replication, static_cast<ExecutionScope>(scopeValue)};
 }
 
 } // namespace ckl::core

@@ -62,6 +62,7 @@ public:
   std::size_t hash() const;
   std::string str() const;
   std::string serialize() const;
+  static IndexSpace deserialize(const std::string &text);
 
 private:
   IndexSpace(std::vector<Axis> axes, std::string profile,

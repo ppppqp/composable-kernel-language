@@ -677,6 +677,14 @@ std::string IndexMap::serialize() const {
   return os.str() + "];" + predicate_.serialize() + ')';
 }
 
+IndexSpace IndexSpace::deserialize(const std::string &text) {
+  MapParser parser(text);
+  IndexSpace space = parser.space();
+  if (!parser.done())
+    throw std::invalid_argument("trailing text in serialized index space");
+  return space;
+}
+
 IndexMap IndexMap::deserialize(const std::string &text) {
   MapParser parser(text);
   parser.expect("map(");
