@@ -36,6 +36,24 @@ def CKL_InvokeOp : CKL_Op<"invoke"> {
   let hasVerifier = 1;
 }
 
+// An unresolved edge between a producer task and a consumer task. Selection
+// replaces this with ckl.compose using the chosen alternatives' port layouts.
+def CKL_TaskComposeOp : CKL_Op<"task_compose", [Pure, SameOperandsAndResultType]> {
+  let summary = "Jointly select producer and consumer task alternatives";
+  let arguments = (ins CKL_TileType:$input,
+                       FlatSymbolRefAttr:$producer,
+                       StrAttr:$producer_port,
+                       FlatSymbolRefAttr:$consumer,
+                       StrAttr:$consumer_port,
+                       DefaultValuedAttr<I64Attr, "64">:$subgroup_size,
+                       DefaultValuedAttr<I64Attr, "256">:$register_limit,
+                       DefaultValuedAttr<I64Attr, "65536">:$shared_memory_limit,
+                       StrArrayAttr:$capabilities);
+  let results = (outs CKL_TileType:$result);
+  let assemblyFormat = "$input `producer` `=` $producer `[` $producer_port `]` `consumer` `=` $consumer `[` $consumer_port `]` `capabilities` `=` $capabilities `attributes` attr-dict `:` type($input)";
+  let hasVerifier = 1;
+}
+
 // Represents an unresolved producer/consumer boundary
 def CKL_ComposeOp : CKL_Op<"compose", [Pure, SameOperandsAndResultType]> {
   let summary = "An unresolved producer/consumer composition boundary";

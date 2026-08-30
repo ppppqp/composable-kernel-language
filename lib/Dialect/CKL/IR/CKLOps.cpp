@@ -69,7 +69,30 @@ LogicalResult TaskOp::verify() {
       return emitOpError("each alternative must be a dictionary with a string 'name'");
     if (!names.insert(name.getValue()).second)
       return emitOpError("has duplicate alternative '") << name.getValue() << "'";
+    if (auto origin = dictionary.getAs<StringAttr>("origin")) {
+      if (origin.getValue() != "user" && origin.getValue() != "compiler" &&
+          origin.getValue() != "extension" && origin.getValue() != "library")
+        return emitOpError("alternative '") << name.getValue()
+               << "' has unknown origin '" << origin.getValue() << "'";
+    }
+    for (StringRef field : {"registers_per_thread", "shared_memory_bytes"})
+      if (auto value = dictionary.getAs<IntegerAttr>(field); value && value.getInt() < 0)
+        return emitOpError("alternative '") << name.getValue() << "' has negative " << field;
+    if (auto capabilities = dictionary.getAs<ArrayAttr>("required_capabilities"))
+      if (!llvm::all_of(capabilities, [](Attribute value) { return mlir::isa<StringAttr>(value); }))
+        return emitOpError("alternative '") << name.getValue()
+               << "' requires capabilities to be strings";
   }
+  return success();
+}
+
+LogicalResult TaskComposeOp::verify() {
+  if (getRegisterLimit() < 0 || getSharedMemoryLimit() < 0 || getSubgroupSize() <= 0)
+    return emitOpError("requires non-negative resource limits and a positive subgroup size");
+  if (!SymbolTable::lookupNearestSymbolFrom<TaskOp>(*this, getProducerAttr()))
+    return emitOpError("references unknown producer task ") << getProducer();
+  if (!SymbolTable::lookupNearestSymbolFrom<TaskOp>(*this, getConsumerAttr()))
+    return emitOpError("references unknown consumer task ") << getConsumer();
   return success();
 }
 
