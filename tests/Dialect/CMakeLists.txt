@@ -1,10 +1,16 @@
 add_test(
   NAME ckl-dialect-roundtrip
-  COMMAND $<TARGET_FILE:ckl-opt> ${CMAKE_CURRENT_SOURCE_DIR}/roundtrip.mlir
+  COMMAND ${CMAKE_COMMAND}
+    -DCKL_OPT=$<TARGET_FILE:ckl-opt>
+    -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/roundtrip.mlir
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_roundtrip.cmake
 )
 add_test(
   NAME ckl-dialect-plan-compositions
-  COMMAND $<TARGET_FILE:ckl-opt> --ckl-plan-compositions ${CMAKE_CURRENT_SOURCE_DIR}/roundtrip.mlir
+  COMMAND ${CMAKE_COMMAND}
+    -DCKL_OPT=$<TARGET_FILE:ckl-opt>
+    -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/roundtrip.mlir
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_plan.cmake
 )
 add_test(
   NAME ckl-dialect-invalid-diagnostics

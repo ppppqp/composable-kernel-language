@@ -16,6 +16,7 @@ def CKL_ComposeOp : CKL_Op<"compose", [Pure, SameOperandsAndResultType]> {
   let hasVerifier = 1;
 }
 
+// Represents a resolved conversion with a known conversion kind
 def CKL_ConvertLayoutOp : CKL_Op<"convert_layout", [Pure, SameOperandsAndResultType]> {
   let summary = "An explicit semantic layout conversion";
   let arguments = (ins CKL_TileType:$input, CKL_DistributionAttr:$source,
