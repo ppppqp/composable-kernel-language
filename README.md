@@ -19,8 +19,8 @@ The intended design emphasizes:
    provenance.
 3. A reusable core library whose semantics can be tested independently of frontend syntax
    and MLIR dialect design.
-4. Explicit task alternatives that allow automatic, partially constrained, or pinned
-   implementation choices.
+4. Logical tasks that can use compiler-derived, target-provided, imported, or explicitly
+   authored alternatives, with automatic, partially constrained, or pinned selection.
 
 ## Architecture
 
@@ -101,7 +101,7 @@ ctest --test-dir build --output-on-failure
 The resulting optimizer is available at:
 
 ```text
-build-mlir/tools/ckl-opt/ckl-opt
+build/tools/ckl-opt/ckl-opt
 ```
 
 `MLIR_DIR` selects the MLIR package. Its `MLIRConfig.cmake` locates the matching LLVM

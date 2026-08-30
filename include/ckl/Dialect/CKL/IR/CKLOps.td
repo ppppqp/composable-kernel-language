@@ -4,6 +4,37 @@
 include "CKLTypes.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/IR/SymbolInterfaces.td"
+
+// Binds the symbolic extents in a tile's logical space to SSA index values.
+def CKL_BindSymbolsOp : CKL_Op<"bind_symbols", [Pure]> {
+  let summary = "Bind symbolic tile extents to SSA values";
+  let arguments = (ins CKL_TileType:$input, Variadic<Index>:$bindings,
+                       StrArrayAttr:$symbols);
+  let results = (outs CKL_TileType:$result);
+  let assemblyFormat = "$input `[` $bindings `]` `symbols` `=` $symbols attr-dict `:` type($input) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+// A task names a layout-polymorphic callable contract and its implementation
+// alternatives. Alternative dictionaries must contain a unique string `name`.
+def CKL_TaskOp : CKL_Op<"task", [Symbol]> {
+  let summary = "Declare a layout-polymorphic task";
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       TypeAttrOf<FunctionType>:$function_type,
+                       ArrayAttr:$alternatives);
+  let assemblyFormat = "$sym_name `:` $function_type `alternatives` `=` $alternatives attr-dict";
+  let hasVerifier = 1;
+}
+
+def CKL_InvokeOp : CKL_Op<"invoke"> {
+  let summary = "Invoke a task, optionally selecting an implementation alternative";
+  let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$inputs,
+                       OptionalAttr<StrAttr>:$alternative);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = "$callee `(` $inputs `)` (`alternative` `=` $alternative^)? attr-dict `:` functional-type($inputs, $results)";
+  let hasVerifier = 1;
+}
 
 // Represents an unresolved producer/consumer boundary
 def CKL_ComposeOp : CKL_Op<"compose", [Pure, SameOperandsAndResultType]> {
@@ -20,10 +51,31 @@ def CKL_ComposeOp : CKL_Op<"compose", [Pure, SameOperandsAndResultType]> {
 def CKL_ConvertLayoutOp : CKL_Op<"convert_layout", [Pure, SameOperandsAndResultType]> {
   let summary = "An explicit semantic layout conversion";
   let arguments = (ins CKL_TileType:$input, CKL_DistributionAttr:$source,
-                       CKL_DistributionAttr:$target, StrAttr:$kind);
+                       CKL_DistributionAttr:$target, StrAttr:$kind,
+                       DefaultValuedAttr<I64Attr, "64">:$subgroup_size,
+                       OptionalAttr<StrAttr>:$reason,
+                       OptionalAttr<I64Attr>:$move_count);
   let results = (outs CKL_TileType:$result);
   let assemblyFormat = "$input `source` `=` qualified($source) `target` `=` qualified($target) `kind` `=` $kind `attributes` attr-dict `:` type($input)";
   let hasVerifier = 1;
 }
+
+class CKL_ScheduledConversionOp<string mnemonic>
+    : CKL_Op<mnemonic, [Pure, SameOperandsAndResultType]> {
+  let summary = "A scheduled layout conversion";
+  let arguments = (ins CKL_TileType:$input, CKL_DistributionAttr:$source,
+                       CKL_DistributionAttr:$target,
+                       DefaultValuedAttr<I64Attr, "64">:$subgroup_size,
+                       OptionalAttr<StrAttr>:$reason,
+                       OptionalAttr<I64Attr>:$move_count);
+  let results = (outs CKL_TileType:$result);
+  let assemblyFormat = "$input `source` `=` qualified($source) `target` `=` qualified($target) `attributes` attr-dict `:` type($input)";
+  let hasVerifier = 1;
+}
+
+def CKL_LocalPermuteOp : CKL_ScheduledConversionOp<"local_permute">;
+def CKL_SubgroupExchangeOp : CKL_ScheduledConversionOp<"subgroup_exchange">;
+def CKL_SharedExchangeOp : CKL_ScheduledConversionOp<"shared_exchange">;
+def CKL_GlobalExchangeOp : CKL_ScheduledConversionOp<"global_exchange">;
 
 #endif

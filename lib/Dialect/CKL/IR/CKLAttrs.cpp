@@ -5,8 +5,10 @@
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
+#include <cassert>
 #include <sstream>
 
 using namespace mlir;
@@ -62,6 +64,154 @@ FailureOr<::ckl::core::ExecutionScope> parseScope(AsmParser &parser) {
   parser.emitError(parser.getCurrentLocation()) << "unknown CKL execution scope '" << value << "'";
   return failure();
 }
+
+FailureOr<std::string> parseExpression(AsmParser &parser) {
+  StringRef kind;
+  if (failed(parser.parseKeyword(&kind)) || failed(parser.parseLParen()))
+    return failure();
+  if (kind == "dim" || kind == "const") {
+    std::int64_t value;
+    if (failed(parser.parseInteger(value)) || failed(parser.parseRParen()))
+      return failure();
+    if (kind == "dim" && value < 0) {
+      parser.emitError(parser.getCurrentLocation()) << "dimension index must be non-negative";
+      return failure();
+    }
+    return std::string(kind == "dim" ? "i(" : "c(") + std::to_string(value) + ')';
+  }
+  auto lhs = parseExpression(parser);
+  if (failed(lhs) || failed(parser.parseComma()))
+    return failure();
+  if (kind == "floordiv" || kind == "mod") {
+    std::int64_t divisor;
+    if (failed(parser.parseInteger(divisor)) || failed(parser.parseRParen()))
+      return failure();
+    return std::string(kind == "floordiv" ? "d(" : "r(") + *lhs + ',' +
+           std::to_string(divisor) + ')';
+  }
+  auto rhs = parseExpression(parser);
+  if (failed(rhs) || failed(parser.parseRParen()))
+    return failure();
+  const char prefix = kind == "add" ? 'a' : kind == "mul" ? 'm' : kind == "xor" ? 'x' : '\0';
+  if (!prefix) {
+    parser.emitError(parser.getCurrentLocation()) << "unknown CKL index expression '" << kind << "'";
+    return failure();
+  }
+  return std::string(1, prefix) + '(' + *lhs + ',' + *rhs + ')';
+}
+
+FailureOr<std::string> parsePredicate(AsmParser &parser) {
+  if (succeeded(parser.parseOptionalKeyword("true")))
+    return std::string("t");
+  StringRef kind;
+  if (failed(parser.parseKeyword(&kind)) || failed(parser.parseLParen()))
+    return failure();
+  if (kind == "and") {
+    auto lhs = parsePredicate(parser);
+    if (failed(lhs) || failed(parser.parseComma()))
+      return failure();
+    auto rhs = parsePredicate(parser);
+    if (failed(rhs) || failed(parser.parseRParen()))
+      return failure();
+    return "and(" + *lhs + ',' + *rhs + ')';
+  }
+  if (kind != "cmp") {
+    parser.emitError(parser.getCurrentLocation()) << "expected cmp or and predicate";
+    return failure();
+  }
+  StringRef comparison;
+  if (failed(parser.parseKeyword(&comparison)) || failed(parser.parseComma()))
+    return failure();
+  int comparisonValue = comparison == "lt" ? 0 : comparison == "le" ? 1
+                        : comparison == "eq" ? 2 : comparison == "ne" ? 3
+                        : comparison == "ge" ? 4 : comparison == "gt" ? 5 : -1;
+  if (comparisonValue < 0) {
+    parser.emitError(parser.getCurrentLocation()) << "unknown CKL comparison '" << comparison << "'";
+    return failure();
+  }
+  auto lhs = parseExpression(parser);
+  if (failed(lhs) || failed(parser.parseComma()))
+    return failure();
+  auto rhs = parseExpression(parser);
+  if (failed(rhs) || failed(parser.parseRParen()))
+    return failure();
+  return "cmp(" + std::to_string(comparisonValue) + ',' + *lhs + ',' + *rhs + ')';
+}
+
+class CanonicalPrinter {
+public:
+  CanonicalPrinter(StringRef text, AsmPrinter &printer) : text(text), printer(printer) {}
+
+  void expression() {
+    char kind = take();
+    expect('(');
+    if (kind == 'i' || kind == 'c') {
+      printer << (kind == 'i' ? "dim(" : "const(") << integer();
+      expect(')');
+      printer << ')';
+      return;
+    }
+    printer << (kind == 'a' ? "add(" : kind == 'm' ? "mul(" : kind == 'd' ? "floordiv("
+                                : kind == 'r' ? "mod(" : "xor(");
+    expression();
+    expect(',');
+    printer << ", ";
+    if (kind == 'd' || kind == 'r')
+      printer << integer();
+    else
+      expression();
+    expect(')');
+    printer << ')';
+  }
+
+  void predicate() {
+    if (peek() == 't') {
+      take();
+      printer << "true";
+      return;
+    }
+    if (text.substr(position).starts_with("and(")) {
+      position += 4;
+      printer << "and(";
+      predicate();
+      expect(',');
+      printer << ", ";
+      predicate();
+      expect(')');
+      printer << ')';
+      return;
+    }
+    position += 4; // cmp(
+    static constexpr const char *comparisons[] = {"lt", "le", "eq", "ne", "ge", "gt"};
+    auto comparison = integer();
+    expect(',');
+    printer << "cmp(" << comparisons[comparison] << ", ";
+    expression();
+    expect(',');
+    printer << ", ";
+    expression();
+    expect(')');
+    printer << ')';
+  }
+
+private:
+  char peek() const { return text[position]; }
+  char take() { return text[position++]; }
+  void expect(char value) { assert(take() == value); }
+  std::int64_t integer() {
+    std::size_t begin = position;
+    if (peek() == '-') ++position;
+    while (position < text.size() && llvm::isDigit(text[position])) ++position;
+    std::int64_t value = 0;
+    bool parsed = !text.slice(begin, position).getAsInteger(10, value);
+    assert(parsed);
+    return value;
+  }
+
+  StringRef text;
+  AsmPrinter &printer;
+  std::size_t position = 0;
+};
 
 } // namespace
 
@@ -134,10 +284,10 @@ Attribute IndexMapAttr::parse(AsmParser &parser, Type) {
   std::vector<std::string> results;
   if (failed(parser.parseOptionalRSquare())) {
     while (true) {
-      std::string result;
-      if (failed(parser.parseString(&result)))
+      auto result = parseExpression(parser);
+      if (failed(result))
         return {};
-      results.push_back(std::move(result));
+      results.push_back(std::move(*result));
       if (succeeded(parser.parseOptionalComma()))
         continue;
       if (failed(parser.parseRSquare()))
@@ -145,9 +295,10 @@ Attribute IndexMapAttr::parse(AsmParser &parser, Type) {
       break;
     }
   }
-  std::string predicate;
-  if (failed(parser.parseComma()) || failed(parseNamedField(parser, "predicate")) ||
-      failed(parser.parseString(&predicate)) || failed(parser.parseGreater()))
+  if (failed(parser.parseComma()) || failed(parseNamedField(parser, "predicate")))
+    return {};
+  auto predicate = parsePredicate(parser);
+  if (failed(predicate) || failed(parser.parseGreater()))
     return {};
   std::ostringstream value;
   value << "map(" << (*domain).getValue().str() << ';' << (*codomain).getValue().str() << ";[";
@@ -155,7 +306,7 @@ Attribute IndexMapAttr::parse(AsmParser &parser, Type) {
     if (i) value << ',';
     value << results[i];
   }
-  value << "];" << predicate << ')';
+  value << "];" << *predicate << ')';
   return parser.getChecked<IndexMapAttr>(location, parser.getContext(), value.str());
 }
 
@@ -165,9 +316,11 @@ void IndexMapAttr::print(AsmPrinter &printer) const {
           << ", codomain = " << SpaceAttr::get(getContext(), map.codomain().serialize())
           << ", results = [";
   llvm::interleaveComma(map.results(), printer, [&](const ::ckl::core::IndexExpr &result) {
-    printer << '"' << result.serialize() << '"';
+    CanonicalPrinter(result.serialize(), printer).expression();
   });
-  printer << "], predicate = \"" << map.predicate().serialize() << "\">";
+  printer << "], predicate = ";
+  CanonicalPrinter(map.predicate().serialize(), printer).predicate();
+  printer << '>';
 }
 
 Attribute DistributionAttr::parse(AsmParser &parser, Type) {
