@@ -70,7 +70,8 @@ MLIR is not required for the default build.
 ## Acknowledgments
 
 The design is informed by the following awesome projects:
-- [AMD Composable Kernel and CK Tile](https://github.com/ROCm/rocm-libraries/tree/develop/projects/composablekernel)
-- [NVIDIA CUTLASS/CuTe](https://github.com/nvidia/cutlass)
-- [ROCm FlyDSL](https://github.com/ROCm/FlyDSL)
-- Colfax Research's [*Categorical Foundations for CuTe Layouts*](https://arxiv.org/pdf/2601.05972).
+- [AMD Composable Kernel and CK Tile](https://github.com/ROCm/rocm-libraries/tree/develop/projects/composablekernel) for the idea of composable kernel.
+- [NVIDIA CUTLASS/CuTe](https://github.com/nvidia/cutlass) for the design of data layout model.
+- [ROCm FlyDSL](https://github.com/ROCm/FlyDSL) for a mlir implementation of CUTLASS's data layout model.
+- Colfax Research's [*Categorical Foundations for CuTe Layouts*](https://arxiv.org/pdf/2601.05972) for the indepth intro to category theory.
+- [TileLang](https://github.com/tile-ai/tilelang) for the idea of layout inference.
