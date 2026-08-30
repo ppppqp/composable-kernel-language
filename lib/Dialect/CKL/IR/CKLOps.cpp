@@ -75,13 +75,48 @@ LogicalResult TaskOp::verify() {
         return emitOpError("alternative '") << name.getValue()
                << "' has unknown origin '" << origin.getValue() << "'";
     }
-    for (StringRef field : {"registers_per_thread", "shared_memory_bytes"})
+    for (StringRef field : {"registers_per_thread", "shared_memory_bytes",
+                            "estimated_execution_cost"})
       if (auto value = dictionary.getAs<IntegerAttr>(field); value && value.getInt() < 0)
         return emitOpError("alternative '") << name.getValue() << "' has negative " << field;
     if (auto capabilities = dictionary.getAs<ArrayAttr>("required_capabilities"))
       if (!llvm::all_of(capabilities, [](Attribute value) { return mlir::isa<StringAttr>(value); }))
         return emitOpError("alternative '") << name.getValue()
                << "' requires capabilities to be strings";
+    if (auto resources = dictionary.getAs<ArrayAttr>("resources")) {
+      for (Attribute attribute : resources) {
+        auto resource = mlir::dyn_cast<DictionaryAttr>(attribute);
+        auto resourceName = resource ? resource.getAs<StringAttr>("name") : StringAttr{};
+        auto bytes = resource ? resource.getAs<IntegerAttr>("bytes") : IntegerAttr{};
+        auto begin = resource ? resource.getAs<IntegerAttr>("begin") : IntegerAttr{};
+        auto end = resource ? resource.getAs<IntegerAttr>("end") : IntegerAttr{};
+        if (!resourceName || !bytes || !begin || !end)
+          return emitOpError("alternative '") << name.getValue()
+                 << "' resource requires name, bytes, begin, and end";
+        if (bytes.getInt() < 0 || begin.getInt() < 0 || end.getInt() <= begin.getInt())
+          return emitOpError("alternative '") << name.getValue()
+                 << "' has invalid resource lifetime for '" << resourceName.getValue() << "'";
+      }
+    }
+    if (auto effects = dictionary.getAs<ArrayAttr>("effects")) {
+      for (Attribute attribute : effects) {
+        auto effect = mlir::dyn_cast<DictionaryAttr>(attribute);
+        auto kind = effect ? effect.getAs<StringAttr>("kind") : StringAttr{};
+        auto resource = effect ? effect.getAs<StringAttr>("resource") : StringAttr{};
+        auto stage = effect ? effect.getAs<IntegerAttr>("stage") : IntegerAttr{};
+        if (!kind || !resource)
+          return emitOpError("alternative '") << name.getValue()
+                 << "' effect requires string kind and resource";
+        if (kind.getValue() != "read" && kind.getValue() != "write" &&
+            kind.getValue() != "consume" && kind.getValue() != "channel-put" &&
+            kind.getValue() != "channel-get" && kind.getValue() != "channel-release")
+          return emitOpError("alternative '") << name.getValue()
+                 << "' has unknown effect kind '" << kind.getValue() << "'";
+        if (stage && stage.getInt() < 0)
+          return emitOpError("alternative '") << name.getValue()
+                 << "' effect stage must be non-negative";
+      }
+    }
   }
   return success();
 }

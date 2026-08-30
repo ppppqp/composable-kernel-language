@@ -30,9 +30,47 @@ importAlternative(TaskOp task, DictionaryAttr attribute, Operation *anchor) {
     result.registersPerThread = value.getInt();
   if (auto value = attribute.getAs<IntegerAttr>("shared_memory_bytes"))
     result.sharedMemoryBytes = value.getInt();
+  if (auto value = attribute.getAs<IntegerAttr>("estimated_execution_cost"))
+    result.estimatedExecutionCost = value.getInt();
   if (auto values = attribute.getAs<ArrayAttr>("required_capabilities"))
     for (Attribute value : values)
       result.requiredCapabilities.push_back(mlir::cast<StringAttr>(value).getValue().str());
+  if (auto values = attribute.getAs<ArrayAttr>("resources")) {
+    for (Attribute value : values) {
+      auto resource = mlir::dyn_cast<DictionaryAttr>(value);
+      auto resourceName = resource ? resource.getAs<StringAttr>("name") : StringAttr{};
+      auto bytes = resource ? resource.getAs<IntegerAttr>("bytes") : IntegerAttr{};
+      auto begin = resource ? resource.getAs<IntegerAttr>("begin") : IntegerAttr{};
+      auto end = resource ? resource.getAs<IntegerAttr>("end") : IntegerAttr{};
+      if (!resourceName || !bytes || !begin || !end) {
+        anchor->emitError("task resource requires name, bytes, begin, and end");
+        return failure();
+      }
+      result.resources.push_back(
+          {resourceName.getValue().str(), bytes.getInt(), begin.getInt(), end.getInt()});
+    }
+  }
+  if (auto values = attribute.getAs<ArrayAttr>("effects")) {
+    for (Attribute value : values) {
+      auto effect = mlir::dyn_cast<DictionaryAttr>(value);
+      auto kind = effect ? effect.getAs<StringAttr>("kind") : StringAttr{};
+      auto resource = effect ? effect.getAs<StringAttr>("resource") : StringAttr{};
+      auto stage = effect ? effect.getAs<IntegerAttr>("stage") : IntegerAttr{};
+      if (!kind || !resource) {
+        anchor->emitError("task effect requires string kind and resource");
+        return failure();
+      }
+      auto importedKind = kind.getValue() == "read" ? ::ckl::core::EffectKind::Read
+          : kind.getValue() == "write" ? ::ckl::core::EffectKind::Write
+          : kind.getValue() == "consume" ? ::ckl::core::EffectKind::Consume
+          : kind.getValue() == "channel-put" ? ::ckl::core::EffectKind::ChannelPut
+          : kind.getValue() == "channel-get" ? ::ckl::core::EffectKind::ChannelGet
+          : kind.getValue() == "channel-release" ? ::ckl::core::EffectKind::ChannelRelease
+          : ::ckl::core::EffectKind::Read;
+      result.effects.push_back({importedKind, resource.getValue().str(),
+                                stage ? stage.getInt() : 0});
+    }
+  }
 
   auto importPorts = [&](StringRef field, std::vector<::ckl::core::PortRealization> &ports) {
     auto values = attribute.getAs<ArrayAttr>(field);

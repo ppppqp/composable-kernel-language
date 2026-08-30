@@ -405,9 +405,23 @@ void testTaskComposition() {
             decision.selected->conversion.kind == ConversionKind::Identity &&
             decision.considered.size() == 2,
         "task composition selects the direct legal boundary and records rejected alternatives");
-  check(decision.selected->provenance.size() == 4 &&
+  check(decision.selected->provenance.size() == 5 &&
             decision.considered.front().explanation == "resource limit exceeded",
         "composition decisions retain provenance and rejection reasons");
+
+  TaskAlternative costlyIdentity = producerDirect;
+  costlyIdentity.name = "costly-identity";
+  costlyIdentity.estimatedExecutionCost = 100;
+  TaskAlternative cheapPermutation = producerDirect;
+  cheapPermutation.name = "cheap-permutation";
+  cheapPermutation.outputs.front().distribution = permuted;
+  cheapPermutation.estimatedExecutionCost = 0;
+  CompositionDecision costAware = selectComposition(
+      {costlyIdentity, cheapPermutation}, {consumer}, "weight", "rhs", 4, 64, 4096, {"mma"});
+  check(costAware.selected && costAware.selected->producerAlternative == 1 &&
+            costAware.selected->conversion.kind == ConversionKind::LocalPermutation &&
+            costAware.selected->score == 10,
+        "task composition includes internal execution cost instead of greedily preferring identity");
 }
 
 void testCkStyleHierarchicalFixture() {

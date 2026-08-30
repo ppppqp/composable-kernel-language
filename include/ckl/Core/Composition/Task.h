@@ -46,6 +46,9 @@ struct TaskAlternative {
   std::vector<std::string> requiredCapabilities; // e.g. "mma", "async-copy", "wgmma"
   std::vector<ResourceLifetime> resources;
   std::vector<TaskEffect> effects;
+  // Target-independent relative estimate used for bounded planning. Target
+  // extensions may calibrate this scale, but lower is always better.
+  std::int64_t estimatedExecutionCost = 0;
 };
 
 struct CompositionCandidate {

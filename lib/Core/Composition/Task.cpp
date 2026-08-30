@@ -64,10 +64,13 @@ CompositionDecision selectComposition(const std::vector<TaskAlternative> &produc
       const bool capabilitiesFit = supports(producers[p], availableCapabilities) &&
                                    supports(consumers[c], availableCapabilities);
       const bool lifetimesValid = validLifetimes(producers[p]) && validLifetimes(consumers[c]);
-      std::int64_t score = conversionCost(plan.kind);
+      const bool executionCostsValid = producers[p].estimatedExecutionCost >= 0 &&
+                                       consumers[c].estimatedExecutionCost >= 0;
+      std::int64_t score = producers[p].estimatedExecutionCost +
+                           consumers[c].estimatedExecutionCost + conversionCost(plan.kind);
       if (out->placement == Placement::Global || in->placement == Placement::Global)
         score += 100'000;
-      if (!resourcesFit || !capabilitiesFit || !lifetimesValid ||
+      if (!resourcesFit || !capabilitiesFit || !lifetimesValid || !executionCostsValid ||
           plan.kind == ConversionKind::Unsupported)
         score = 1'000'000;
       std::string explanation = !resourcesFit
@@ -76,6 +79,8 @@ CompositionDecision selectComposition(const std::vector<TaskAlternative> &produc
                                           ? "target capability unavailable"
                                           : !lifetimesValid
                                                 ? "invalid resource lifetime"
+                                    : !executionCostsValid
+                                          ? "invalid execution cost"
                                     : plan.kind == ConversionKind::Unsupported
                                           ? "no legal boundary conversion"
                                           : "legal candidate";
@@ -83,13 +88,18 @@ CompositionDecision selectComposition(const std::vector<TaskAlternative> &produc
           "producer=" + producers[p].task + ":" + producers[p].name,
           "consumer=" + consumers[c].task + ":" + consumers[c].name,
           "conversion=" + std::string(toString(plan.kind)),
+          "execution-cost=" + std::to_string(producers[p].estimatedExecutionCost +
+                                               consumers[c].estimatedExecutionCost),
           "resources=" + std::to_string(producers[p].registersPerThread +
                                           consumers[c].registersPerThread) +
               " registers/thread"};
       CompositionCandidate candidate{p, c, std::move(plan), score, std::move(explanation),
                                      std::move(provenance)};
       decision.considered.push_back(candidate);
-      if (score < 1'000'000 && (!decision.selected || score < decision.selected->score))
+      const bool legal = resourcesFit && capabilitiesFit && lifetimesValid &&
+                         executionCostsValid &&
+                         candidate.conversion.kind != ConversionKind::Unsupported;
+      if (legal && (!decision.selected || score < decision.selected->score))
         decision.selected = candidate;
     }
   }
