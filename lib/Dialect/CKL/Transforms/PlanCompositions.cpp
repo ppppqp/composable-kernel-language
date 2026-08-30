@@ -220,6 +220,150 @@ public:
   }
 };
 
+class SelectLinearPipelinesPass
+    : public PassWrapper<SelectLinearPipelinesPass, OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SelectLinearPipelinesPass)
+  StringRef getArgument() const final { return "ckl-select-linear-pipelines"; }
+  StringRef getDescription() const final {
+    return "Globally select alternatives for linear CKL task-composition chains";
+  }
+
+  void runOnOperation() final {
+    SmallVector<TaskComposeOp> boundaries;
+    getOperation().walk([&](TaskComposeOp op) { boundaries.push_back(op); });
+    struct Prepared {
+      SmallVector<TaskComposeOp> edges;
+      std::vector<std::vector<::ckl::core::TaskAlternative>> alternatives;
+      ::ckl::core::PipelineSelection selection;
+    };
+    SmallVector<Prepared> prepared;
+
+    // Solve all chains before rewriting any of them: failure leaves the IR
+    // entirely unresolved instead of committing a partial global decision.
+    for (TaskComposeOp root : boundaries) {
+      if (mlir::isa_and_nonnull<TaskComposeOp>(root.getInput().getDefiningOp()))
+        continue;
+      SmallVector<TaskComposeOp> chain{root};
+      TaskComposeOp current = root;
+      while (current.getResult().hasOneUse()) {
+        auto next = mlir::dyn_cast<TaskComposeOp>(*current.getResult().getUsers().begin());
+        if (!next) break;
+        chain.push_back(next);
+        current = next;
+      }
+      if (chain.size() < 2) continue;
+
+      auto subgroupSize = chain.front().getSubgroupSize();
+      auto registerLimit = chain.front().getRegisterLimit();
+      auto sharedMemoryLimit = chain.front().getSharedMemoryLimit();
+      auto capabilitiesAttr = chain.front().getCapabilitiesAttr();
+      for (TaskComposeOp edge : chain) {
+        if (edge.getSubgroupSize() != subgroupSize ||
+            edge.getRegisterLimit() != registerLimit ||
+            edge.getSharedMemoryLimit() != sharedMemoryLimit ||
+            edge.getCapabilitiesAttr() != capabilitiesAttr) {
+          edge.emitError("linear pipeline requires consistent planning limits and capabilities");
+          signalPassFailure();
+          return;
+        }
+      }
+
+      SmallVector<TaskOp> tasks;
+      tasks.push_back(SymbolTable::lookupNearestSymbolFrom<TaskOp>(
+          chain.front(), chain.front().getProducerAttr()));
+      for (TaskComposeOp edge : chain)
+        tasks.push_back(SymbolTable::lookupNearestSymbolFrom<TaskOp>(edge, edge.getConsumerAttr()));
+      for (std::size_t index = 1; index < chain.size(); ++index) {
+        auto producer = SymbolTable::lookupNearestSymbolFrom<TaskOp>(
+            chain[index], chain[index].getProducerAttr());
+        if (tasks[index] != producer) {
+          chain[index].emitError("linear chain has inconsistent intermediate task symbol");
+          signalPassFailure();
+          return;
+        }
+      }
+
+      Prepared item;
+      item.edges = chain;
+      item.alternatives.resize(tasks.size());
+      try {
+        for (std::size_t stage = 0; stage < tasks.size(); ++stage)
+          for (Attribute value : tasks[stage].getAlternatives()) {
+            auto imported = importAlternative(
+                tasks[stage], mlir::cast<DictionaryAttr>(value), chain.front());
+            if (failed(imported)) { signalPassFailure(); return; }
+            item.alternatives[stage].push_back(std::move(*imported));
+          }
+      } catch (const std::exception &error) {
+        chain.front().emitError("failed to import pipeline alternatives: ") << error.what();
+        signalPassFailure();
+        return;
+      }
+
+      std::vector<::ckl::core::PipelineStage> stages;
+      for (std::size_t stage = 0; stage < tasks.size(); ++stage) {
+        std::string input = stage == 0 ? "" : chain[stage - 1].getConsumerPort().str();
+        std::string output = stage + 1 == tasks.size()
+                                 ? "" : chain[stage].getProducerPort().str();
+        stages.push_back({tasks[stage].getSymName().str() + "#" + std::to_string(stage),
+                          item.alternatives[stage], std::move(input), std::move(output)});
+      }
+      std::vector<std::string> capabilities;
+      for (Attribute value : chain.front().getCapabilities())
+        capabilities.push_back(mlir::cast<StringAttr>(value).getValue().str());
+      auto decision = ::ckl::core::selectLinearPipeline(
+          stages, subgroupSize, registerLimit, sharedMemoryLimit, capabilities);
+      if (!decision.selected) {
+        auto diagnostic = chain.front().emitError("no legal linear task pipeline");
+        for (const std::string &message : decision.diagnostics)
+          diagnostic.attachNote(chain.front().getLoc()) << message;
+        signalPassFailure();
+        return;
+      }
+      item.selection = std::move(*decision.selected);
+      prepared.push_back(std::move(item));
+    }
+
+    IRRewriter rewriter(&getContext());
+    for (Prepared &pipeline : prepared) {
+      SmallVector<Attribute> provenance;
+      for (const std::string &entry : pipeline.selection.provenance)
+        provenance.push_back(rewriter.getStringAttr(entry));
+      for (std::size_t index = 0; index < pipeline.edges.size(); ++index) {
+        TaskComposeOp edge = pipeline.edges[index];
+        const auto &producer = pipeline.alternatives[index]
+            [pipeline.selection.alternatives[index]];
+        const auto &consumer = pipeline.alternatives[index + 1]
+            [pipeline.selection.alternatives[index + 1]];
+        auto source = llvm::find_if(producer.outputs, [&](const auto &port) {
+          return port.name == edge.getProducerPort();
+        });
+        auto target = llvm::find_if(consumer.inputs, [&](const auto &port) {
+          return port.name == edge.getConsumerPort();
+        });
+        OperationState state(edge.getLoc(), ComposeOp::getOperationName());
+        state.addOperands(edge.getInput());
+        state.addTypes(edge.getResult().getType());
+        state.addAttribute("source", DistributionAttr::get(
+            &getContext(), ::ckl::core::serialize(source->distribution)));
+        state.addAttribute("target", DistributionAttr::get(
+            &getContext(), ::ckl::core::serialize(target->distribution)));
+        state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(edge.getSubgroupSize()));
+        state.addAttribute("ckl.producer_alternative", rewriter.getStringAttr(producer.name));
+        state.addAttribute("ckl.consumer_alternative", rewriter.getStringAttr(consumer.name));
+        state.addAttribute("ckl.pipeline_score",
+                           rewriter.getI64IntegerAttr(pipeline.selection.score));
+        state.addAttribute("ckl.pipeline_stage", rewriter.getI64IntegerAttr(index));
+        state.addAttribute("ckl.pipeline_provenance", rewriter.getArrayAttr(provenance));
+        rewriter.setInsertionPoint(edge);
+        Operation *replacement = rewriter.create(state);
+        rewriter.replaceOp(edge, replacement->getResults());
+      }
+    }
+  }
+};
+
 class PlanCompositionsPass : public PassWrapper<PlanCompositionsPass, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PlanCompositionsPass)
@@ -324,12 +468,17 @@ std::unique_ptr<Pass> createSelectAlternativesPass() {
   return std::make_unique<SelectAlternativesPass>();
 }
 
+std::unique_ptr<Pass> createSelectLinearPipelinesPass() {
+  return std::make_unique<SelectLinearPipelinesPass>();
+}
+
 std::unique_ptr<Pass> createScheduleConversionsPass() {
   return std::make_unique<ScheduleConversionsPass>();
 }
 
 void registerCKLPasses() {
   PassRegistration<SelectAlternativesPass>();
+  PassRegistration<SelectLinearPipelinesPass>();
   PassRegistration<PlanCompositionsPass>();
   PassRegistration<ScheduleConversionsPass>();
 }
