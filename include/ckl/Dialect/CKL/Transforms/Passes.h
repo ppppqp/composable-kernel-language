@@ -7,6 +7,7 @@
 namespace mlir::ckl {
 
 std::unique_ptr<Pass> createPlanCompositionsPass();
+std::unique_ptr<Pass> createScheduleConversionsPass();
 void registerCKLPasses();
 
 } // namespace mlir::ckl
