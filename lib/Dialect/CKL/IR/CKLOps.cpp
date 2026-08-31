@@ -176,6 +176,10 @@ LogicalResult ConvertLayoutOp::verify() {
   }
 CKL_VERIFY_SCHEDULED(LocalPermuteOp, "local-permutation")
 CKL_VERIFY_SCHEDULED(SubgroupExchangeOp, "subgroup-exchange")
-CKL_VERIFY_SCHEDULED(SharedExchangeOp, "shared-memory-exchange")
-CKL_VERIFY_SCHEDULED(GlobalExchangeOp, "global-memory-exchange")
+CKL_VERIFY_SCHEDULED(SharedStoreOp, "shared-memory-exchange")
+CKL_VERIFY_SCHEDULED(WorkgroupBarrierOp, "shared-memory-exchange")
+CKL_VERIFY_SCHEDULED(SharedLoadOp, "shared-memory-exchange")
+CKL_VERIFY_SCHEDULED(GlobalStoreOp, "global-memory-exchange")
+CKL_VERIFY_SCHEDULED(KernelBoundaryOp, "global-memory-exchange")
+CKL_VERIFY_SCHEDULED(GlobalLoadOp, "global-memory-exchange")
 #undef CKL_VERIFY_SCHEDULED

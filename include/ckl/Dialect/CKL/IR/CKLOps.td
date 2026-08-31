@@ -93,7 +93,25 @@ class CKL_ScheduledConversionOp<string mnemonic>
 
 def CKL_LocalPermuteOp : CKL_ScheduledConversionOp<"local_permute">;
 def CKL_SubgroupExchangeOp : CKL_ScheduledConversionOp<"subgroup_exchange">;
-def CKL_SharedExchangeOp : CKL_ScheduledConversionOp<"shared_exchange">;
-def CKL_GlobalExchangeOp : CKL_ScheduledConversionOp<"global_exchange">;
+
+class CKL_ExchangePhaseOp<string mnemonic>
+    : CKL_Op<mnemonic, [SameOperandsAndResultType]> {
+  let summary = "One explicit phase of a scheduled layout exchange";
+  let arguments = (ins CKL_TileType:$input, CKL_DistributionAttr:$source,
+                       CKL_DistributionAttr:$target,
+                       DefaultValuedAttr<I64Attr, "64">:$subgroup_size,
+                       OptionalAttr<StrAttr>:$reason,
+                       OptionalAttr<I64Attr>:$move_count);
+  let results = (outs CKL_TileType:$result);
+  let assemblyFormat = "$input `source` `=` qualified($source) `target` `=` qualified($target) `attributes` attr-dict `:` type($input)";
+  let hasVerifier = 1;
+}
+
+def CKL_SharedStoreOp : CKL_ExchangePhaseOp<"shared_store">;
+def CKL_WorkgroupBarrierOp : CKL_ExchangePhaseOp<"workgroup_barrier">;
+def CKL_SharedLoadOp : CKL_ExchangePhaseOp<"shared_load">;
+def CKL_GlobalStoreOp : CKL_ExchangePhaseOp<"global_store">;
+def CKL_KernelBoundaryOp : CKL_ExchangePhaseOp<"kernel_boundary">;
+def CKL_GlobalLoadOp : CKL_ExchangePhaseOp<"global_load">;
 
 #endif

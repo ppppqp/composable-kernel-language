@@ -422,11 +422,37 @@ public:
         rewriter.replaceOp(op, op.getInput());
         continue;
       }
+      auto createPhase = [&](StringRef name, Value input) {
+        OperationState state(op.getLoc(), name);
+        state.addOperands(input);
+        state.addTypes(op.getResult().getType());
+        state.addAttribute("source", op.getSource());
+        state.addAttribute("target", op.getTarget());
+        state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(op.getSubgroupSize()));
+        if (auto reason = op.getReasonAttr()) state.addAttribute("reason", reason);
+        if (auto count = op.getMoveCountAttr()) state.addAttribute("move_count", count);
+        return rewriter.create(state);
+      };
+      if (op.getKind() == "shared-memory-exchange" ||
+          op.getKind() == "global-memory-exchange") {
+        rewriter.setInsertionPoint(op);
+        const bool shared = op.getKind() == "shared-memory-exchange";
+        Operation *store = createPhase(
+            shared ? SharedStoreOp::getOperationName() : GlobalStoreOp::getOperationName(),
+            op.getInput());
+        Operation *boundary = createPhase(
+            shared ? WorkgroupBarrierOp::getOperationName()
+                   : KernelBoundaryOp::getOperationName(),
+            store->getResult(0));
+        Operation *load = createPhase(
+            shared ? SharedLoadOp::getOperationName() : GlobalLoadOp::getOperationName(),
+            boundary->getResult(0));
+        rewriter.replaceOp(op, load->getResults());
+        continue;
+      }
       StringRef operationName =
           op.getKind() == "local-permutation"        ? LocalPermuteOp::getOperationName()
           : op.getKind() == "subgroup-exchange"      ? SubgroupExchangeOp::getOperationName()
-          : op.getKind() == "shared-memory-exchange" ? SharedExchangeOp::getOperationName()
-          : op.getKind() == "global-memory-exchange" ? GlobalExchangeOp::getOperationName()
                                                      : StringRef{};
       if (operationName.empty()) {
         op.emitError("has no scheduling operation for conversion kind '") << op.getKind() << "'";
