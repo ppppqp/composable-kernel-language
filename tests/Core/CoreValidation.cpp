@@ -407,13 +407,15 @@ void testTaskComposition() {
   Distribution permuted = contiguousDistribution(4, 2, true);
   TaskAlternative producerDirect{"dequant", "direct", {},
                                  {{"weight", direct, Placement::Private, 2}}, 16, 0, {}, {}, {}, 0,
-                                 ""};
+                                 "", AlternativeOrigin::Unspecified, ""};
   TaskAlternative producerExpensive{"dequant", "expensive", {},
                                     {{"weight", permuted, Placement::Shared, 2}}, 80, 8192,
                                     {"async-copy"}, {{"scratch", 8192, 0, 2}},
-                                    {{EffectKind::Write, "scratch", 0}}, 0, ""};
+                                    {{EffectKind::Write, "scratch", 0}}, 0, "",
+                                    AlternativeOrigin::Unspecified, ""};
   TaskAlternative consumer{"mma", "operand", {{"rhs", direct, Placement::Private, 2}}, {}, 32, 0,
-                           {"mma"}, {}, {{EffectKind::Consume, "rhs", 0}}, 0, ""};
+                           {"mma"}, {}, {{EffectKind::Consume, "rhs", 0}}, 0, "",
+                           AlternativeOrigin::Unspecified, ""};
   CompositionDecision decision = selectComposition(
       {producerExpensive, producerDirect}, {consumer}, "weight", "rhs", 4, 64, 4096, {"mma"});
   check(decision.selected.has_value() && decision.selected->producerAlternative == 1 &&
@@ -445,16 +447,18 @@ void testLinearPipelineSelection() {
   Distribution rotated = rotateExecutorOwnership(direct);
 
   TaskAlternative source{"source", "only", {}, {{"out", direct, Placement::Private}},
-                         8, 0, {}, {}, {}, 0, ""};
+                         8, 0, {}, {}, {}, 0, "", AlternativeOrigin::Unspecified, ""};
   source.implementationId = "source.impl.v1";
   TaskAlternative greedyMiddle{"middle", "greedy", {{"in", direct, Placement::Private}},
-                               {{"out", rotated, Placement::Private}}, 8, 0, {}, {}, {}, 0, ""};
+                               {{"out", rotated, Placement::Private}}, 8, 0, {}, {}, {}, 0, "",
+                               AlternativeOrigin::Unspecified, ""};
   greedyMiddle.implementationId = "middle.greedy.v1";
   TaskAlternative globalMiddle{"middle", "global", {{"in", permuted, Placement::Private}},
-                               {{"out", direct, Placement::Private}}, 8, 0, {}, {}, {}, 0, ""};
+                               {{"out", direct, Placement::Private}}, 8, 0, {}, {}, {}, 0, "",
+                               AlternativeOrigin::Unspecified, ""};
   globalMiddle.implementationId = "middle.global.v1";
   TaskAlternative sink{"sink", "only", {{"in", direct, Placement::Private}}, {},
-                       8, 0, {}, {}, {}, 0, ""};
+                       8, 0, {}, {}, {}, 0, "", AlternativeOrigin::Unspecified, ""};
   sink.implementationId = "sink.impl.v1";
 
   CompositionDecision edgeLocal = selectComposition(
@@ -482,16 +486,16 @@ void testTaskGraphFanoutSelection() {
   Distribution rotated = rotateExecutorOwnership(direct);
   TaskAlternative directProducer{
       "producer", "direct", {}, {{"out", direct, Placement::Private}},
-      8, 0, {}, {}, {}, 150, "producer.direct.v1"};
+      8, 0, {}, {}, {}, 150, "producer.direct.v1", AlternativeOrigin::Compiler, ""};
   TaskAlternative cheapProducer{
       "producer", "cheap", {}, {{"out", rotated, Placement::Private}},
-      8, 0, {}, {}, {}, 0, "producer.cheap.v1"};
+      8, 0, {}, {}, {}, 0, "producer.cheap.v1", AlternativeOrigin::Compiler, ""};
   TaskAlternative left{
       "left", "only", {{"in", direct, Placement::Private}}, {},
-      8, 0, {}, {}, {}, 0, "left.v1"};
+      8, 0, {}, {}, {}, 0, "left.v1", AlternativeOrigin::Compiler, ""};
   TaskAlternative right{
       "right", "only", {{"in", direct, Placement::Private}}, {},
-      8, 0, {}, {}, {}, 0, "right.v1"};
+      8, 0, {}, {}, {}, 0, "right.v1", AlternativeOrigin::Compiler, ""};
 
   CompositionDecision greedy = selectComposition(
       {directProducer, cheapProducer}, {left}, "out", "in", 4, 64, 4096);

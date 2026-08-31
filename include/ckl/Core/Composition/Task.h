@@ -10,6 +10,7 @@ namespace ckl::core {
 
 enum class Placement { Private, Shared, Global };
 enum class EffectKind { Read, Write, Consume, ChannelPut, ChannelGet, ChannelRelease };
+enum class AlternativeOrigin { Unspecified, User, Compiler, Extension, Library };
 
 // For interference detection between overlapping resources
 struct ResourceLifetime {
@@ -52,6 +53,10 @@ struct TaskAlternative {
   // Stable identity for provenance and cache keys. When empty, planners use
   // task:name as the deterministic fallback.
   std::string implementationId;
+  AlternativeOrigin origin = AlternativeOrigin::Unspecified;
+  // Optional callable symbol implementing this fixed realization. Derived
+  // planning alternatives may remain bodyless until selection is committed.
+  std::string implementationSymbol;
 };
 
 struct CompositionCandidate {

@@ -2,6 +2,7 @@
 
 #include "ckl/Core/Layout/Distribution.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "llvm/ADT/StringSet.h"
 
 using namespace mlir;
@@ -77,6 +78,24 @@ LogicalResult TaskOp::verify() {
                << "' implementation_id must be a non-empty string";
       if (!implementationIds.insert(id.getValue()).second)
         return emitOpError("has duplicate implementation_id '") << id.getValue() << "'";
+    }
+    if (Attribute value = dictionary.get("implementation")) {
+      auto reference = mlir::dyn_cast<FlatSymbolRefAttr>(value);
+      if (!reference)
+        return emitOpError("alternative '") << name.getValue()
+               << "' implementation must be a flat symbol reference";
+      Operation *implementation = SymbolTable::lookupNearestSymbolFrom(*this, reference);
+      if (!implementation)
+        return emitOpError("alternative '") << name.getValue()
+               << "' references unknown implementation " << reference;
+      auto callable = mlir::dyn_cast<FunctionOpInterface>(implementation);
+      if (!callable)
+        return emitOpError("alternative '") << name.getValue()
+               << "' implementation is not function-like";
+      if (callable.getFunctionType() != getFunctionType())
+        return emitOpError("alternative '") << name.getValue()
+               << "' implementation type " << callable.getFunctionType()
+               << " does not match task type " << getFunctionType();
     }
     if (auto origin = dictionary.getAs<StringAttr>("origin")) {
       if (origin.getValue() != "user" && origin.getValue() != "compiler" &&

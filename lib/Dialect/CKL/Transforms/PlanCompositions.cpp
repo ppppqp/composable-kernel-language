@@ -33,6 +33,14 @@ FailureOr<::ckl::core::TaskAlternative> importAlternative(TaskOp task, Dictionar
   result.name = name.getValue().str();
   if (auto value = attribute.getAs<StringAttr>("implementation_id"))
     result.implementationId = value.getValue().str();
+  if (auto value = attribute.getAs<FlatSymbolRefAttr>("implementation"))
+    result.implementationSymbol = value.getValue().str();
+  if (auto value = attribute.getAs<StringAttr>("origin"))
+    result.origin = value.getValue() == "user" ? ::ckl::core::AlternativeOrigin::User
+        : value.getValue() == "compiler" ? ::ckl::core::AlternativeOrigin::Compiler
+        : value.getValue() == "extension" ? ::ckl::core::AlternativeOrigin::Extension
+        : value.getValue() == "library" ? ::ckl::core::AlternativeOrigin::Library
+        : ::ckl::core::AlternativeOrigin::Unspecified;
   if (auto value = attribute.getAs<IntegerAttr>("registers_per_thread"))
     result.registersPerThread = value.getInt();
   if (auto value = attribute.getAs<IntegerAttr>("shared_memory_bytes"))
@@ -413,6 +421,12 @@ public:
         state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(edge.getSubgroupSize()));
         state.addAttribute("ckl.producer_alternative", rewriter.getStringAttr(producer.name));
         state.addAttribute("ckl.consumer_alternative", rewriter.getStringAttr(consumer.name));
+        if (!producer.implementationSymbol.empty())
+          state.addAttribute("ckl.producer_implementation",
+                             FlatSymbolRefAttr::get(&getContext(), producer.implementationSymbol));
+        if (!consumer.implementationSymbol.empty())
+          state.addAttribute("ckl.consumer_implementation",
+                             FlatSymbolRefAttr::get(&getContext(), consumer.implementationSymbol));
         state.addAttribute("ckl.pipeline_score",
                            rewriter.getI64IntegerAttr(pipeline.selection.score));
         state.addAttribute("ckl.pipeline_stage", rewriter.getI64IntegerAttr(index));
@@ -450,6 +464,12 @@ public:
         state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(edge.getSubgroupSize()));
         state.addAttribute("ckl.producer_alternative", rewriter.getStringAttr(producer.name));
         state.addAttribute("ckl.consumer_alternative", rewriter.getStringAttr(consumer.name));
+        if (!producer.implementationSymbol.empty())
+          state.addAttribute("ckl.producer_implementation",
+                             FlatSymbolRefAttr::get(&getContext(), producer.implementationSymbol));
+        if (!consumer.implementationSymbol.empty())
+          state.addAttribute("ckl.consumer_implementation",
+                             FlatSymbolRefAttr::get(&getContext(), consumer.implementationSymbol));
         state.addAttribute("ckl.graph_score", rewriter.getI64IntegerAttr(graph.selection.score));
         state.addAttribute("ckl.graph_edge", rewriter.getI64IntegerAttr(index));
         state.addAttribute("ckl.graph_combinations_explored",
@@ -479,6 +499,12 @@ public:
       state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(edge.getSubgroupSize()));
       state.addAttribute("ckl.producer_alternative", rewriter.getStringAttr(producer.name));
       state.addAttribute("ckl.consumer_alternative", rewriter.getStringAttr(consumer.name));
+      if (!producer.implementationSymbol.empty())
+        state.addAttribute("ckl.producer_implementation",
+                           FlatSymbolRefAttr::get(&getContext(), producer.implementationSymbol));
+      if (!consumer.implementationSymbol.empty())
+        state.addAttribute("ckl.consumer_implementation",
+                           FlatSymbolRefAttr::get(&getContext(), consumer.implementationSymbol));
       state.addAttribute("ckl.producer_implementation_id",
                          rewriter.getStringAttr(producer.implementationId.empty()
                                                     ? producer.task + ":" + producer.name

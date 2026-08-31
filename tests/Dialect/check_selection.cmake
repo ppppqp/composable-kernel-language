@@ -12,6 +12,8 @@ foreach(expected
     "ckl.producer_alternative = \"direct\""
     "ckl.consumer_alternative = \"operand\""
     "ckl.producer_implementation_id = \"producer.direct.v1\""
+    "ckl.producer_implementation = @producer_direct"
+    "ckl.consumer_implementation = @consumer_operand"
     "score = 35"
     "explanation = \"resource limit exceeded\"")
   string(FIND "${selection_output}" "${expected}" position)
@@ -32,6 +34,7 @@ endif()
 foreach(expected
     "ckl.convert_layout"
     "ckl.producer_alternative = \"direct\""
+    "ckl.producer_implementation = @producer_direct"
     "ckl.considered_alternatives")
   string(FIND "${pipeline_output}" "${expected}" position)
   if(position EQUAL -1)

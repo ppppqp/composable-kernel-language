@@ -20,16 +20,22 @@
     results = [add(const(1), mul(dim(0), const(-1)))], predicate = true>,
   scope = workgroup, replicated = false>
 
+func.func private @producer_expensive(!ckl.tile<f32, #ckl.space<[x = 4]>>) -> !ckl.tile<f32, #ckl.space<[x = 4]>>
+func.func private @producer_direct(!ckl.tile<f32, #ckl.space<[x = 4]>>) -> !ckl.tile<f32, #ckl.space<[x = 4]>>
+func.func private @consumer_operand(!ckl.tile<f32, #ckl.space<[x = 4]>>) -> !ckl.tile<f32, #ckl.space<[x = 4]>>
+
 ckl.task @producer : (!ckl.tile<f32, #ckl.space<[x = 4]>>) ->
     !ckl.tile<f32, #ckl.space<[x = 4]>> alternatives = [
-  {name = "expensive", implementation_id = "producer.expensive.v1", origin = "user",
+  {name = "expensive", implementation_id = "producer.expensive.v1",
+   implementation = @producer_expensive, origin = "user",
    registers_per_thread = 80 : i64,
    shared_memory_bytes = 8192 : i64, estimated_execution_cost = 1 : i64,
    required_capabilities = ["async-copy"],
    resources = [{name = "scratch", bytes = 8192 : i64, begin = 0 : i64, end = 2 : i64}],
    effects = [{kind = "write", resource = "scratch", stage = 0 : i64}],
    outputs = [{name = "weight", distribution = #permuted, placement = "shared"}]},
-  {name = "direct", implementation_id = "producer.direct.v1", origin = "compiler",
+  {name = "direct", implementation_id = "producer.direct.v1",
+   implementation = @producer_direct, origin = "compiler",
    registers_per_thread = 16 : i64,
    estimated_execution_cost = 15 : i64,
    outputs = [{name = "weight", distribution = #direct, placement = "private"}]}
@@ -37,7 +43,8 @@ ckl.task @producer : (!ckl.tile<f32, #ckl.space<[x = 4]>>) ->
 
 ckl.task @consumer : (!ckl.tile<f32, #ckl.space<[x = 4]>>) ->
     !ckl.tile<f32, #ckl.space<[x = 4]>> alternatives = [
-  {name = "operand", implementation_id = "consumer.operand.v1", origin = "extension",
+  {name = "operand", implementation_id = "consumer.operand.v1",
+   implementation = @consumer_operand, origin = "extension",
    registers_per_thread = 32 : i64,
    estimated_execution_cost = 20 : i64,
    required_capabilities = ["mma"],
