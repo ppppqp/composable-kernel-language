@@ -3,6 +3,9 @@ specs
 build/
 .cache/
 .pytest_cache/
+__pycache__/
+.venv/
+.cuda-toolkit/
 compile_commands.json
 .vscode
 Testing

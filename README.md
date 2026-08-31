@@ -34,7 +34,8 @@ compiler or performance model.
 
 The compiler layer currently contains an initial MLIR dialect and an optimizer driver. It
 uses the standalone core for semantic verification and layout-conversion planning. The
-frontend DSL, target lowering, and runtime integration are still under development.
+Python frontend and boxed NVIDIA lowering are under development. Runtime integration is not yet
+implemented.
 
 
 ## Repository layout
@@ -49,6 +50,8 @@ lib/Extensions/         target-specific extension implementations
 tools/ckl-opt/          CKL optimizer driver
 tests/Core/             semantic and property-style validation
 tests/Dialect/          MLIR round-trip, verification, and transformation tests
+python/ckl/             dependency-free Python frontend
+tests/Python/           frontend validation and generated-MLIR round trips
 ```
 
 ## Building the standalone core
@@ -95,6 +98,18 @@ build/tools/ckl-opt/ckl-opt
 
 `MLIR_DIR` selects the MLIR package. Its `MLIRConfig.cmake` locates the matching LLVM
 package and supplies the LLVM/MLIR include directories, libraries, and CMake build helpers.
+
+## Python frontend
+
+The initial Python API builds generic CKL types, tasks, symbol bindings, and invocations. It emits
+MLIR text that is verified by `ckl-opt`; compiler passes introduce target-specific operations. The
+package has no runtime dependencies and can be used directly with `uv`:
+
+```bash
+uv venv
+uv pip install -e .
+uv run python tests/Python/emit_copy.py
+```
 
 ## Acknowledgments
 
