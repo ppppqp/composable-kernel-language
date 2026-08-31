@@ -6,6 +6,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/DenseMap.h"
 
 namespace mlir::ckl {
 namespace {
@@ -116,10 +117,17 @@ FailureOr<::ckl::core::TaskAlternative> importAlternative(TaskOp task, Dictionar
 class SelectAlternativesPass : public PassWrapper<SelectAlternativesPass, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SelectAlternativesPass)
+  SelectAlternativesPass() = default;
+  SelectAlternativesPass(const SelectAlternativesPass &pass) : PassWrapper(pass) {}
   StringRef getArgument() const final { return "ckl-select-alternatives"; }
   StringRef getDescription() const final {
-    return "Globally select alternatives for linear CKL task-composition chains";
+    return "Globally select alternatives for CKL task-composition components";
   }
+
+  Option<unsigned> maximumCombinations{
+      *this, "maximum-combinations",
+      llvm::cl::desc("Maximum assignments explored for a non-linear task graph"),
+      llvm::cl::init(4096)};
 
   void runOnOperation() final {
     SmallVector<TaskComposeOp> boundaries;
@@ -137,6 +145,13 @@ public:
       ::ckl::core::CompositionDecision decision;
     };
     SmallVector<PreparedSingle> singles;
+    struct PreparedGraph {
+      SmallVector<TaskComposeOp> edges;
+      std::vector<std::vector<::ckl::core::TaskAlternative>> alternatives;
+      std::vector<::ckl::core::TaskGraphEdge> coreEdges;
+      ::ckl::core::TaskGraphSelection selection;
+    };
+    SmallVector<PreparedGraph> graphs;
 
     // Solve all chains before rewriting any of them: failure leaves the IR
     // entirely unresolved instead of committing a partial global decision.
@@ -151,6 +166,94 @@ public:
           break;
         chain.push_back(next);
         current = next;
+      }
+      SmallVector<TaskComposeOp> successors;
+      for (Operation *user : current.getResult().getUsers())
+        if (auto next = mlir::dyn_cast<TaskComposeOp>(user)) successors.push_back(next);
+      if (successors.size() > 1) {
+        SmallVector<TaskComposeOp> graphEdges;
+        SmallVector<TaskComposeOp> worklist{root};
+        llvm::DenseMap<Operation *, std::size_t> consumerNode;
+        SmallVector<TaskOp> tasks;
+        tasks.push_back(SymbolTable::lookupNearestSymbolFrom<TaskOp>(
+            root, root.getProducerAttr()));
+        std::vector<::ckl::core::TaskGraphEdge> coreEdges;
+        while (!worklist.empty()) {
+          TaskComposeOp edge = worklist.pop_back_val();
+          std::size_t producerNode = 0;
+          if (auto parent = mlir::dyn_cast_or_null<TaskComposeOp>(
+                  edge.getInput().getDefiningOp()))
+            producerNode = consumerNode.lookup(parent);
+          auto producerTask = SymbolTable::lookupNearestSymbolFrom<TaskOp>(
+              edge, edge.getProducerAttr());
+          if (producerTask != tasks[producerNode]) {
+            edge.emitError("task graph edge has inconsistent producer invocation");
+            signalPassFailure();
+            return;
+          }
+          const std::size_t consumer = tasks.size();
+          tasks.push_back(SymbolTable::lookupNearestSymbolFrom<TaskOp>(
+              edge, edge.getConsumerAttr()));
+          consumerNode[edge] = consumer;
+          graphEdges.push_back(edge);
+          coreEdges.push_back({producerNode, consumer, edge.getProducerPort().str(),
+                               edge.getConsumerPort().str()});
+          for (Operation *user : edge.getResult().getUsers())
+            if (auto child = mlir::dyn_cast<TaskComposeOp>(user)) worklist.push_back(child);
+        }
+
+        auto subgroupSize = root.getSubgroupSize();
+        auto registerLimit = root.getRegisterLimit();
+        auto sharedMemoryLimit = root.getSharedMemoryLimit();
+        auto capabilitiesAttr = root.getCapabilitiesAttr();
+        for (TaskComposeOp edge : graphEdges) {
+          if (edge.getSubgroupSize() != subgroupSize ||
+              edge.getRegisterLimit() != registerLimit ||
+              edge.getSharedMemoryLimit() != sharedMemoryLimit ||
+              edge.getCapabilitiesAttr() != capabilitiesAttr) {
+            edge.emitError("task graph requires consistent planning limits and capabilities");
+            signalPassFailure();
+            return;
+          }
+        }
+
+        PreparedGraph item;
+        item.edges = graphEdges;
+        item.coreEdges = coreEdges;
+        item.alternatives.resize(tasks.size());
+        try {
+          for (std::size_t node = 0; node < tasks.size(); ++node)
+            for (Attribute value : tasks[node].getAlternatives()) {
+              auto imported = importAlternative(
+                  tasks[node], mlir::cast<DictionaryAttr>(value), root);
+              if (failed(imported)) { signalPassFailure(); return; }
+              item.alternatives[node].push_back(std::move(*imported));
+            }
+        } catch (const std::exception &error) {
+          root.emitError("failed to import task graph alternatives: ") << error.what();
+          signalPassFailure();
+          return;
+        }
+        std::vector<::ckl::core::TaskGraphNode> nodes;
+        for (std::size_t node = 0; node < tasks.size(); ++node)
+          nodes.push_back({tasks[node].getSymName().str() + "#" + std::to_string(node),
+                           item.alternatives[node]});
+        std::vector<std::string> capabilities;
+        for (Attribute value : root.getCapabilities())
+          capabilities.push_back(mlir::cast<StringAttr>(value).getValue().str());
+        auto decision = ::ckl::core::selectTaskGraph(
+            nodes, coreEdges, subgroupSize, registerLimit, sharedMemoryLimit,
+            maximumCombinations, capabilities);
+        if (!decision.selected) {
+          auto diagnostic = root.emitError("no proven optimal task-graph selection");
+          for (const std::string &message : decision.diagnostics)
+            diagnostic.attachNote(root.getLoc()) << message;
+          signalPassFailure();
+          return;
+        }
+        item.selection = std::move(*decision.selected);
+        graphs.push_back(std::move(item));
+        continue;
       }
       if (chain.size() < 2) {
         bool hasTaskSuccessor = llvm::any_of(root.getResult().getUsers(), [](Operation *user) {
@@ -311,6 +414,43 @@ public:
                            rewriter.getI64IntegerAttr(pipeline.selection.score));
         state.addAttribute("ckl.pipeline_stage", rewriter.getI64IntegerAttr(index));
         state.addAttribute("ckl.pipeline_provenance", rewriter.getArrayAttr(provenance));
+        rewriter.setInsertionPoint(edge);
+        Operation *replacement = rewriter.create(state);
+        rewriter.replaceOp(edge, replacement->getResults());
+      }
+    }
+    for (PreparedGraph &graph : graphs) {
+      SmallVector<Attribute> provenance;
+      for (const std::string &entry : graph.selection.provenance)
+        provenance.push_back(rewriter.getStringAttr(entry));
+      for (std::size_t index = 0; index < graph.edges.size(); ++index) {
+        TaskComposeOp edge = graph.edges[index];
+        const auto &coreEdge = graph.coreEdges[index];
+        const auto &producer = graph.alternatives[coreEdge.producer]
+            [graph.selection.alternatives[coreEdge.producer]];
+        const auto &consumer = graph.alternatives[coreEdge.consumer]
+            [graph.selection.alternatives[coreEdge.consumer]];
+        auto source = llvm::find_if(producer.outputs, [&](const auto &port) {
+          return port.name == edge.getProducerPort();
+        });
+        auto target = llvm::find_if(consumer.inputs, [&](const auto &port) {
+          return port.name == edge.getConsumerPort();
+        });
+        OperationState state(edge.getLoc(), ComposeOp::getOperationName());
+        state.addOperands(edge.getInput());
+        state.addTypes(edge.getResult().getType());
+        state.addAttribute("source", DistributionAttr::get(
+            &getContext(), ::ckl::core::serialize(source->distribution)));
+        state.addAttribute("target", DistributionAttr::get(
+            &getContext(), ::ckl::core::serialize(target->distribution)));
+        state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(edge.getSubgroupSize()));
+        state.addAttribute("ckl.producer_alternative", rewriter.getStringAttr(producer.name));
+        state.addAttribute("ckl.consumer_alternative", rewriter.getStringAttr(consumer.name));
+        state.addAttribute("ckl.graph_score", rewriter.getI64IntegerAttr(graph.selection.score));
+        state.addAttribute("ckl.graph_edge", rewriter.getI64IntegerAttr(index));
+        state.addAttribute("ckl.graph_combinations_explored",
+                           rewriter.getI64IntegerAttr(graph.selection.combinationsExplored));
+        state.addAttribute("ckl.graph_provenance", rewriter.getArrayAttr(provenance));
         rewriter.setInsertionPoint(edge);
         Operation *replacement = rewriter.create(state);
         rewriter.replaceOp(edge, replacement->getResults());
