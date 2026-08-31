@@ -8,6 +8,7 @@ target_link_libraries(ckl-opt PRIVATE
   MLIRFuncDialect
   MLIROptLib
   MLIRRegisterAllPasses
+  MLIRNVGPUDialect
   CKL::NVIDIA
 )
 mlir_check_all_link_libraries(ckl-opt)

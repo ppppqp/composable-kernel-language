@@ -4,6 +4,7 @@
 #include "ckl/Dialect/CKLNVIDIA/Transforms/Passes.h"
 #include "ckl/Extensions/NVIDIA/MmaSync.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/NVGPU/IR/NVGPUDialect.h"
 #include "mlir/InitAllPasses.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
@@ -15,7 +16,7 @@ int main(int argc, char **argv) {
 
   mlir::DialectRegistry registry;
   registry.insert<mlir::ckl::CKLDialect, mlir::ckl::nvidia::CKLNVIDIADialect,
-                  mlir::func::FuncDialect>();
+                  mlir::func::FuncDialect, mlir::nvgpu::NVGPUDialect>();
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "CKL optimizer driver\n", registry));
 }

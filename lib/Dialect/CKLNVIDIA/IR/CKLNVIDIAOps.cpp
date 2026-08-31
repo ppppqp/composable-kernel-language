@@ -41,3 +41,48 @@ LogicalResult MmaSyncOp::verify() {
     return failure();
   return success();
 }
+
+LogicalResult PackFragmentOp::verify() {
+  auto vector = getFragment().getType();
+  StringRef role = getRole();
+  Type elementType;
+  ArrayRef<std::int64_t> tileShape;
+  ArrayRef<std::int64_t> fragmentShape;
+  const std::int64_t lhsTile[] = {16, 16};
+  const std::int64_t matrixTile[] = {16, 8};
+  const std::int64_t lhsFragment[] = {4, 2};
+  const std::int64_t matrixFragment[] = {2, 2};
+  if (role == "lhs") {
+    elementType = Float16Type::get(getContext());
+    tileShape = lhsTile;
+    fragmentShape = lhsFragment;
+  } else if (role == "rhs") {
+    elementType = Float16Type::get(getContext());
+    tileShape = matrixTile;
+    fragmentShape = matrixFragment;
+  } else if (role == "acc") {
+    elementType = Float32Type::get(getContext());
+    tileShape = matrixTile;
+    fragmentShape = matrixFragment;
+  } else {
+    return emitOpError("role must be 'lhs', 'rhs', or 'acc'");
+  }
+  if (failed(verifyTile(*this, getTile().getType(), elementType, tileShape, role)))
+    return failure();
+  if (vector.getElementType() != elementType || vector.getShape() != fragmentShape)
+    return emitOpError() << role << " fragment must have type vector<" << fragmentShape << "x"
+                         << elementType << ">";
+  return success();
+}
+
+LogicalResult UnpackFragmentOp::verify() {
+  if (getRole() != "result")
+    return emitOpError("role must be 'result'");
+  auto f32 = Float32Type::get(getContext());
+  const std::int64_t matrixTile[] = {16, 8};
+  const std::int64_t matrixFragment[] = {2, 2};
+  if (getFragment().getType().getElementType() != f32 ||
+      getFragment().getType().getShape() != ArrayRef<std::int64_t>(matrixFragment))
+    return emitOpError("result fragment must have type vector<2x2xf32>");
+  return verifyTile(*this, getTile().getType(), f32, matrixTile, "result");
+}
