@@ -1,6 +1,17 @@
 import unittest
 
-from ckl import Alternative, IndexType, Module, Space, Symbol, TileType
+from ckl import (
+    Alternative,
+    Distribution,
+    IndexMap,
+    IndexType,
+    MemRefType,
+    Module,
+    Space,
+    Symbol,
+    TileType,
+    dim,
+)
 
 
 def build_copy_module() -> Module:
@@ -16,6 +27,36 @@ def build_copy_module() -> Module:
     bound = function.bind_symbols("bound", function.arg("tile"), {"M": function.arg("m")})
     result = function.invoke("result", copy, [bound], alternative="amd")
     function.return_(result)
+    return module
+
+
+def direct_distribution() -> Distribution:
+    executors = Space(lane=4)
+    local = Space(value=2)
+    tile = Space(x=8)
+    return Distribution(
+        executors,
+        local,
+        tile,
+        IndexMap(executors.product(local), tile, [dim(0) * 2 + dim(1)]),
+        IndexMap(local, Space(address=2), [dim(0)]),
+    )
+
+
+def build_memory_module() -> Module:
+    module = Module()
+    source_type = MemRefType([8], "f32")
+    target_type = MemRefType([None], "f32")
+    function = module.function(
+        "copy", [("source", source_type), ("target", target_type), ("base", IndexType())]
+    )
+    tile = function.load_tile(
+        "tile", function.arg("source"), [function.arg("base")], direct_distribution()
+    )
+    function.store_tile(
+        tile, function.arg("target"), [function.arg("base")], direct_distribution()
+    )
+    function.return_()
     return module
 
 
@@ -42,6 +83,26 @@ class FrontendTest(unittest.TestCase):
         function = module.function("bad", [("tile", tile)], [tile])
         with self.assertRaises(ValueError):
             function.invoke("result", task, [function.arg("tile")], alternative="missing")
+
+    def test_emits_distribution_and_memory_operations(self):
+        source = build_memory_module().mlir()
+        self.assertIn("results = [add(mul(dim(0), const(2)), dim(1))]", source)
+        self.assertIn("ckl.load_tile", source)
+        self.assertIn("ckl.store_tile", source)
+
+    def test_rejects_out_of_range_map_dimension(self):
+        with self.assertRaises(ValueError):
+            IndexMap(Space(x=4), Space(y=4), [dim(1)])
+
+    def test_rejects_short_memref(self):
+        module = Module()
+        function = module.function(
+            "short", [("source", MemRefType([4], "f32")), ("base", IndexType())]
+        )
+        with self.assertRaises(ValueError):
+            function.load_tile(
+                "tile", function.arg("source"), [function.arg("base")], direct_distribution()
+            )
 
 
 if __name__ == "__main__":

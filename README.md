@@ -101,15 +101,21 @@ package and supplies the LLVM/MLIR include directories, libraries, and CMake bui
 
 ## Python frontend
 
-The initial Python API builds generic CKL types, tasks, symbol bindings, and invocations. It emits
-MLIR text that is verified by `ckl-opt`; compiler passes introduce target-specific operations. The
-package has no runtime dependencies and can be used directly with `uv`:
+The initial Python API builds generic CKL types, index maps, distributions, tasks, symbol bindings,
+tile memory operations, and invocations. It emits MLIR text that is verified by `ckl-opt`; compiler
+passes introduce target-specific operations. The package has no runtime dependencies and can be
+used directly with `uv`:
 
 ```bash
-uv venv
+uv venv --python 3.12
 uv pip install -e .
-uv run python tests/Python/emit_copy.py
+export MLIR_PYTHON_ROOT="$LLVM_BUILD/tools/mlir/python_packages/mlir_core"
+PYTHONPATH="$PWD/python:$MLIR_PYTHON_ROOT" \
+  uv run python tests/Python/emit_traced_memory.py
 ```
+
+Python 3.12 is currently required because Python extension modules must match the interpreter used
+to build the local MLIR bindings.
 
 ## Acknowledgments
 

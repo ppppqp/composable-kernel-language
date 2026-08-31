@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ckl"
 version = "0.0.1"
 description = "Python frontend for Composable Kernel Language"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.13"
 
 [tool.setuptools]
 package-dir = {"" = "python"}
