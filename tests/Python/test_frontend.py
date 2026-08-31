@@ -7,6 +7,7 @@ from ckl import (
     IndexType,
     MemRefType,
     Module,
+    NVIDIATarget,
     Space,
     Symbol,
     TileType,
@@ -61,6 +62,20 @@ def build_memory_module() -> Module:
 
 
 class FrontendTest(unittest.TestCase):
+    def test_alternative_serializes_typed_cost_and_capabilities(self):
+        alternative = Alternative(
+            "candidate",
+            {"estimated_execution_cost": 3, "required_capabilities": ["mma"]},
+        )
+        self.assertIn("estimated_execution_cost = 3 : i64", alternative.mlir())
+        self.assertIn('required_capabilities = ["mma"]', alternative.mlir())
+
+    def test_nvidia_target_identity_includes_toolkit(self):
+        first = NVIDIATarget("sm_120", "+ptx87", toolkit_root="/cuda/one")
+        second = NVIDIATarget("sm_120", "+ptx87", toolkit_root="/cuda/two")
+        self.assertNotEqual(first.cache_identity(), second.cache_identity())
+        self.assertIn("cubin-chip=sm_120", first.pipeline())
+
     def test_emits_generic_ckl(self):
         source = build_copy_module().mlir()
         self.assertIn("#ckl.space<[m = symbol<\"M\">]>", source)
@@ -93,6 +108,12 @@ class FrontendTest(unittest.TestCase):
     def test_rejects_out_of_range_map_dimension(self):
         with self.assertRaises(ValueError):
             IndexMap(Space(x=4), Space(y=4), [dim(1)])
+
+    def test_affine_divisor_uses_canonical_syntax(self):
+        self.assertEqual((dim(0) // 4).mlir(), "floordiv(dim(0), 4)")
+        self.assertEqual((dim(0) % 4).mlir(), "mod(dim(0), 4)")
+        with self.assertRaises(ValueError):
+            dim(0) // dim(1)
 
     def test_rejects_short_memref(self):
         module = Module()

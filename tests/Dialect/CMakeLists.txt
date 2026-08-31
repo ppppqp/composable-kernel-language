@@ -70,6 +70,13 @@ add_test(
     -P ${CMAKE_CURRENT_SOURCE_DIR}/check_invoke_graph.cmake
 )
 add_test(
+  NAME ckl-dialect-select-isolated-invoke
+  COMMAND ${CMAKE_COMMAND}
+    -DCKL_OPT=$<TARGET_FILE:ckl-opt>
+    -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/isolated_selection.mlir
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_isolated_selection.cmake
+)
+add_test(
   NAME ckl-dialect-nvidia-alternatives
   COMMAND ${CMAKE_COMMAND}
     -DCKL_OPT=$<TARGET_FILE:ckl-opt>
@@ -104,6 +111,40 @@ add_test(
     -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/nvidia_fragment_io.mlir
     -P ${CMAKE_CURRENT_SOURCE_DIR}/check_nvidia_nvvm.cmake
 )
+if(CKL_ENABLE_CUDA_TESTS)
+  if(NOT CKL_CUDA_TOOLKIT_ROOT OR NOT CKL_CUDA_ARCH OR NOT CKL_CUDA_PTX_FEATURE)
+    message(FATAL_ERROR
+      "CUDA tests require CKL_CUDA_TOOLKIT_ROOT, CKL_CUDA_ARCH, and CKL_CUDA_PTX_FEATURE")
+  endif()
+  if(NOT EXISTS "${CKL_CUDA_TOOLKIT_ROOT}/bin/ptxas")
+    message(FATAL_ERROR "ptxas not found under CKL_CUDA_TOOLKIT_ROOT")
+  endif()
+  if(NOT EXISTS "${CKL_CUDA_TOOLKIT_ROOT}/nvvm/libdevice/libdevice.10.bc")
+    message(FATAL_ERROR "libdevice.10.bc not found under CKL_CUDA_TOOLKIT_ROOT")
+  endif()
+  find_path(CKL_CUDA_DRIVER_INCLUDE_DIR cuda.h REQUIRED)
+  find_library(CKL_CUDA_DRIVER_LIBRARY cuda REQUIRED)
+  add_executable(ckl-nvidia-runtime-validation NvidiaRuntimeValidation.cpp)
+  target_include_directories(ckl-nvidia-runtime-validation PRIVATE
+    ${CKL_CUDA_DRIVER_INCLUDE_DIR})
+  target_link_libraries(ckl-nvidia-runtime-validation PRIVATE
+    MLIRGPUDialect
+    MLIRParser
+    MLIRRegisterAllDialects
+    ${CKL_CUDA_DRIVER_LIBRARY})
+  add_test(
+    NAME ckl-dialect-nvidia-cubin
+    COMMAND ${CMAKE_COMMAND}
+      -DCKL_OPT=$<TARGET_FILE:ckl-opt>
+      -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/nvidia_fragment_io.mlir
+      -DCUDA_ROOT=${CKL_CUDA_TOOLKIT_ROOT}
+      -DCUDA_ARCH=${CKL_CUDA_ARCH}
+      -DCUDA_PTX_FEATURE=${CKL_CUDA_PTX_FEATURE}
+      -DCKL_CUDA_RUNNER=$<TARGET_FILE:ckl-nvidia-runtime-validation>
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/check_nvidia_cubin.cmake
+  )
+  set_tests_properties(ckl-dialect-nvidia-cubin PROPERTIES LABELS "cuda")
+endif()
 add_test(
   NAME ckl-dialect-invalid-diagnostics
   COMMAND $<TARGET_FILE:ckl-opt> --verify-diagnostics ${CMAKE_CURRENT_SOURCE_DIR}/invalid.mlir

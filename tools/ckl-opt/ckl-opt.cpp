@@ -12,6 +12,7 @@
 #include "mlir/InitAllPasses.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllExtensions.h"
+#include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
 int main(int argc, char **argv) {
@@ -23,6 +24,7 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
   mlir::registerAllExtensions(registry);
+  mlir::registerAllGPUToLLVMIRTranslations(registry);
   registry.insert<mlir::ckl::CKLDialect, mlir::ckl::nvidia::CKLNVIDIADialect,
                   mlir::arith::ArithDialect, mlir::func::FuncDialect, mlir::gpu::GPUDialect,
                   mlir::memref::MemRefDialect, mlir::nvgpu::NVGPUDialect,

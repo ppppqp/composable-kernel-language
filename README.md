@@ -123,6 +123,58 @@ values; it does not assemble operation text. Logical task contracts can be decla
 `@ckl.task(alternatives=[...])`, listed as dependencies of `@ckl.func(tasks=[...])`, and called with
 `ckl.invoke(...)` during tracing.
 
+`@ckl.jit` adds compilation and deterministic in-process caching:
+
+```python
+@ckl.jit(tasks=[copy_task], passes=["--ckl-select-alternatives"])
+def kernel(tile: tile_type) -> tile_type:
+    return ckl.invoke(copy_task, [tile])
+
+compiled = kernel.compile()
+print(compiled.mlir)
+```
+
+Device kernels use an explicit GPU container:
+
+```python
+@ckl.jit(device=True, module_name="kernels", block_size=(32, 1, 1))
+def kernel(source: source_type, target: target_type) -> None:
+    ...
+```
+
+This emits a native `gpu.module` containing a `gpu.func ... kernel`. Device kernels currently return
+through memory arguments and therefore must have a `None` return annotation.
+
+Compilation can target an NVIDIA device binary explicitly:
+
+```python
+target = ckl.NVIDIATarget(
+    chip="sm_120",
+    features="+ptx87",
+    toolkit_root=os.environ["CUDA_HOME"],
+)
+compiled = kernel.compile(ckl.CompilerOptions(target=target))
+```
+
+The target architecture, PTX feature level, binary format, and resolved toolkit path participate in
+the JIT cache identity. GPU objects are extracted through the MLIR Python binding and exposed as
+bytes when the configured lowering passes produce `gpu.binary`; target selection alone does not
+turn a host function into a GPU kernel. Calling a JIT function as an executable kernel remains
+rejected until general runtime argument marshalling is implemented.
+
+The current NVIDIA proof point traces the fixed one-warp `m16n8k16` MMA kernel entirely from Python,
+compiles it to CUBIN, and validates its result on hardware. This is an end-to-end correctness gate,
+not yet a general matrix-multiplication API. Its task declares an MMA implementation with cost 1
+and a scalar fallback with cost 100; the invocation is unpinned, so the compiler's alternative
+selection pass chooses the MMA implementation before target lowering.
+
+With the CUDA environment active, compile the example with:
+
+```bash
+PYTHONPATH="$PWD/python:$PWD/build/python:$MLIR_PYTHON_ROOT" \
+  uv run python examples/nvidia_mma.py
+```
+
 ## Acknowledgments
 
 The design is informed by the following awesome projects:

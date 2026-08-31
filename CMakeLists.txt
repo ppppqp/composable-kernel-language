@@ -8,6 +8,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(CKL_BUILD_TESTS "Build CKL core validation tests" ON)
 option(CKL_ENABLE_MLIR "Build the future MLIR integration" OFF)
+option(CKL_ENABLE_CUDA_TESTS "Enable tests that compile NVIDIA device binaries" OFF)
+set(CKL_CUDA_TOOLKIT_ROOT "" CACHE PATH "CUDA toolkit root used by CKL tests")
+set(CKL_CUDA_ARCH "" CACHE STRING "NVIDIA architecture used by CKL tests (for example sm_120)")
+set(CKL_CUDA_PTX_FEATURE "" CACHE STRING "LLVM PTX feature used by CKL tests (for example +ptx87)")
+
+if(CKL_ENABLE_CUDA_TESTS AND NOT CKL_ENABLE_MLIR)
+  message(FATAL_ERROR "CKL_ENABLE_CUDA_TESTS requires CKL_ENABLE_MLIR")
+endif()
 
 if(CKL_ENABLE_MLIR)
   find_package(MLIR REQUIRED CONFIG)

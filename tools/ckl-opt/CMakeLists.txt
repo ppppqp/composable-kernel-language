@@ -10,6 +10,7 @@ target_link_libraries(ckl-opt PRIVATE
   MLIRRegisterAllPasses
   MLIRRegisterAllDialects
   MLIRRegisterAllExtensions
+  MLIRToLLVMIRTranslationRegistration
   MLIRNVGPUDialect
   MLIRArithDialect
   MLIRGPUDialect

@@ -133,8 +133,8 @@ class IndexExpr:
             raise ValueError(f"{self.operation} expects two index expressions")
         if self.operation in {"floordiv", "mod"}:
             rhs = self.operands[1]
-            if rhs.operation == "const" and rhs.operands[0] == 0:
-                raise ValueError(f"{self.operation} divisor cannot be zero")
+            if rhs.operation != "const" or rhs.operands[0] <= 0:
+                raise ValueError(f"{self.operation} divisor must be a positive constant")
 
     def __add__(self, other: IndexExpr | int) -> IndexExpr:
         return IndexExpr("add", (self, _expr(other)))
@@ -169,6 +169,9 @@ class IndexExpr:
     def mlir(self) -> str:
         if self.operation in {"dim", "const"}:
             return f"{self.operation}({self.operands[0]})"
+        if self.operation in {"floordiv", "mod"}:
+            rhs = self.operands[1]
+            return f"{self.operation}({_expr(self.operands[0]).mlir()}, {rhs.operands[0]})"
         return f"{self.operation}({', '.join(_expr(value).mlir() for value in self.operands)})"
 
 
@@ -251,18 +254,29 @@ class Distribution:
 @dataclass(frozen=True)
 class Alternative:
     name: str
-    properties: Mapping[str, str] = field(default_factory=dict)
+    properties: Mapping[str, str | int | Sequence[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _identifier(self.name, "alternative name")
         for key, value in self.properties.items():
             _identifier(key, "alternative property")
-            if not isinstance(value, str):
-                raise TypeError("initial alternative properties must be strings")
+            if not isinstance(value, (str, int, list, tuple)) or isinstance(value, bool):
+                raise TypeError("alternative properties must be strings, integers, or string lists")
+            if isinstance(value, (list, tuple)) and not all(
+                isinstance(item, str) for item in value
+            ):
+                raise TypeError("alternative property lists must contain strings")
 
     def mlir(self) -> str:
         entries = [("name", self.name), *self.properties.items()]
-        return "{" + ", ".join(f"{key} = {_quote(value)}" for key, value in entries) + "}"
+        def format_value(value: str | int | Sequence[str]) -> str:
+            if isinstance(value, str):
+                return _quote(value)
+            if isinstance(value, int):
+                return f"{value} : i64"
+            return "[" + ", ".join(_quote(item) for item in value) + "]"
+
+        return "{" + ", ".join(f"{key} = {format_value(value)}" for key, value in entries) + "}"
 
 
 @dataclass(frozen=True)

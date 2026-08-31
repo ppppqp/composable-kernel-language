@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from functools import update_wrapper
 from typing import Any, Callable, Sequence
 
+from .compiler import CompiledModule, CompilerOptions, compilation_key, compile_module
 from .ir import Alternative, Distribution, IndexType, MemRefType, TileType, Type
 
 
@@ -24,6 +25,26 @@ def _mlir():
             "CKL tracing requires the MLIR Python bindings from the LLVM build"
         ) from error
     return ir, func_dialect, ckl_dialect
+
+
+def _gpu_dialect():
+    try:
+        from mlir.dialects import gpu
+    except ImportError as error:
+        raise RuntimeError(
+            "CKL device tracing requires the MLIR GPU Python bindings"
+        ) from error
+    return gpu
+
+
+def constant_index(value: int) -> TracedValue:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError("index constant must be an integer")
+    trace = _trace()
+    from mlir.dialects import arith
+
+    operation = arith.ConstantOp.create_index(value)
+    return TracedValue(operation.result, IndexType())
 
 
 @dataclass(frozen=True)
@@ -129,11 +150,20 @@ class TaskDef:
         update_wrapper(self, function)
 
     def emit(self, trace: _Trace) -> Any:
+        def property_attribute(value: str | int | Sequence[str]) -> Any:
+            if isinstance(value, str):
+                return trace.ir.StringAttr.get(value)
+            if isinstance(value, int):
+                return trace.ir.IntegerAttr.get(trace.ir.IntegerType.get_signless(64), value)
+            return trace.ir.ArrayAttr.get(
+                [trace.ir.StringAttr.get(item) for item in value]
+            )
+
         attributes = []
         for alternative in self.alternatives:
             entries = {"name": trace.ir.StringAttr.get(alternative.name)}
             entries.update(
-                (key, trace.ir.StringAttr.get(value))
+                (key, property_attribute(value))
                 for key, value in alternative.properties.items()
             )
             attributes.append(trace.ir.DictAttr.get(entries))
@@ -174,6 +204,16 @@ def invoke(
         [operand.value for operand in operands],
         alternative=alternative,
     )
+    if alternative is not None:
+        selected = next(
+            candidate for candidate in task.alternatives if candidate.name == alternative
+        )
+        if implementation_id := selected.properties.get("implementation_id"):
+            if not isinstance(implementation_id, str):
+                raise TypeError("implementation_id must be a string")
+            operation.attributes["ckl.implementation_id"] = trace.ir.StringAttr.get(
+                implementation_id
+            )
     results = tuple(
         TracedValue(result, type_) for result, type_ in zip(operation.results_, task.result_types)
     )
@@ -231,6 +271,95 @@ class Func:
         return NativeModule(context, module)
 
 
+class JITFunction(Func):
+    def __init__(
+        self,
+        function: Callable[..., Any],
+        tasks: Sequence[TaskDef] = (),
+        passes: Sequence[str] = (),
+        device: bool = False,
+        module_name: str = "kernels",
+        block_size: tuple[int, int, int] | None = None,
+    ):
+        super().__init__(function, tasks)
+        self.passes = tuple(passes)
+        self.device = device
+        self.module_name = module_name
+        self.block_size = block_size
+        if not module_name:
+            raise ValueError("device module name must not be empty")
+        if block_size is not None and (
+            len(block_size) != 3 or any(size <= 0 for size in block_size)
+        ):
+            raise ValueError("block_size must contain three positive dimensions")
+        self._cache: dict[str, CompiledModule] = {}
+
+    def emit(self) -> NativeModule:
+        if not self.device:
+            return super().emit()
+        ir, _, ckl_dialect = _mlir()
+        gpu = _gpu_dialect()
+        parameters = tuple(self.signature.parameters.values())
+        for parameter in parameters:
+            _require_annotation(parameter.name, parameter.annotation)
+        result_types = _result_annotations(self.signature.return_annotation)
+        if result_types:
+            raise TypeError("a device kernel cannot return SSA values")
+
+        context = ir.Context()
+        context.allow_unregistered_dialects = True
+        with context, ir.Location.unknown():
+            module = ir.Module.create()
+            trace = _Trace(ir, ckl_dialect)
+            with ir.InsertionPoint(module.body):
+                gpu_module = gpu.GPUModuleOp(self.module_name)
+            module_block = gpu_module.bodyRegion.blocks.append()
+            with ir.InsertionPoint(module_block):
+                for task_definition in self.tasks:
+                    task_definition.emit(trace)
+                function_type = ir.FunctionType.get(
+                    [trace.type(parameter.annotation) for parameter in parameters], []
+                )
+                function = gpu.GPUFuncOp(
+                    function_type,
+                    sym_name=self.function.__name__,
+                    kernel=True,
+                    known_block_size=self.block_size,
+                )
+                block = function.add_entry_block()
+                with ir.InsertionPoint(block):
+                    token = _active_trace.set(trace)
+                    try:
+                        arguments = tuple(
+                            TracedValue(argument, parameter.annotation)
+                            for argument, parameter in zip(block.arguments, parameters)
+                        )
+                        returned = self.function(*arguments)
+                    finally:
+                        _active_trace.reset(token)
+                    _normalize_results(returned, ())
+                    gpu.ReturnOp([])
+        return NativeModule(context, module)
+
+    def compile(self, options: CompilerOptions | None = None) -> CompiledModule:
+        if options is None:
+            options = CompilerOptions(passes=self.passes)
+        elif self.passes and not options.passes:
+            options = CompilerOptions(options.ckl_opt, self.passes, options.target)
+        source = str(self.emit())
+        key = compilation_key(source, options.cache_command())
+        if cached := self._cache.get(key):
+            return cached
+        compiled = compile_module(source, options)
+        self._cache[key] = compiled
+        return compiled
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(
+            "CKL runtime launching is not implemented; use .compile() to obtain compiled MLIR"
+        )
+
+
 def _result_annotations(annotation: Any) -> tuple[Type, ...]:
     if annotation in {inspect.Signature.empty, None, type(None)}:
         return ()
@@ -272,5 +401,24 @@ def func(
 
     def decorate(value: Callable[..., Any]) -> Func:
         return Func(value, tasks)
+
+    return decorate
+
+
+def jit(
+    function: Callable[..., Any] | None = None,
+    *,
+    tasks: Sequence[TaskDef] = (),
+    passes: Sequence[str] = (),
+    device: bool = False,
+    module_name: str = "kernels",
+    block_size: tuple[int, int, int] | None = None,
+) -> JITFunction | Callable[[Callable[..., Any]], JITFunction]:
+    """Trace and compile a CKL function, caching identical specializations."""
+    if function is not None:
+        return JITFunction(function, tasks, passes, device, module_name, block_size)
+
+    def decorate(value: Callable[..., Any]) -> JITFunction:
+        return JITFunction(value, tasks, passes, device, module_name, block_size)
 
     return decorate

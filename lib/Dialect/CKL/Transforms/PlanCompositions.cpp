@@ -274,7 +274,7 @@ public:
 
     llvm::DenseSet<std::size_t> visited;
     for (std::size_t root = 0; root < invokes.size(); ++root) {
-      if (adjacency[root].empty() || !visited.insert(root).second)
+      if (!visited.insert(root).second)
         continue;
       SmallVector<std::size_t> component;
       SmallVector<std::size_t> worklist{root};
