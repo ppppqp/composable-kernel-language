@@ -1,5 +1,6 @@
 #include "ckl/Core/Layout/Distribution.h"
 #include "ckl/Extensions/AMD/MfmaLayouts.h"
+#include "ckl/Extensions/NVIDIA/MmaSync.h"
 #include "ckl/Core/Layout/StorageLayout.h"
 #include "ckl/Core/Composition/Task.h"
 #include "ckl/Core/Composition/AlternativeProvider.h"
@@ -16,6 +17,9 @@
 
 using namespace ckl::core;
 using ckl::extensions::amd::makeMfmaAccumulatorDistribution;
+using ckl::extensions::nvidia::makeMmaSyncM16N8K16F16LhsDistribution;
+using ckl::extensions::nvidia::makeMmaSyncM16N8K16F16RhsDistribution;
+using ckl::extensions::nvidia::makeMmaSyncM16N8K16F32AccumulatorDistribution;
 
 namespace {
 
@@ -403,6 +407,31 @@ void testCkMfmaAccumulatorFamily() {
         "the same CK factor encoding composes into the 32x32 MFMA family");
 }
 
+void testNvidiaMmaSyncAlternative() {
+  Distribution lhs = makeMmaSyncM16N8K16F16LhsDistribution();
+  Distribution rhs = makeMmaSyncM16N8K16F16RhsDistribution();
+  Distribution accumulator = makeMmaSyncM16N8K16F32AccumulatorDistribution();
+  check(verifyDistribution(lhs).valid && verifyDistribution(rhs).valid &&
+            verifyDistribution(accumulator).valid,
+        "NVIDIA mma.sync m16n8k16 fragments are unique warp-level tile covers");
+  check(lhs.ownership.apply({17, 1, 1, 1}) == std::vector<std::int64_t>({12, 11}) &&
+            rhs.ownership.apply({17, 1, 1}) == std::vector<std::int64_t>({11, 4}) &&
+            accumulator.ownership.apply({17, 1, 1}) ==
+                std::vector<std::int64_t>({12, 3}),
+        "NVIDIA fragment coordinates match upstream MLIR lane/value mappings");
+
+  ckl::extensions::nvidia::MmaSyncF16F32Provider provider;
+  TaskAlternativeRequest request{"mma", {"lhs", "rhs", "acc"}, {"result"}, "nvidia",
+                                 "sm_80", {"nvidia.mma.sync.m16n8k16.f16"}};
+  AlternativeCollection collection = collectTaskAlternatives(request, {&provider});
+  check(collection.diagnostics.empty() && collection.alternatives.size() == 1 &&
+            collection.alternatives.front().origin == AlternativeOrigin::Extension &&
+            serialize(collection.alternatives.front().inputs[1].distribution) == serialize(rhs) &&
+            collection.alternatives.front().implementationId ==
+                "nvidia.mma.sync.m16n8k16.row.col.f32.f16.f16.f32",
+        "NVIDIA extension enumerates a generic, stable MMA task realization");
+}
+
 void testTaskComposition() {
   Distribution direct = contiguousDistribution(4, 2);
   Distribution permuted = contiguousDistribution(4, 2, true);
@@ -680,6 +709,7 @@ int main() {
     testStableSerializationAndDiagram();
     testSymbolicIndexSpaces();
     testCkMfmaAccumulatorFamily();
+    testNvidiaMmaSyncAlternative();
     testTaskComposition();
     testAlternativeProviderBoundary();
     testLinearPipelineSelection();
