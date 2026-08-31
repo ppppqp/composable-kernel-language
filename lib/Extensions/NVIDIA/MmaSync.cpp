@@ -95,4 +95,9 @@ MmaSyncF16F32Provider::enumerate(const core::TaskAlternativeRequest &request) co
   return {std::move(alternative)};
 }
 
+void registerAlternativeProviders() {
+  static MmaSyncF16F32Provider provider;
+  (void)core::registerTaskAlternativeProvider(provider);
+}
+
 } // namespace ckl::extensions::nvidia

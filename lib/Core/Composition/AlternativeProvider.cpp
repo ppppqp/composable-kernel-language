@@ -1,10 +1,22 @@
 #include "ckl/Core/Composition/AlternativeProvider.h"
 
 #include <exception>
+#include <map>
+#include <mutex>
 #include <unordered_set>
 
 namespace ckl::core {
 namespace {
+
+std::map<std::string, const TaskAlternativeProvider *> &providerRegistry() {
+  static std::map<std::string, const TaskAlternativeProvider *> providers;
+  return providers;
+}
+
+std::mutex &providerRegistryMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
 
 bool validatePorts(const std::vector<PortRealization> &ports,
                    const std::vector<std::string> &expected, const std::string &kind,
@@ -101,6 +113,20 @@ AlternativeCollection collectTaskAlternatives(
     }
   }
   return result;
+}
+
+bool registerTaskAlternativeProvider(const TaskAlternativeProvider &provider) {
+  const std::string id = provider.providerId();
+  if (id.empty())
+    return false;
+  std::lock_guard<std::mutex> lock(providerRegistryMutex());
+  return providerRegistry().emplace(id, &provider).second;
+}
+
+const TaskAlternativeProvider *findTaskAlternativeProvider(const std::string &providerId) {
+  std::lock_guard<std::mutex> lock(providerRegistryMutex());
+  auto found = providerRegistry().find(providerId);
+  return found == providerRegistry().end() ? nullptr : found->second;
 }
 
 } // namespace ckl::core

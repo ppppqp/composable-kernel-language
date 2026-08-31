@@ -1,0 +1,21 @@
+execute_process(
+  COMMAND "${CKL_OPT}" "${INPUT_FILE}"
+          --ckl-enumerate-alternatives --ckl-enumerate-alternatives
+  RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "ckl-opt failed:\n${error}")
+endif()
+if(NOT output MATCHES "name = \"mma-sync-m16n8k16-f16-f32\"")
+  message(FATAL_ERROR "NVIDIA alternative was not materialized:\n${output}")
+endif()
+if(NOT output MATCHES "implementation_id = \"nvidia.mma.sync.m16n8k16.row.col.f32.f16.f16.f32\"")
+  message(FATAL_ERROR "stable NVIDIA lowering identity is missing:\n${output}")
+endif()
+if(NOT output MATCHES "origin = \"extension\"")
+  message(FATAL_ERROR "extension origin is missing:\n${output}")
+endif()
+string(REGEX MATCHALL "name = \"mma-sync-m16n8k16-f16-f32\"" alternatives "${output}")
+list(LENGTH alternatives alternative_count)
+if(NOT alternative_count EQUAL 1)
+  message(FATAL_ERROR "enumeration is not idempotent:\n${output}")
+endif()

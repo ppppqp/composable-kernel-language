@@ -1,5 +1,6 @@
 add_mlir_dialect_library(MLIRCKLTransforms
   PlanCompositions.cpp
+  EnumerateAlternatives.cpp
 
   LINK_LIBS PUBLIC
   CKL::Core

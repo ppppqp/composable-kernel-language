@@ -26,7 +26,7 @@ public:
   virtual std::vector<TaskAlternative> enumerate(const TaskAlternativeRequest &request) const = 0;
 };
 
-// Target nerutral collection of task alternatives with diagnostics for invalid candidates.
+// Target-neutral collection of task alternatives with diagnostics for invalid candidates.
 struct AlternativeCollection {
   std::vector<TaskAlternative> alternatives;
   std::vector<std::string> diagnostics;
@@ -37,5 +37,10 @@ struct AlternativeCollection {
 AlternativeCollection
 collectTaskAlternatives(const TaskAlternativeRequest &request,
                         const std::vector<const TaskAlternativeProvider *> &providers);
+
+// Providers are owned by their extension libraries and registered during
+// driver initialization. Duplicate identifiers are rejected.
+bool registerTaskAlternativeProvider(const TaskAlternativeProvider &provider);
+const TaskAlternativeProvider *findTaskAlternativeProvider(const std::string &providerId);
 
 } // namespace ckl::core

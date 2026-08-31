@@ -17,4 +17,6 @@ public:
   enumerate(const core::TaskAlternativeRequest &request) const override;
 };
 
+void registerAlternativeProviders();
+
 } // namespace ckl::extensions::nvidia
