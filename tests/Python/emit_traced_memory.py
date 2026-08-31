@@ -16,4 +16,8 @@ def copy(source: source_type, target: target_type, base: index_type) -> None:
 
 module = copy.emit()
 assert module.verify()
+function_op = list(module.operation.body.operations)[0]
+body_ops = list(function_op.regions[0].blocks[0].operations)
+assert type(body_ops[0].opview).__name__ == "LoadTileOp"
+assert type(body_ops[1].opview).__name__ == "StoreTileOp"
 print(module)

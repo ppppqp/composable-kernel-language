@@ -26,6 +26,7 @@ add_subdirectory(lib)
 
 if(CKL_ENABLE_MLIR)
   add_subdirectory(tools)
+  add_subdirectory(python)
 endif()
 
 if(CKL_BUILD_TESTS)

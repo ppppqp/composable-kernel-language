@@ -18,11 +18,12 @@ def _mlir():
     try:
         from mlir import ir
         from mlir.dialects import func as func_dialect
+        from .dialects import ckl as ckl_dialect
     except ImportError as error:
         raise RuntimeError(
             "CKL tracing requires the MLIR Python bindings from the LLVM build"
         ) from error
-    return ir, func_dialect
+    return ir, func_dialect, ckl_dialect
 
 
 @dataclass(frozen=True)
@@ -46,8 +47,9 @@ class NativeModule:
 
 
 class _Trace:
-    def __init__(self, ir: Any):
+    def __init__(self, ir: Any, ckl_dialect: Any):
         self.ir = ir
+        self.ckl_dialect = ckl_dialect
 
     def attribute(self, value: Distribution) -> Any:
         return self.ir.Attribute.parse(value.mlir())
@@ -77,13 +79,13 @@ def load_tile(
     ):
         raise TypeError("load_tile requires one index offset per memref dimension")
     result_type = TileType(source.type.element_type, distribution.tile)
-    operation = trace.ir.Operation.create(
-        "ckl.load_tile",
-        results=[trace.type(result_type)],
-        operands=[source.value, *(offset.value for offset in offsets)],
-        attributes={"distribution": trace.attribute(distribution)},
+    operation = trace.ckl_dialect.LoadTileOp(
+        trace.type(result_type),
+        source.value,
+        [offset.value for offset in offsets],
+        trace.attribute(distribution),
     )
-    return TracedValue(operation.results[0], result_type)
+    return TracedValue(operation.result, result_type)
 
 
 def store_tile(
@@ -102,10 +104,11 @@ def store_tile(
         not isinstance(offset.type, IndexType) for offset in offsets
     ):
         raise TypeError("store_tile requires one index offset per memref dimension")
-    trace.ir.Operation.create(
-        "ckl.store_tile",
-        operands=[value.value, target.value, *(offset.value for offset in offsets)],
-        attributes={"distribution": trace.attribute(distribution)},
+    trace.ckl_dialect.StoreTileOp(
+        value.value,
+        target.value,
+        [offset.value for offset in offsets],
+        trace.attribute(distribution),
     )
 
 
@@ -119,7 +122,7 @@ class Func:
         return self.function(*args, **kwargs)
 
     def emit(self) -> NativeModule:
-        ir, func_dialect = _mlir()
+        ir, func_dialect, ckl_dialect = _mlir()
         parameters = tuple(self.signature.parameters.values())
         for parameter in parameters:
             if parameter.annotation is inspect.Parameter.empty or not hasattr(
@@ -132,7 +135,7 @@ class Func:
         context.allow_unregistered_dialects = True
         with context, ir.Location.unknown():
             module = ir.Module.create()
-            trace = _Trace(ir)
+            trace = _Trace(ir, ckl_dialect)
             with ir.InsertionPoint(module.body):
                 function = func_dialect.FuncOp(
                     self.function.__name__,

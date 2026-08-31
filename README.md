@@ -110,12 +110,16 @@ used directly with `uv`:
 uv venv --python 3.12
 uv pip install -e .
 export MLIR_PYTHON_ROOT="$LLVM_BUILD/tools/mlir/python_packages/mlir_core"
-PYTHONPATH="$PWD/python:$MLIR_PYTHON_ROOT" \
+PYTHONPATH="$PWD/python:$PWD/build/python:$MLIR_PYTHON_ROOT" \
   uv run python tests/Python/emit_traced_memory.py
 ```
 
 Python 3.12 is currently required because Python extension modules must match the interpreter used
 to build the local MLIR bindings.
+
+The MLIR-enabled CMake build generates CKL Python operation classes directly from `CKLOps.td`.
+`@ckl.func` traces against those generated classes and upstream MLIR insertion points and SSA
+values; it does not assemble operation text.
 
 ## Acknowledgments
 
