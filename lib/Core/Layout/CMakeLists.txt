@@ -3,6 +3,7 @@ add_library(CKLCore
   Distribution.cpp
   StorageLayout.cpp
   ../Composition/Task.cpp
+  ../Composition/AlternativeProvider.cpp
   ../Planning/ExchangeSchedule.cpp
 )
 

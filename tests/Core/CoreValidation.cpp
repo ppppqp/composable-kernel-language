@@ -2,6 +2,7 @@
 #include "ckl/Extensions/AMD/MfmaLayouts.h"
 #include "ckl/Core/Layout/StorageLayout.h"
 #include "ckl/Core/Composition/Task.h"
+#include "ckl/Core/Composition/AlternativeProvider.h"
 #include "ckl/Core/Planning/ExchangeSchedule.h"
 #ifdef CKL_ENABLE_MLIR
 #include "ckl/Core/Proof/SymbolicProof.h"
@@ -441,6 +442,81 @@ void testTaskComposition() {
         "task composition includes internal execution cost instead of greedily preferring identity");
 }
 
+class TestInstructionProvider final : public TaskAlternativeProvider {
+public:
+  explicit TestInstructionProvider(Distribution direct, Distribution rotated)
+      : direct(std::move(direct)), rotated(std::move(rotated)) {}
+
+  std::string providerId() const override { return "test.nvidia.mma"; }
+
+  std::vector<TaskAlternative>
+  enumerate(const TaskAlternativeRequest &request) const override {
+    TaskAlternative conversionHeavy;
+    conversionHeavy.name = "rotated-cheap";
+    conversionHeavy.inputs = {{"rhs", rotated, Placement::Private}};
+    conversionHeavy.estimatedExecutionCost = 0;
+    conversionHeavy.requiredCapabilities = {"mma"};
+
+    TaskAlternative interfaceFriendly;
+    interfaceFriendly.name = "direct-costly";
+    interfaceFriendly.inputs = {{"rhs", direct, Placement::Private}};
+    interfaceFriendly.estimatedExecutionCost = 50;
+    interfaceFriendly.requiredCapabilities = {"mma"};
+    (void)request;
+    return {conversionHeavy, interfaceFriendly};
+  }
+
+private:
+  Distribution direct;
+  Distribution rotated;
+};
+
+class InvalidInstructionProvider final : public TaskAlternativeProvider {
+public:
+  explicit InvalidInstructionProvider(Distribution distribution)
+      : distribution(std::move(distribution)) {}
+  std::string providerId() const override { return "test.invalid"; }
+  std::vector<TaskAlternative> enumerate(const TaskAlternativeRequest &) const override {
+    TaskAlternative alternative;
+    alternative.name = "wrong-contract";
+    alternative.inputs = {{"lhs", distribution, Placement::Private}};
+    return {alternative};
+  }
+
+private:
+  Distribution distribution;
+};
+
+void testAlternativeProviderBoundary() {
+  Distribution direct = contiguousDistribution(4, 2);
+  Distribution rotated = rotateExecutorOwnership(direct);
+  TestInstructionProvider provider(direct, rotated);
+  TaskAlternativeRequest request{"mma", {"rhs"}, {}, "nvidia", "sm_90", {"mma"}};
+  AlternativeCollection collection = collectTaskAlternatives(request, {&provider});
+  check(collection.alternatives.size() == 2 && collection.diagnostics.empty() &&
+            collection.alternatives.front().task == "mma" &&
+            collection.alternatives.front().origin == AlternativeOrigin::Extension &&
+            collection.alternatives.front().implementationId ==
+                "test.nvidia.mma:mma:rotated-cheap",
+        "target providers produce validated generic alternatives with stable provenance");
+
+  TaskAlternative producer;
+  producer.task = "load";
+  producer.name = "direct";
+  producer.outputs = {{"out", direct, Placement::Private}};
+  CompositionDecision selected = selectComposition({producer}, collection.alternatives, "out",
+                                                   "rhs", 4, 64, 4096, {"mma"});
+  check(selected.selected && selected.selected->consumerAlternative == 1 &&
+            selected.selected->score == 50,
+        "extension-provided alternatives participate in ordinary global cost selection");
+
+  InvalidInstructionProvider invalid(direct);
+  AlternativeCollection rejected = collectTaskAlternatives(request, {&invalid});
+  check(rejected.alternatives.empty() && rejected.diagnostics.size() == 1 &&
+            rejected.diagnostics.front().find("expected 'rhs'") != std::string::npos,
+        "provider candidates with incompatible logical port contracts are diagnosed and omitted");
+}
+
 void testLinearPipelineSelection() {
   Distribution direct = contiguousDistribution(4, 2);
   Distribution permuted = contiguousDistribution(4, 2, true);
@@ -605,6 +681,7 @@ int main() {
     testSymbolicIndexSpaces();
     testCkMfmaAccumulatorFamily();
     testTaskComposition();
+    testAlternativeProviderBoundary();
     testLinearPipelineSelection();
     testTaskGraphFanoutSelection();
     testCkStyleHierarchicalFixture();
