@@ -1,5 +1,8 @@
 # Composable Kernel Language
 
+> NOTE: This project is still under active development.
+> Read the [blog post](https://retepy.com/posts/til/2026-08-29-ckl/) for problem statement and design.
+
 Composable Kernel Language (CKL) is an experimental compiler project for composing
 layout-aware GPU tile tasks. Its goal is to let independently authored tile operations
 negotiate physical data layouts, memory placement, and communication without hiding the
@@ -140,9 +143,6 @@ target = ckl.NVIDIATarget(
 )
 compiled = kernel.compile(ckl.CompilerOptions(target=target))
 ```
-
-[`examples/nvidia_mma.py`](examples/nvidia_mma.py) compiles a fixed one-warp `m16n8k16`
-`mma.sync` task to a device binary.
 
 ## Acknowledgments
 
