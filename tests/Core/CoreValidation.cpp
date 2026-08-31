@@ -477,6 +477,50 @@ void testLinearPipelineSelection() {
         "pipeline decisions retain stable invocation and implementation identities");
 }
 
+void testTaskGraphFanoutSelection() {
+  Distribution direct = contiguousDistribution(4, 2);
+  Distribution rotated = rotateExecutorOwnership(direct);
+  TaskAlternative directProducer{
+      "producer", "direct", {}, {{"out", direct, Placement::Private}},
+      8, 0, {}, {}, {}, 150, "producer.direct.v1"};
+  TaskAlternative cheapProducer{
+      "producer", "cheap", {}, {{"out", rotated, Placement::Private}},
+      8, 0, {}, {}, {}, 0, "producer.cheap.v1"};
+  TaskAlternative left{
+      "left", "only", {{"in", direct, Placement::Private}}, {},
+      8, 0, {}, {}, {}, 0, "left.v1"};
+  TaskAlternative right{
+      "right", "only", {{"in", direct, Placement::Private}}, {},
+      8, 0, {}, {}, {}, 0, "right.v1"};
+
+  CompositionDecision greedy = selectComposition(
+      {directProducer, cheapProducer}, {left}, "out", "in", 4, 64, 4096);
+  check(greedy.selected && greedy.selected->producerAlternative == 1,
+        "one-edge selection prefers cheap execution plus one subgroup exchange");
+
+  TaskGraphDecision graph = selectTaskGraph(
+      {{"producer-call", {directProducer, cheapProducer}},
+       {"left-call", {left}}, {"right-call", {right}}},
+      {{0, 1, "out", "in"}, {0, 2, "out", "in"}},
+      4, 64, 4096, 16);
+  check(graph.selected && graph.selected->alternatives ==
+                              std::vector<std::size_t>({0, 0, 0}) &&
+            graph.selected->score == 150 && graph.selected->conversions.size() == 2 &&
+            graph.selected->conversions[0].kind == ConversionKind::Identity &&
+            graph.selected->conversions[1].kind == ConversionKind::Identity &&
+            graph.combinationsExplored == 2,
+        "bounded graph selection charges a fan-out producer once and every outgoing edge");
+
+  TaskGraphDecision bounded = selectTaskGraph(
+      {{"producer-call", {directProducer, cheapProducer}},
+       {"left-call", {left}}, {"right-call", {right}}},
+      {{0, 1, "out", "in"}, {0, 2, "out", "in"}},
+      4, 64, 4096, 1);
+  check(!bounded.selected && bounded.searchLimitReached &&
+            bounded.combinationsExplored == 1,
+        "graph selection refuses to commit when its search bound cannot prove optimality");
+}
+
 void testCkStyleHierarchicalFixture() {
   IndexSpace executor({{"warp", 2}, {"lane", 4}});
   IndexSpace local({{"value", 2}});
@@ -558,6 +602,7 @@ int main() {
     testCkMfmaAccumulatorFamily();
     testTaskComposition();
     testLinearPipelineSelection();
+    testTaskGraphFanoutSelection();
     testCkStyleHierarchicalFixture();
 #ifdef CKL_ENABLE_MLIR
     testSymbolicPresburgerProof();

@@ -267,4 +267,128 @@ PipelineDecision selectLinearPipeline(const std::vector<PipelineStage> &stages,
   return decision;
 }
 
+// performs bounded exhuastive search over a task graph. Unlike the pairwise and linear solvers,
+// it correctly accounts for fan-out because it scores every task once and every graph edge once.
+// it is exhaustive search, which is exponential in the number of tasks, but it is bounded by
+// maximumCombinations. If the search exhausts the maximumCombinations limit before proving
+// optimality, searchLimitReached is set to true and selected is empty. This is intentional to warn
+// the caller that we are not able to find the optimal solution.
+/*
+TODO:
+- branch pruning
+- combined resource pressure for fused components
+- effects that prohibit fusion
+- pins and partial constraints (do this in future)
+*/
+TaskGraphDecision selectTaskGraph(const std::vector<TaskGraphNode> &nodes,
+                                  const std::vector<TaskGraphEdge> &edges,
+                                  std::int64_t subgroupSize, std::int64_t registerLimit,
+                                  std::int64_t sharedMemoryLimit, std::size_t maximumCombinations,
+                                  const std::vector<std::string> &availableCapabilities) {
+  TaskGraphDecision decision;
+  if (nodes.empty()) {
+    decision.selected = TaskGraphSelection{};
+    return decision;
+  }
+  if (maximumCombinations == 0) {
+    decision.searchLimitReached = true;
+    decision.diagnostics.push_back("task graph search limit is zero");
+    return decision;
+  }
+  for (const TaskGraphEdge &edge : edges) {
+    if (edge.producer >= nodes.size() || edge.consumer >= nodes.size()) {
+      decision.diagnostics.push_back("task graph edge references an invalid node");
+      return decision;
+    }
+  }
+  for (const TaskGraphNode &node : nodes) {
+    if (node.alternatives.empty()) {
+      decision.diagnostics.push_back("task graph node has no alternatives: " + node.invocation);
+      return decision;
+    }
+  }
+
+  // choice[i] is the currently selected alternative for node i.
+  std::vector<std::size_t> choice(nodes.size(), 0);
+  std::optional<TaskGraphSelection> best;
+  bool exhausted = false;
+  while (!exhausted && decision.combinationsExplored < maximumCombinations) {
+    ++decision.combinationsExplored;
+    bool legal = true;
+    std::int64_t score = 0;
+    std::vector<ConversionPlan> conversions;
+    conversions.reserve(edges.size());
+    for (std::size_t node = 0; node < nodes.size(); ++node) {
+      const TaskAlternative &alternative = nodes[node].alternatives[choice[node]];
+      if (!individuallyLegal(alternative, registerLimit, sharedMemoryLimit,
+                             availableCapabilities) ||
+          score > std::numeric_limits<std::int64_t>::max() - alternative.estimatedExecutionCost) {
+        legal = false;
+        break;
+      }
+      score += alternative.estimatedExecutionCost;
+    }
+    if (legal) {
+      for (const TaskGraphEdge &edge : edges) {
+        // for each edge, find the selected producer and consumer alternatives and classify the
+        // conversion between them
+        const auto &producer = nodes[edge.producer].alternatives[choice[edge.producer]];
+        const auto &consumer = nodes[edge.consumer].alternatives[choice[edge.consumer]];
+        const PortRealization *output = findPort(producer.outputs, edge.producerPort);
+        const PortRealization *input = findPort(consumer.inputs, edge.consumerPort);
+        if (!output || !input) {
+          legal = false;
+          break;
+        }
+        ConversionPlan conversion =
+            classifyConversion(output->distribution, input->distribution, subgroupSize);
+        if (conversion.kind == ConversionKind::Unsupported) {
+          legal = false;
+          break;
+        }
+        const std::int64_t edgeCost = boundaryCost(*output, *input, conversion);
+        if (score > std::numeric_limits<std::int64_t>::max() - edgeCost) {
+          legal = false;
+          break;
+        }
+        score += edgeCost;
+        conversions.push_back(std::move(conversion));
+      }
+    }
+    if (legal && (!best || score < best->score)) {
+      // retain the best legal assignment
+      TaskGraphSelection selection;
+      selection.alternatives = choice;
+      selection.conversions = std::move(conversions);
+      selection.score = score;
+      for (std::size_t node = 0; node < nodes.size(); ++node)
+        selection.provenance.push_back(
+            "invocation=" + nodes[node].invocation +
+            ",implementation=" + implementationIdentity(nodes[node].alternatives[choice[node]]));
+      best = std::move(selection);
+    }
+
+    for (std::size_t node = nodes.size(); node-- > 0;) {
+      if (++choice[node] < nodes[node].alternatives.size())
+        break;
+      choice[node] = 0;
+      if (node == 0)
+        exhausted = true;
+    }
+  }
+
+  if (!exhausted) {
+    decision.searchLimitReached = true;
+    decision.diagnostics.push_back("task graph search limit reached before proving optimality");
+    return decision;
+  }
+  if (!best) {
+    decision.diagnostics.push_back("no legal task-alternative assignment for task graph");
+    return decision;
+  }
+  best->combinationsExplored = decision.combinationsExplored;
+  decision.selected = std::move(best);
+  return decision;
+}
+
 } // namespace ckl::core

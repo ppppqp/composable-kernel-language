@@ -113,8 +113,7 @@ FailureOr<::ckl::core::TaskAlternative> importAlternative(TaskOp task, Dictionar
   return result;
 }
 
-class SelectAlternativesPass
-    : public PassWrapper<SelectAlternativesPass, OperationPass<ModuleOp>> {
+class SelectAlternativesPass : public PassWrapper<SelectAlternativesPass, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SelectAlternativesPass)
   StringRef getArgument() const final { return "ckl-select-alternatives"; }
@@ -148,7 +147,8 @@ public:
       TaskComposeOp current = root;
       while (current.getResult().hasOneUse()) {
         auto next = mlir::dyn_cast<TaskComposeOp>(*current.getResult().getUsers().begin());
-        if (!next) break;
+        if (!next)
+          break;
         chain.push_back(next);
         current = next;
       }
@@ -167,15 +167,19 @@ public:
         auto consumer = SymbolTable::lookupNearestSymbolFrom<TaskOp>(root, root.getConsumerAttr());
         try {
           for (Attribute value : producer.getAlternatives()) {
-            auto imported = importAlternative(
-                producer, mlir::cast<DictionaryAttr>(value), root);
-            if (failed(imported)) { signalPassFailure(); return; }
+            auto imported = importAlternative(producer, mlir::cast<DictionaryAttr>(value), root);
+            if (failed(imported)) {
+              signalPassFailure();
+              return;
+            }
             single.producers.push_back(std::move(*imported));
           }
           for (Attribute value : consumer.getAlternatives()) {
-            auto imported = importAlternative(
-                consumer, mlir::cast<DictionaryAttr>(value), root);
-            if (failed(imported)) { signalPassFailure(); return; }
+            auto imported = importAlternative(consumer, mlir::cast<DictionaryAttr>(value), root);
+            if (failed(imported)) {
+              signalPassFailure();
+              return;
+            }
             single.consumers.push_back(std::move(*imported));
           }
         } catch (const std::exception &error) {
@@ -209,8 +213,7 @@ public:
       auto sharedMemoryLimit = chain.front().getSharedMemoryLimit();
       auto capabilitiesAttr = chain.front().getCapabilitiesAttr();
       for (TaskComposeOp edge : chain) {
-        if (edge.getSubgroupSize() != subgroupSize ||
-            edge.getRegisterLimit() != registerLimit ||
+        if (edge.getSubgroupSize() != subgroupSize || edge.getRegisterLimit() != registerLimit ||
             edge.getSharedMemoryLimit() != sharedMemoryLimit ||
             edge.getCapabilitiesAttr() != capabilitiesAttr) {
           edge.emitError("linear pipeline requires consistent planning limits and capabilities");
@@ -240,9 +243,12 @@ public:
       try {
         for (std::size_t stage = 0; stage < tasks.size(); ++stage)
           for (Attribute value : tasks[stage].getAlternatives()) {
-            auto imported = importAlternative(
-                tasks[stage], mlir::cast<DictionaryAttr>(value), chain.front());
-            if (failed(imported)) { signalPassFailure(); return; }
+            auto imported =
+                importAlternative(tasks[stage], mlir::cast<DictionaryAttr>(value), chain.front());
+            if (failed(imported)) {
+              signalPassFailure();
+              return;
+            }
             item.alternatives[stage].push_back(std::move(*imported));
           }
       } catch (const std::exception &error) {
@@ -254,16 +260,15 @@ public:
       std::vector<::ckl::core::PipelineStage> stages;
       for (std::size_t stage = 0; stage < tasks.size(); ++stage) {
         std::string input = stage == 0 ? "" : chain[stage - 1].getConsumerPort().str();
-        std::string output = stage + 1 == tasks.size()
-                                 ? "" : chain[stage].getProducerPort().str();
+        std::string output = stage + 1 == tasks.size() ? "" : chain[stage].getProducerPort().str();
         stages.push_back({tasks[stage].getSymName().str() + "#" + std::to_string(stage),
                           item.alternatives[stage], std::move(input), std::move(output)});
       }
       std::vector<std::string> capabilities;
       for (Attribute value : chain.front().getCapabilities())
         capabilities.push_back(mlir::cast<StringAttr>(value).getValue().str());
-      auto decision = ::ckl::core::selectLinearPipeline(
-          stages, subgroupSize, registerLimit, sharedMemoryLimit, capabilities);
+      auto decision = ::ckl::core::selectLinearPipeline(stages, subgroupSize, registerLimit,
+                                                        sharedMemoryLimit, capabilities);
       if (!decision.selected) {
         auto diagnostic = chain.front().emitError("no legal linear task pipeline");
         for (const std::string &message : decision.diagnostics)
@@ -282,23 +287,23 @@ public:
         provenance.push_back(rewriter.getStringAttr(entry));
       for (std::size_t index = 0; index < pipeline.edges.size(); ++index) {
         TaskComposeOp edge = pipeline.edges[index];
-        const auto &producer = pipeline.alternatives[index]
-            [pipeline.selection.alternatives[index]];
-        const auto &consumer = pipeline.alternatives[index + 1]
-            [pipeline.selection.alternatives[index + 1]];
+        const auto &producer = pipeline.alternatives[index][pipeline.selection.alternatives[index]];
+        const auto &consumer =
+            pipeline.alternatives[index + 1][pipeline.selection.alternatives[index + 1]];
         auto source = llvm::find_if(producer.outputs, [&](const auto &port) {
           return port.name == edge.getProducerPort();
         });
-        auto target = llvm::find_if(consumer.inputs, [&](const auto &port) {
-          return port.name == edge.getConsumerPort();
-        });
+        auto target = llvm::find_if(
+            consumer.inputs, [&](const auto &port) { return port.name == edge.getConsumerPort(); });
         OperationState state(edge.getLoc(), ComposeOp::getOperationName());
         state.addOperands(edge.getInput());
         state.addTypes(edge.getResult().getType());
-        state.addAttribute("source", DistributionAttr::get(
-            &getContext(), ::ckl::core::serialize(source->distribution)));
-        state.addAttribute("target", DistributionAttr::get(
-            &getContext(), ::ckl::core::serialize(target->distribution)));
+        state.addAttribute(
+            "source",
+            DistributionAttr::get(&getContext(), ::ckl::core::serialize(source->distribution)));
+        state.addAttribute(
+            "target",
+            DistributionAttr::get(&getContext(), ::ckl::core::serialize(target->distribution)));
         state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(edge.getSubgroupSize()));
         state.addAttribute("ckl.producer_alternative", rewriter.getStringAttr(producer.name));
         state.addAttribute("ckl.consumer_alternative", rewriter.getStringAttr(consumer.name));
@@ -316,38 +321,39 @@ public:
       const auto &selected = *single.decision.selected;
       const auto &producer = single.producers[selected.producerAlternative];
       const auto &consumer = single.consumers[selected.consumerAlternative];
-      auto source = llvm::find_if(producer.outputs, [&](const auto &port) {
-        return port.name == edge.getProducerPort();
-      });
-      auto target = llvm::find_if(consumer.inputs, [&](const auto &port) {
-        return port.name == edge.getConsumerPort();
-      });
+      auto source = llvm::find_if(
+          producer.outputs, [&](const auto &port) { return port.name == edge.getProducerPort(); });
+      auto target = llvm::find_if(
+          consumer.inputs, [&](const auto &port) { return port.name == edge.getConsumerPort(); });
       OperationState state(edge.getLoc(), ComposeOp::getOperationName());
       state.addOperands(edge.getInput());
       state.addTypes(edge.getResult().getType());
-      state.addAttribute("source", DistributionAttr::get(
-          &getContext(), ::ckl::core::serialize(source->distribution)));
-      state.addAttribute("target", DistributionAttr::get(
-          &getContext(), ::ckl::core::serialize(target->distribution)));
+      state.addAttribute("source", DistributionAttr::get(&getContext(), ::ckl::core::serialize(
+                                                                            source->distribution)));
+      state.addAttribute("target", DistributionAttr::get(&getContext(), ::ckl::core::serialize(
+                                                                            target->distribution)));
       state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(edge.getSubgroupSize()));
       state.addAttribute("ckl.producer_alternative", rewriter.getStringAttr(producer.name));
       state.addAttribute("ckl.consumer_alternative", rewriter.getStringAttr(consumer.name));
-      state.addAttribute("ckl.producer_implementation_id", rewriter.getStringAttr(
-          producer.implementationId.empty() ? producer.task + ":" + producer.name
-                                            : producer.implementationId));
-      state.addAttribute("ckl.consumer_implementation_id", rewriter.getStringAttr(
-          consumer.implementationId.empty() ? consumer.task + ":" + consumer.name
-                                            : consumer.implementationId));
+      state.addAttribute("ckl.producer_implementation_id",
+                         rewriter.getStringAttr(producer.implementationId.empty()
+                                                    ? producer.task + ":" + producer.name
+                                                    : producer.implementationId));
+      state.addAttribute("ckl.consumer_implementation_id",
+                         rewriter.getStringAttr(consumer.implementationId.empty()
+                                                    ? consumer.task + ":" + consumer.name
+                                                    : consumer.implementationId));
       SmallVector<Attribute> considered;
       for (const auto &candidate : single.decision.considered)
-        considered.push_back(rewriter.getDictionaryAttr({
-            rewriter.getNamedAttr("producer", rewriter.getStringAttr(
-                single.producers[candidate.producerAlternative].name)),
-            rewriter.getNamedAttr("consumer", rewriter.getStringAttr(
-                single.consumers[candidate.consumerAlternative].name)),
-            rewriter.getNamedAttr("score", rewriter.getI64IntegerAttr(candidate.score)),
-            rewriter.getNamedAttr("explanation",
-                                  rewriter.getStringAttr(candidate.explanation))}));
+        considered.push_back(rewriter.getDictionaryAttr(
+            {rewriter.getNamedAttr(
+                 "producer",
+                 rewriter.getStringAttr(single.producers[candidate.producerAlternative].name)),
+             rewriter.getNamedAttr(
+                 "consumer",
+                 rewriter.getStringAttr(single.consumers[candidate.consumerAlternative].name)),
+             rewriter.getNamedAttr("score", rewriter.getI64IntegerAttr(candidate.score)),
+             rewriter.getNamedAttr("explanation", rewriter.getStringAttr(candidate.explanation))}));
       state.addAttribute("ckl.considered_alternatives", rewriter.getArrayAttr(considered));
       rewriter.setInsertionPoint(edge);
       Operation *replacement = rewriter.create(state);
@@ -403,6 +409,7 @@ public:
   }
 };
 
+// removes ckl.compose and ckl.convert_layout
 class ScheduleConversionsPass
     : public PassWrapper<ScheduleConversionsPass, OperationPass<ModuleOp>> {
 public:
@@ -429,31 +436,31 @@ public:
         state.addAttribute("source", op.getSource());
         state.addAttribute("target", op.getTarget());
         state.addAttribute("subgroup_size", rewriter.getI64IntegerAttr(op.getSubgroupSize()));
-        if (auto reason = op.getReasonAttr()) state.addAttribute("reason", reason);
-        if (auto count = op.getMoveCountAttr()) state.addAttribute("move_count", count);
+        if (auto reason = op.getReasonAttr())
+          state.addAttribute("reason", reason);
+        if (auto count = op.getMoveCountAttr())
+          state.addAttribute("move_count", count);
         return rewriter.create(state);
       };
-      if (op.getKind() == "shared-memory-exchange" ||
-          op.getKind() == "global-memory-exchange") {
+      if (op.getKind() == "shared-memory-exchange" || op.getKind() == "global-memory-exchange") {
         rewriter.setInsertionPoint(op);
         const bool shared = op.getKind() == "shared-memory-exchange";
-        Operation *store = createPhase(
-            shared ? SharedStoreOp::getOperationName() : GlobalStoreOp::getOperationName(),
-            op.getInput());
-        Operation *boundary = createPhase(
-            shared ? WorkgroupBarrierOp::getOperationName()
-                   : KernelBoundaryOp::getOperationName(),
-            store->getResult(0));
-        Operation *load = createPhase(
-            shared ? SharedLoadOp::getOperationName() : GlobalLoadOp::getOperationName(),
-            boundary->getResult(0));
+        Operation *store = createPhase(shared ? SharedStoreOp::getOperationName()
+                                              : GlobalStoreOp::getOperationName(),
+                                       op.getInput());
+        Operation *boundary = createPhase(shared ? WorkgroupBarrierOp::getOperationName()
+                                                 : KernelBoundaryOp::getOperationName(),
+                                          store->getResult(0));
+        Operation *load = createPhase(shared ? SharedLoadOp::getOperationName()
+                                             : GlobalLoadOp::getOperationName(),
+                                      boundary->getResult(0));
         rewriter.replaceOp(op, load->getResults());
         continue;
       }
       StringRef operationName =
-          op.getKind() == "local-permutation"        ? LocalPermuteOp::getOperationName()
-          : op.getKind() == "subgroup-exchange"      ? SubgroupExchangeOp::getOperationName()
-                                                     : StringRef{};
+          op.getKind() == "local-permutation"   ? LocalPermuteOp::getOperationName()
+          : op.getKind() == "subgroup-exchange" ? SubgroupExchangeOp::getOperationName()
+                                                : StringRef{};
       if (operationName.empty()) {
         op.emitError("has no scheduling operation for conversion kind '") << op.getKind() << "'";
         signalPassFailure();

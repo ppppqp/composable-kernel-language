@@ -101,4 +101,40 @@ PipelineDecision selectLinearPipeline(
     std::int64_t registerLimit, std::int64_t sharedMemoryLimit,
     const std::vector<std::string> &availableCapabilities = {});
 
+struct TaskGraphNode {
+  std::string invocation;
+  std::vector<TaskAlternative> alternatives;
+};
+
+struct TaskGraphEdge {
+  std::size_t producer;
+  std::size_t consumer;
+  std::string producerPort;
+  std::string consumerPort;
+};
+
+struct TaskGraphSelection {
+  std::vector<std::size_t> alternatives;
+  std::vector<ConversionPlan> conversions;
+  std::int64_t score = 0;
+  std::size_t combinationsExplored = 0;
+  std::vector<std::string> provenance;
+};
+
+struct TaskGraphDecision {
+  std::optional<TaskGraphSelection> selected;
+  std::size_t combinationsExplored = 0;
+  bool searchLimitReached = false;
+  std::vector<std::string> diagnostics;
+};
+
+// Deterministically explores the bounded Cartesian product of node
+// alternatives. Execution cost is charged once per node and conversion cost
+// once per edge, which makes fan-out decisions globally visible.
+TaskGraphDecision selectTaskGraph(
+    const std::vector<TaskGraphNode> &nodes, const std::vector<TaskGraphEdge> &edges,
+    std::int64_t subgroupSize, std::int64_t registerLimit,
+    std::int64_t sharedMemoryLimit, std::size_t maximumCombinations,
+    const std::vector<std::string> &availableCapabilities = {});
+
 } // namespace ckl::core
