@@ -18,7 +18,17 @@ from .ir import (
     const,
     dim,
 )
-from .tracing import Func, NativeModule, TracedValue, func, load_tile, store_tile
+from .tracing import (
+    Func,
+    NativeModule,
+    TaskDef,
+    TracedValue,
+    func,
+    invoke,
+    load_tile,
+    store_tile,
+    task,
+)
 
 __all__ = [
     "Alternative",
@@ -37,8 +47,11 @@ __all__ = [
     "dim",
     "Func",
     "NativeModule",
+    "TaskDef",
     "TracedValue",
     "func",
+    "invoke",
     "load_tile",
     "store_tile",
+    "task",
 ]

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from functools import update_wrapper
 from typing import Any, Callable, Sequence
 
-from .ir import Distribution, IndexType, MemRefType, TileType, Type
+from .ir import Alternative, Distribution, IndexType, MemRefType, TileType, Type
 
 
 _active_trace: contextvars.ContextVar[_Trace | None] = contextvars.ContextVar(
@@ -112,10 +112,81 @@ def store_tile(
     )
 
 
-class Func:
-    def __init__(self, function: Callable[..., Any]):
+class TaskDef:
+    def __init__(self, function: Callable[..., Any], alternatives: Sequence[Alternative]):
         self.function = function
         self.signature = inspect.signature(function)
+        self.alternatives = tuple(alternatives)
+        if not self.alternatives:
+            raise ValueError("a task must declare at least one alternative")
+        if len({alternative.name for alternative in self.alternatives}) != len(self.alternatives):
+            raise ValueError("task alternative names must be unique")
+        self.input_types = tuple(
+            _require_annotation(parameter.name, parameter.annotation)
+            for parameter in self.signature.parameters.values()
+        )
+        self.result_types = _result_annotations(self.signature.return_annotation)
+        update_wrapper(self, function)
+
+    def emit(self, trace: _Trace) -> Any:
+        attributes = []
+        for alternative in self.alternatives:
+            entries = {"name": trace.ir.StringAttr.get(alternative.name)}
+            entries.update(
+                (key, trace.ir.StringAttr.get(value))
+                for key, value in alternative.properties.items()
+            )
+            attributes.append(trace.ir.DictAttr.get(entries))
+        function_type = trace.ir.FunctionType.get(
+            [trace.type(type_) for type_ in self.input_types],
+            [trace.type(type_) for type_ in self.result_types],
+        )
+        return trace.ckl_dialect.TaskOp(
+            self.function.__name__, trace.ir.TypeAttr.get(function_type), attributes
+        )
+
+
+def task(*, alternatives: Sequence[Alternative]) -> Callable[[Callable[..., Any]], TaskDef]:
+    """Declare a logical CKL task contract from Python annotations."""
+
+    def decorate(function: Callable[..., Any]) -> TaskDef:
+        return TaskDef(function, alternatives)
+
+    return decorate
+
+
+def invoke(
+    task: TaskDef,
+    operands: Sequence[TracedValue],
+    *,
+    alternative: str | None = None,
+) -> TracedValue | tuple[TracedValue, ...]:
+    trace = _trace()
+    if tuple(operand.type for operand in operands) != task.input_types:
+        raise TypeError(f"operands do not match task @{task.function.__name__}")
+    if alternative is not None and alternative not in {
+        candidate.name for candidate in task.alternatives
+    }:
+        raise ValueError(f"task @{task.function.__name__} has no alternative {alternative!r}")
+    operation = trace.ckl_dialect.InvokeOp(
+        [trace.type(type_) for type_ in task.result_types],
+        task.function.__name__,
+        [operand.value for operand in operands],
+        alternative=alternative,
+    )
+    results = tuple(
+        TracedValue(result, type_) for result, type_ in zip(operation.results_, task.result_types)
+    )
+    return results[0] if len(results) == 1 else results
+
+
+class Func:
+    def __init__(self, function: Callable[..., Any], tasks: Sequence[TaskDef] = ()):
+        self.function = function
+        self.signature = inspect.signature(function)
+        self.tasks = tuple(tasks)
+        if len({task.function.__name__ for task in self.tasks}) != len(self.tasks):
+            raise ValueError("function task dependencies must have unique names")
         update_wrapper(self, function)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -137,6 +208,8 @@ class Func:
             module = ir.Module.create()
             trace = _Trace(ir, ckl_dialect)
             with ir.InsertionPoint(module.body):
+                for task_definition in self.tasks:
+                    task_definition.emit(trace)
                 function = func_dialect.FuncOp(
                     self.function.__name__,
                     ([trace.type(parameter.annotation) for parameter in parameters],
@@ -168,6 +241,12 @@ def _result_annotations(annotation: Any) -> tuple[Type, ...]:
     raise TypeError("function return annotation must contain CKL types")
 
 
+def _require_annotation(name: str, annotation: Any) -> Type:
+    if annotation is inspect.Parameter.empty or not hasattr(annotation, "mlir"):
+        raise TypeError(f"parameter {name!r} needs a CKL type annotation")
+    return annotation
+
+
 def _normalize_results(returned: Any, expected: tuple[Type, ...]) -> tuple[TracedValue, ...]:
     if not expected:
         if returned is not None:
@@ -182,6 +261,16 @@ def _normalize_results(returned: Any, expected: tuple[Type, ...]) -> tuple[Trace
     return values
 
 
-def func(function: Callable[..., Any]) -> Func:
+def func(
+    function: Callable[..., Any] | None = None,
+    *,
+    tasks: Sequence[TaskDef] = (),
+) -> Func | Callable[[Callable[..., Any]], Func]:
     """Trace a Python function into an MLIR `func.func` on `emit()`."""
-    return Func(function)
+    if function is not None:
+        return Func(function, tasks)
+
+    def decorate(value: Callable[..., Any]) -> Func:
+        return Func(value, tasks)
+
+    return decorate

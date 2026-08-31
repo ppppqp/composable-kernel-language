@@ -119,7 +119,9 @@ to build the local MLIR bindings.
 
 The MLIR-enabled CMake build generates CKL Python operation classes directly from `CKLOps.td`.
 `@ckl.func` traces against those generated classes and upstream MLIR insertion points and SSA
-values; it does not assemble operation text.
+values; it does not assemble operation text. Logical task contracts can be declared with
+`@ckl.task(alternatives=[...])`, listed as dependencies of `@ckl.func(tasks=[...])`, and called with
+`ckl.invoke(...)` during tracing.
 
 ## Acknowledgments
 

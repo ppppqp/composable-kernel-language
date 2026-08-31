@@ -42,3 +42,13 @@ add_test(
     -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/emit_traced_memory.py
     -P ${CMAKE_CURRENT_SOURCE_DIR}/check_tracing_frontend.cmake
 )
+
+add_test(
+  NAME ckl-python-task-tracing
+  COMMAND ${CMAKE_COMMAND}
+    -DCKL_OPT=$<TARGET_FILE:ckl-opt>
+    -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+    -DPYTHONPATH_VALUE=${PROJECT_SOURCE_DIR}/python:${PROJECT_BINARY_DIR}/python:${CKL_MLIR_PYTHON_ROOT}:${CMAKE_CURRENT_SOURCE_DIR}
+    -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/emit_traced_task.py
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_traced_task.cmake
+)
