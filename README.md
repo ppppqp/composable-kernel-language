@@ -16,9 +16,10 @@ CKL emphasizes:
 1. **Layout Abstraction**: Separate representations for execution ownership, per-executor values, logical tile
    coordinates, and storage addressing. This lays the groundwork for layout inference and optimization.
 2. **Visibility**: Compiler-visible layout composition, equivalence proofs, conversion plans, and decision
-   provenance. We consider this important for experts and KDA to work on kernel optimization.
+   provenance for kernel authors and compiler developers.
 3. **Composability**: Logical tasks that can use compiler-derived, target-provided, imported, or explicitly
-   authored alternatives, with automatic, partially constrained, or pinned selection. Any arch-specific kernels can fit in the optimization pipeline seamlessly with just a declaration on contract and a tunable cost model.
+   authored alternatives, with automatic, partially constrained, or pinned selection. Target-specific
+   implementations participate through declared layout contracts and costs.
 
 ## Architecture
 
@@ -34,8 +35,8 @@ compiler or performance model.
 
 The compiler layer currently contains an initial MLIR dialect and an optimizer driver. It
 uses the standalone core for semantic verification and layout-conversion planning. The
-Python frontend and boxed NVIDIA lowering are under development. Runtime integration is not yet
-implemented.
+Python frontend constructs native MLIR operations and can compile a boxed NVIDIA path to a device
+binary. A general runtime launch API is not yet implemented.
 
 
 ## Repository layout
@@ -83,7 +84,7 @@ export LLVM_BUILD=/path/to/llvm-project/build
 
 cmake -S . -B build -G Ninja \
    -DCMAKE_BUILD_TYPE=Debug \
-   -DCKL_ENABLE_MLIR=ON \  # specify this to enable DSL build
+   -DCKL_ENABLE_MLIR=ON \
    -DMLIR_DIR="$LLVM_BUILD/lib/cmake/mlir"
 
 cmake --build build
@@ -101,10 +102,9 @@ package and supplies the LLVM/MLIR include directories, libraries, and CMake bui
 
 ## Python frontend
 
-The initial Python API builds generic CKL types, index maps, distributions, tasks, symbol bindings,
-tile memory operations, and invocations. It emits MLIR text that is verified by `ckl-opt`; compiler
-passes introduce target-specific operations. The package has no runtime dependencies and can be
-used directly with `uv`:
+The Python API builds generic CKL types, index maps, distributions, tasks, tile memory operations,
+and invocations using MLIR Python bindings. Compiler passes select task alternatives and introduce
+target-specific operations. It can be used directly with `uv`:
 
 ```bash
 uv venv --python 3.12
@@ -113,17 +113,6 @@ export MLIR_PYTHON_ROOT="$LLVM_BUILD/tools/mlir/python_packages/mlir_core"
 PYTHONPATH="$PWD/python:$PWD/build/python:$MLIR_PYTHON_ROOT" \
   uv run python tests/Python/emit_traced_memory.py
 ```
-
-Python 3.12 is currently required because Python extension modules must match the interpreter used
-to build the local MLIR bindings.
-
-The MLIR-enabled CMake build generates CKL Python operation classes directly from `CKLOps.td`.
-`@ckl.func` traces against those generated classes and upstream MLIR insertion points and SSA
-values; it does not assemble operation text. Logical task contracts can be declared with
-`@ckl.task(alternatives=[...])`, listed as dependencies of `@ckl.func(tasks=[...])`, and called with
-`ckl.invoke(...)` during tracing.
-
-`@ckl.jit` adds compilation and deterministic in-process caching:
 
 ```python
 @ckl.jit(tasks=[copy_task], passes=["--ckl-select-alternatives"])
@@ -135,15 +124,11 @@ print(compiled.mlir)
 ```
 
 Device kernels use an explicit GPU container:
-
 ```python
 @ckl.jit(device=True, module_name="kernels", block_size=(32, 1, 1))
 def kernel(source: source_type, target: target_type) -> None:
     ...
 ```
-
-This emits a native `gpu.module` containing a `gpu.func ... kernel`. Device kernels currently return
-through memory arguments and therefore must have a `None` return annotation.
 
 Compilation can target an NVIDIA device binary explicitly:
 
@@ -156,24 +141,8 @@ target = ckl.NVIDIATarget(
 compiled = kernel.compile(ckl.CompilerOptions(target=target))
 ```
 
-The target architecture, PTX feature level, binary format, and resolved toolkit path participate in
-the JIT cache identity. GPU objects are extracted through the MLIR Python binding and exposed as
-bytes when the configured lowering passes produce `gpu.binary`; target selection alone does not
-turn a host function into a GPU kernel. Calling a JIT function as an executable kernel remains
-rejected until general runtime argument marshalling is implemented.
-
-The current NVIDIA proof point traces the fixed one-warp `m16n8k16` MMA kernel entirely from Python,
-compiles it to CUBIN, and validates its result on hardware. This is an end-to-end correctness gate,
-not yet a general matrix-multiplication API. Its task declares an MMA implementation with cost 1
-and a scalar fallback with cost 100; the invocation is unpinned, so the compiler's alternative
-selection pass chooses the MMA implementation before target lowering.
-
-With the CUDA environment active, compile the example with:
-
-```bash
-PYTHONPATH="$PWD/python:$PWD/build/python:$MLIR_PYTHON_ROOT" \
-  uv run python examples/nvidia_mma.py
-```
+[`examples/nvidia_mma.py`](examples/nvidia_mma.py) compiles a fixed one-warp `m16n8k16`
+`mma.sync` task to a device binary.
 
 ## Acknowledgments
 

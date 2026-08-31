@@ -252,9 +252,33 @@ class Distribution:
 
 
 @dataclass(frozen=True)
+class Port:
+    name: str
+    distribution: Distribution
+    placement: str = "private"
+    vector_width: int = 1
+
+    def __post_init__(self) -> None:
+        _identifier(self.name, "port name")
+        if self.placement not in {"private", "shared", "global"}:
+            raise ValueError(f"unsupported port placement {self.placement!r}")
+        if not isinstance(self.vector_width, int) or isinstance(self.vector_width, bool) or self.vector_width <= 0:
+            raise ValueError("port vector width must be a positive integer")
+
+    def mlir(self) -> str:
+        return (
+            "{name = " + _quote(self.name) + ", distribution = " + self.distribution.mlir() +
+            ", placement = " + _quote(self.placement) +
+            f", vector_width = {self.vector_width} : i64}}"
+        )
+
+
+@dataclass(frozen=True)
 class Alternative:
     name: str
     properties: Mapping[str, str | int | Sequence[str]] = field(default_factory=dict)
+    inputs: tuple[Port, ...] = ()
+    outputs: tuple[Port, ...] = ()
 
     def __post_init__(self) -> None:
         _identifier(self.name, "alternative name")
@@ -266,6 +290,9 @@ class Alternative:
                 isinstance(item, str) for item in value
             ):
                 raise TypeError("alternative property lists must contain strings")
+        for label, ports in (("input", self.inputs), ("output", self.outputs)):
+            if len({port.name for port in ports}) != len(ports):
+                raise ValueError(f"alternative {label} port names must be unique")
 
     def mlir(self) -> str:
         entries = [("name", self.name), *self.properties.items()]
@@ -276,7 +303,12 @@ class Alternative:
                 return f"{value} : i64"
             return "[" + ", ".join(_quote(item) for item in value) + "]"
 
-        return "{" + ", ".join(f"{key} = {format_value(value)}" for key, value in entries) + "}"
+        fields = [f"{key} = {format_value(value)}" for key, value in entries]
+        if self.inputs:
+            fields.append("inputs = [" + ", ".join(port.mlir() for port in self.inputs) + "]")
+        if self.outputs:
+            fields.append("outputs = [" + ", ".join(port.mlir() for port in self.outputs) + "]")
+        return "{" + ", ".join(fields) + "}"
 
 
 @dataclass(frozen=True)

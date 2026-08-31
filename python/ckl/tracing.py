@@ -166,6 +166,26 @@ class TaskDef:
                 (key, property_attribute(value))
                 for key, value in alternative.properties.items()
             )
+            def ports_attribute(ports: Sequence[Any]) -> Any:
+                return trace.ir.ArrayAttr.get(
+                    [
+                        trace.ir.DictAttr.get(
+                            {
+                                "name": trace.ir.StringAttr.get(port.name),
+                                "distribution": trace.attribute(port.distribution),
+                                "placement": trace.ir.StringAttr.get(port.placement),
+                                "vector_width": trace.ir.IntegerAttr.get(
+                                    trace.ir.IntegerType.get_signless(64), port.vector_width
+                                ),
+                            }
+                        )
+                        for port in ports
+                    ]
+                )
+            if alternative.inputs:
+                entries["inputs"] = ports_attribute(alternative.inputs)
+            if alternative.outputs:
+                entries["outputs"] = ports_attribute(alternative.outputs)
             attributes.append(trace.ir.DictAttr.get(entries))
         function_type = trace.ir.FunctionType.get(
             [trace.type(type_) for type_ in self.input_types],

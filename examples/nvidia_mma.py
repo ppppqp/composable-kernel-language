@@ -8,6 +8,7 @@ from ckl import (
     IndexMap,
     MemRefType,
     NVIDIATarget,
+    Port,
     Space,
     TileType,
     constant_index,
@@ -79,13 +80,12 @@ acc_tile = TileType("f32", acc_tile_space)
                 ),
                 "estimated_execution_cost": 1,
             },
-        ),
-        Alternative(
-            "scalar-fallback",
-            {
-                "implementation_id": "example.scalar.m16n8k16.f16-f32",
-                "estimated_execution_cost": 100,
-            },
+            inputs=(
+                Port("lhs", lhs_distribution),
+                Port("rhs", rhs_distribution),
+                Port("acc", acc_distribution),
+            ),
+            outputs=(Port("result", acc_distribution),),
         ),
     ]
 )
@@ -119,13 +119,18 @@ def kernel(a: lhs_memref, b: rhs_memref, c: acc_memref, d: acc_memref) -> None:
     store_tile(result, d, [zero, zero], distribution=acc_distribution)
 
 
-target = NVIDIATarget(
-    chip=os.environ.get("CKL_CUDA_ARCH", "sm_120"),
-    features=os.environ.get("CKL_CUDA_PTX_FEATURE", "+ptx87"),
-    toolkit_root=Path(os.environ["CUDA_HOME"]),
-)
-compiled = kernel.compile(CompilerOptions(target=target))
-print(
-    "selected mma-sync-m16n8k16-f16-f32; "
-    f"generated {len(compiled.gpu_objects[0].data)} CUBIN bytes"
-)
+def main() -> None:
+    target = NVIDIATarget(
+        chip=os.environ.get("CKL_CUDA_ARCH", "sm_120"),
+        features=os.environ.get("CKL_CUDA_PTX_FEATURE", "+ptx87"),
+        toolkit_root=Path(os.environ["CUDA_HOME"]),
+    )
+    compiled = kernel.compile(CompilerOptions(target=target))
+    print(
+        "selected mma-sync-m16n8k16-f16-f32; "
+        f"generated {len(compiled.gpu_objects[0].data)} CUBIN bytes"
+    )
+
+
+if __name__ == "__main__":
+    main()

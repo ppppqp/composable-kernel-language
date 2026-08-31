@@ -318,6 +318,63 @@ public:
         nodes.push_back({task.getSymName().str() + "#" + std::to_string(local),
                          preparedGraph.alternatives[local]});
       }
+
+      // Treat distributed loads and stores as fixed graph nodes. Their distributions describe the
+      // layout already present at the task boundary, so edges to/from them charge the same
+      // conversion cost as task-to-task composition edges.
+      for (auto [local, invoke] : llvm::enumerate(preparedGraph.invokes)) {
+        auto task = SymbolTable::lookupNearestSymbolFrom<TaskOp>(invoke, invoke.getCalleeAttr());
+        for (auto [operandIndex, operand] : llvm::enumerate(invoke.getInputs())) {
+          auto load = operand.getDefiningOp<LoadTileOp>();
+          if (!load)
+            continue;
+          auto portName = getLogicalPortName(task, "inputs", operandIndex, invoke);
+          if (failed(portName)) {
+            signalPassFailure();
+            return;
+          }
+          ::ckl::core::TaskAlternative boundary;
+          boundary.task = "load-boundary";
+          boundary.name = "fixed";
+          boundary.implementationId = "load-boundary:" + std::to_string(local) + ":" +
+                                      std::to_string(operandIndex);
+          boundary.outputs.push_back(
+              {*portName,
+               ::ckl::core::deserializeDistribution(load.getDistribution().getValue().str()),
+               ::ckl::core::Placement::Private, 1});
+          const std::size_t boundaryNode = nodes.size();
+          preparedGraph.alternatives.push_back({boundary});
+          nodes.push_back({boundary.implementationId, {std::move(boundary)}});
+          preparedGraph.coreEdges.push_back(
+              {boundaryNode, local, *portName, *portName});
+        }
+        for (auto [resultIndex, result] : llvm::enumerate(invoke.getResults())) {
+          for (OpOperand &use : result.getUses()) {
+            auto store = mlir::dyn_cast<StoreTileOp>(use.getOwner());
+            if (!store || use.getOperandNumber() != 0)
+              continue;
+            auto portName = getLogicalPortName(task, "outputs", resultIndex, invoke);
+            if (failed(portName)) {
+              signalPassFailure();
+              return;
+            }
+            ::ckl::core::TaskAlternative boundary;
+            boundary.task = "store-boundary";
+            boundary.name = "fixed";
+            boundary.implementationId = "store-boundary:" + std::to_string(local) + ":" +
+                                        std::to_string(resultIndex);
+            boundary.inputs.push_back(
+                {*portName,
+                 ::ckl::core::deserializeDistribution(store.getDistribution().getValue().str()),
+                 ::ckl::core::Placement::Private, 1});
+            const std::size_t boundaryNode = nodes.size();
+            preparedGraph.alternatives.push_back({boundary});
+            nodes.push_back({boundary.implementationId, {std::move(boundary)}});
+            preparedGraph.coreEdges.push_back(
+                {local, boundaryNode, *portName, *portName});
+          }
+        }
+      }
       for (const GlobalInvokeEdge &edge : invokeEdges) {
         auto producer = localIndex.find(edge.producer);
         auto consumer = localIndex.find(edge.consumer);
