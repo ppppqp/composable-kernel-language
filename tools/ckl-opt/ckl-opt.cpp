@@ -10,6 +10,8 @@
 #include "mlir/Dialect/NVGPU/IR/NVGPUDialect.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/InitAllPasses.h"
+#include "mlir/InitAllDialects.h"
+#include "mlir/InitAllExtensions.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
 int main(int argc, char **argv) {
@@ -19,6 +21,8 @@ int main(int argc, char **argv) {
   ckl::extensions::nvidia::registerAlternativeProviders();
 
   mlir::DialectRegistry registry;
+  mlir::registerAllDialects(registry);
+  mlir::registerAllExtensions(registry);
   registry.insert<mlir::ckl::CKLDialect, mlir::ckl::nvidia::CKLNVIDIADialect,
                   mlir::arith::ArithDialect, mlir::func::FuncDialect, mlir::gpu::GPUDialect,
                   mlir::memref::MemRefDialect, mlir::nvgpu::NVGPUDialect,

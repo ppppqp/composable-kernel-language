@@ -4,6 +4,7 @@
 #include "ckl/Dialect/CKLNVIDIA/IR/CKLNVIDIAOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 
 namespace mlir::ckl::nvidia {
 namespace {
@@ -47,6 +48,19 @@ public:
       Operation *materialized = rewriter.create(state);
       rewriter.replaceOp(invoke, materialized->getResults());
     }
+    SmallVector<::mlir::ckl::TaskOp> deadTasks;
+    getOperation().walk([&](::mlir::ckl::TaskOp task) {
+      bool implementsMma = llvm::any_of(task.getAlternatives(), [](Attribute value) {
+        auto alternative = cast<DictionaryAttr>(value);
+        auto id = alternative.getAs<StringAttr>("implementation_id");
+        return id && id.getValue() == mmaSyncImplementation;
+      });
+      Operation *symbolTable = task->getParentWithTrait<OpTrait::SymbolTable>();
+      if (implementsMma && symbolTable && SymbolTable::symbolKnownUseEmpty(task, symbolTable))
+        deadTasks.push_back(task);
+    });
+    for (::mlir::ckl::TaskOp task : deadTasks)
+      rewriter.eraseOp(task);
   }
 };
 

@@ -8,6 +8,8 @@ target_link_libraries(ckl-opt PRIVATE
   MLIRFuncDialect
   MLIROptLib
   MLIRRegisterAllPasses
+  MLIRRegisterAllDialects
+  MLIRRegisterAllExtensions
   MLIRNVGPUDialect
   MLIRArithDialect
   MLIRGPUDialect
