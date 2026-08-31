@@ -8,6 +8,7 @@ namespace mlir::ckl::nvidia {
 
 std::unique_ptr<Pass> createMaterializeMmaSyncPass();
 std::unique_ptr<Pass> createLowerMmaSyncPass();
+std::unique_ptr<Pass> createLowerFragmentIOPass();
 void registerCKLNVIDIAPasses();
 
 } // namespace mlir::ckl::nvidia

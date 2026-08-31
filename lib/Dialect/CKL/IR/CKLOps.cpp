@@ -178,6 +178,43 @@ LogicalResult InvokeOp::verify() {
   return success();
 }
 
+namespace {
+
+LogicalResult verifyTileMemoryBoundary(Operation *op, TileType tile, MemRefType memory,
+                                       ValueRange offsets, DistributionAttr distribution) {
+  if (memory.getElementType() != tile.getElementType())
+    return op->emitOpError("memref and tile element types must match");
+  if (static_cast<std::size_t>(memory.getRank()) != offsets.size())
+    return op->emitOpError("requires one base offset per memref dimension");
+  try {
+    auto tileSpace = ::ckl::core::IndexSpace::deserialize(tile.getSpace().getValue().str());
+    auto physical = ::ckl::core::deserializeDistribution(distribution.getValue().str());
+    if (!tileSpace.sameShape(physical.tileSpace))
+      return op->emitOpError("distribution tile space does not match the logical tile type");
+    if (static_cast<std::size_t>(memory.getRank()) != tileSpace.rank())
+      return op->emitOpError("memref rank must match logical tile rank");
+    for (auto [dimension, axis] : llvm::enumerate(tileSpace.axes()))
+      if (!memory.isDynamicDim(dimension) && axis.isStatic() &&
+          memory.getDimSize(dimension) < axis.extent)
+        return op->emitOpError("memref dimension is smaller than the logical tile");
+  } catch (const std::exception &error) {
+    return op->emitOpError("cannot inspect tile memory contract: ") << error.what();
+  }
+  return success();
+}
+
+} // namespace
+
+LogicalResult LoadTileOp::verify() {
+  return verifyTileMemoryBoundary(*this, getResult().getType(), getSource().getType(),
+                                  getOffsets(), getDistribution());
+}
+
+LogicalResult StoreTileOp::verify() {
+  return verifyTileMemoryBoundary(*this, getValue().getType(), getTarget().getType(),
+                                  getOffsets(), getDistribution());
+}
+
 LogicalResult ComposeOp::verify() {
   return verifyBoundary(*this, getInput().getType(), getSource(), getTarget(), std::nullopt,
                         getSubgroupSize());

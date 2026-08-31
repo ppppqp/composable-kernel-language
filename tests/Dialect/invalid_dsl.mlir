@@ -3,6 +3,23 @@ ckl.task @bad : (!ckl.tile<f32, #ckl.space<[m = symbol<"M">]>>) -> !ckl.tile<f32
 
 // -----
 
+#memory_distribution = #ckl.distribution<
+  executors = #ckl.space<[lane = 4]>, local = #ckl.space<[value = 2]>,
+  tile = #ckl.space<[x = 8]>,
+  ownership = #ckl.index_map<domain = #ckl.space<[lane = 4, value = 2]>, codomain = #ckl.space<[x = 8]>, results = [add(mul(dim(0), const(2)), dim(1))], predicate = true>,
+  local_storage = #ckl.index_map<domain = #ckl.space<[value = 2]>, codomain = #ckl.space<[value = 2]>, results = [dim(0)], predicate = true>,
+  scope = subgroup, replicated = false>
+
+module {
+  func.func @bad_memory_type(%source: memref<8xf16>, %base: index) {
+    // expected-error @+1 {{memref and tile element types must match}}
+    %tile = ckl.load_tile %source[%base] distribution = #memory_distribution attributes {} : memref<8xf16> -> !ckl.tile<f32, #ckl.space<[x = 8]>>
+    return
+  }
+}
+
+// -----
+
 func.func @bad_bind(
     %tile: !ckl.tile<f32, #ckl.space<[m = symbol<"M">]>>)
     -> !ckl.tile<f32, #ckl.space<[m = symbol<"M">]>> {

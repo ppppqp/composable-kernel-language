@@ -20,6 +20,13 @@ add_test(
     -P ${CMAKE_CURRENT_SOURCE_DIR}/check_roundtrip.cmake
 )
 add_test(
+  NAME ckl-dialect-tile-memory-roundtrip
+  COMMAND ${CMAKE_COMMAND}
+    -DCKL_OPT=$<TARGET_FILE:ckl-opt>
+    -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tile_memory.mlir
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_roundtrip.cmake
+)
+add_test(
   NAME ckl-dialect-schedule-conversions
   COMMAND ${CMAKE_COMMAND}
     -DCKL_OPT=$<TARGET_FILE:ckl-opt>
@@ -82,6 +89,13 @@ add_test(
     -DCKL_OPT=$<TARGET_FILE:ckl-opt>
     -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/nvidia_materialize.mlir
     -P ${CMAKE_CURRENT_SOURCE_DIR}/check_nvidia_lower_mma.cmake
+)
+add_test(
+  NAME ckl-dialect-nvidia-fragment-io
+  COMMAND ${CMAKE_COMMAND}
+    -DCKL_OPT=$<TARGET_FILE:ckl-opt>
+    -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/nvidia_fragment_io.mlir
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_nvidia_fragment_io.cmake
 )
 add_test(
   NAME ckl-dialect-invalid-diagnostics

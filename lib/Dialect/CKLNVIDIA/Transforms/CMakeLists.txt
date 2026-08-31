@@ -1,6 +1,7 @@
 add_mlir_dialect_library(MLIRCKLNVIDIATransforms
   MaterializeMmaSync.cpp
   LowerMmaSync.cpp
+  LowerFragmentIO.cpp
 
   LINK_LIBS PUBLIC
   MLIRCKLDialect
@@ -8,6 +9,11 @@ add_mlir_dialect_library(MLIRCKLNVIDIATransforms
   MLIRIR
   MLIRPass
   MLIRNVGPUDialect
+  MLIRArithDialect
+  MLIRGPUDialect
+  MLIRMemRefDialect
+  MLIRVectorDialect
+  CKL::NVIDIA
 )
 
 target_compile_options(MLIRCKLNVIDIATransforms PRIVATE -fexceptions)

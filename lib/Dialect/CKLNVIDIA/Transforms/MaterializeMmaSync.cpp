@@ -57,10 +57,12 @@ std::unique_ptr<Pass> createMaterializeMmaSyncPass() {
 }
 
 void registerLowerMmaSyncPass();
+void registerLowerFragmentIOPass();
 
 void registerCKLNVIDIAPasses() {
   PassRegistration<MaterializeMmaSyncPass>();
   registerLowerMmaSyncPass();
+  registerLowerFragmentIOPass();
 }
 
 } // namespace mlir::ckl::nvidia

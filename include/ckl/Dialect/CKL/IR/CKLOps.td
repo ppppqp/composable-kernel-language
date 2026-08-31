@@ -36,6 +36,24 @@ def CKL_InvokeOp : CKL_Op<"invoke"> {
   let hasVerifier = 1;
 }
 
+def CKL_LoadTileOp : CKL_Op<"load_tile"> {
+  let summary = "Load a distributed logical tile from a ranked memref";
+  let arguments = (ins AnyMemRef:$source, Variadic<Index>:$offsets,
+                       CKL_DistributionAttr:$distribution);
+  let results = (outs CKL_TileType:$result);
+  let assemblyFormat = "$source `[` $offsets `]` `distribution` `=` qualified($distribution) `attributes` attr-dict `:` type($source) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+def CKL_StoreTileOp : CKL_Op<"store_tile"> {
+  let summary = "Store a distributed logical tile to a ranked memref";
+  let arguments = (ins CKL_TileType:$value, AnyMemRef:$target,
+                       Variadic<Index>:$offsets,
+                       CKL_DistributionAttr:$distribution);
+  let assemblyFormat = "$value `,` $target `[` $offsets `]` `distribution` `=` qualified($distribution) `attributes` attr-dict `:` type($value) `,` type($target)";
+  let hasVerifier = 1;
+}
+
 // An unresolved edge between a producer task and a consumer task. Selection
 // replaces this with ckl.compose using the chosen alternatives' port layouts.
 def CKL_TaskComposeOp : CKL_Op<"task_compose", [Pure, SameOperandsAndResultType]> {
