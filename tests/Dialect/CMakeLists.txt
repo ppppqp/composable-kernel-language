@@ -84,6 +84,13 @@ add_test(
     -P ${CMAKE_CURRENT_SOURCE_DIR}/check_memory_boundary_selection.cmake
 )
 add_test(
+  NAME ckl-dialect-materialize-callable-alternatives
+  COMMAND ${CMAKE_COMMAND}
+    -DCKL_OPT=$<TARGET_FILE:ckl-opt>
+    -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/callable_materialization.mlir
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_callable_materialization.cmake
+)
+add_test(
   NAME ckl-dialect-nvidia-alternatives
   COMMAND ${CMAKE_COMMAND}
     -DCKL_OPT=$<TARGET_FILE:ckl-opt>

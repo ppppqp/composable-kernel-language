@@ -983,6 +983,7 @@ std::unique_ptr<Pass> createScheduleConversionsPass() {
 
 void registerCKLPasses() {
   registerEnumerateAlternativesPass();
+  registerMaterializeSelectedAlternativesPass();
   PassRegistration<SelectAlternativesPass>();
   PassRegistration<PlanCompositionsPass>();
   PassRegistration<ScheduleConversionsPass>();

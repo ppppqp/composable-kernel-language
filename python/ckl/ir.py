@@ -279,6 +279,7 @@ class Alternative:
     properties: Mapping[str, str | int | Sequence[str]] = field(default_factory=dict)
     inputs: tuple[Port, ...] = ()
     outputs: tuple[Port, ...] = ()
+    implementation: object | None = None
 
     def __post_init__(self) -> None:
         _identifier(self.name, "alternative name")
@@ -308,6 +309,12 @@ class Alternative:
             fields.append("inputs = [" + ", ".join(port.mlir() for port in self.inputs) + "]")
         if self.outputs:
             fields.append("outputs = [" + ", ".join(port.mlir() for port in self.outputs) + "]")
+        if self.implementation is not None:
+            function = getattr(self.implementation, "function", None)
+            symbol = getattr(function, "__name__", None)
+            if not isinstance(symbol, str):
+                raise TypeError("alternative implementation must be a traced CKL function")
+            fields.append(f"implementation = @{symbol}")
         return "{" + ", ".join(fields) + "}"
 
 

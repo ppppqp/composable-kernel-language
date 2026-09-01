@@ -12,6 +12,8 @@ from ckl import (
     Symbol,
     TileType,
     dim,
+    func,
+    task,
 )
 
 
@@ -62,6 +64,19 @@ def build_memory_module() -> Module:
 
 
 class FrontendTest(unittest.TestCase):
+    def test_rejects_callable_implementation_with_wrong_signature(self):
+        tile = TileType("f32", Space(x=4))
+
+        @func
+        def wrong(value: IndexType()) -> tile:
+            raise AssertionError("tracing should not reach an invalid implementation")
+
+        with self.assertRaisesRegex(TypeError, "implementation signature does not match"):
+
+            @task(alternatives=[Alternative("wrong", implementation=wrong)])
+            def logical(value: tile) -> tile:
+                ...
+
     def test_alternative_serializes_typed_cost_and_capabilities(self):
         alternative = Alternative(
             "candidate",

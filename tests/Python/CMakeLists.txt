@@ -73,6 +73,16 @@ add_test(
     -P ${CMAKE_CURRENT_SOURCE_DIR}/check_device_kernel.cmake
 )
 
+add_test(
+  NAME ckl-python-callable-alternatives
+  COMMAND ${CMAKE_COMMAND}
+    -DCKL_OPT=$<TARGET_FILE:ckl-opt>
+    -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+    -DPYTHONPATH_VALUE=${PROJECT_SOURCE_DIR}/python:${PROJECT_BINARY_DIR}/python:${CKL_MLIR_PYTHON_ROOT}
+    -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/emit_callable_alternatives.py
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_callable_alternatives.cmake
+)
+
 if(CKL_ENABLE_CUDA_TESTS)
   add_test(
     NAME ckl-python-nvidia-artifact
