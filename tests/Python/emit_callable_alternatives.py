@@ -40,11 +40,13 @@ memory_type = MemRefType([4], "f32")
 
 @func
 def direct_impl(tile: tile_type) -> tile_type:
+    constant_index(11)
     return tile
 
 
 @func
 def permuted_impl(tile: tile_type) -> tile_type:
+    constant_index(22)
     return tile
 
 
@@ -91,10 +93,36 @@ def permuted_boundary(source: memory_type, target: memory_type) -> None:
 
 direct_ir = direct_boundary.compile().mlir
 permuted_ir = permuted_boundary.compile().mlir
-assert "call @direct_impl" in direct_ir
-assert 'ckl.selected_alternative = "direct"' in direct_ir
-assert "call @permuted_impl" in permuted_ir
-assert 'ckl.selected_alternative = "permuted"' in permuted_ir
+assert 'alternative = "direct"' in direct_ir
+assert 'implementation = "direct_impl"' in direct_ir
+assert "arith.constant 11 : index" in direct_ir
+assert "arith.constant 22 : index" not in direct_ir
+assert 'alternative = "permuted"' in permuted_ir
+assert 'implementation = "permuted_impl"' in permuted_ir
+assert "arith.constant 22 : index" in permuted_ir
+assert "arith.constant 11 : index" not in permuted_ir
 assert "ckl.invoke" not in direct_ir + permuted_ir
+assert "func.call" not in direct_ir + permuted_ir
+assert "func.func private @direct_impl" not in direct_ir
+assert "func.func private @permuted_impl" not in permuted_ir
+
+
+@jit(tasks=[layout_choice], passes=passes, device=True, module_name="callable_kernels")
+def device_boundary(source: memory_type, target: memory_type) -> None:
+    zero = constant_index(0)
+    tile = load_tile(source, [zero], distribution=direct)
+    result = invoke(layout_choice, [tile])
+    store_tile(result, target, [zero], distribution=direct)
+
+
+device_ir = device_boundary.compile().mlir
+assert "gpu.func @device_boundary" in device_ir
+assert 'implementation = "direct_impl"' in device_ir
+assert "arith.constant 11 : index" in device_ir
+assert "arith.constant 22 : index" not in device_ir
+assert "ckl.invoke" not in device_ir
+assert "func.call" not in device_ir
+assert "func.func" not in device_ir
 print(direct_ir)
 print(permuted_ir)
+print(device_ir)

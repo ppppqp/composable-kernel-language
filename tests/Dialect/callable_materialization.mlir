@@ -21,10 +21,12 @@
 module {
   func.func private @direct_impl(%tile: !ckl.tile<f32, #ckl.space<[x = 4]>>)
       -> !ckl.tile<f32, #ckl.space<[x = 4]>> {
+    %marker = arith.constant 11 : index
     return %tile : !ckl.tile<f32, #ckl.space<[x = 4]>>
   }
   func.func private @permuted_impl(%tile: !ckl.tile<f32, #ckl.space<[x = 4]>>)
       -> !ckl.tile<f32, #ckl.space<[x = 4]>> {
+    %marker = arith.constant 22 : index
     return %tile : !ckl.tile<f32, #ckl.space<[x = 4]>>
   }
   ckl.task @layout_choice : (!ckl.tile<f32, #ckl.space<[x = 4]>>) ->

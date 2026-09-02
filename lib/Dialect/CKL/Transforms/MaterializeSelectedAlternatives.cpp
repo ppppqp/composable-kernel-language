@@ -3,15 +3,14 @@
 #include "ckl/Dialect/CKL/IR/CKLOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 namespace mlir::ckl {
 namespace {
 
-// for an invoke op with a selected callable alternative, materialize the selected alternative as a
-// func.call operation and remove the invoke op. If the selected alternative is a symbol reference
-// to a func.func operation, the func.call operation will be created with the same symbol reference.
 class MaterializeSelectedAlternativesPass
     : public PassWrapper<MaterializeSelectedAlternativesPass, OperationPass<ModuleOp>> {
 public:
@@ -19,7 +18,7 @@ public:
 
   StringRef getArgument() const final { return "ckl-materialize-selected-alternatives"; }
   StringRef getDescription() const final {
-    return "Materialize selected callable CKL task alternatives as func.call operations";
+    return "Inline selected callable CKL task alternatives into their invocation sites";
   }
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<func::FuncDialect>();
@@ -33,6 +32,7 @@ public:
     });
 
     IRRewriter rewriter(&getContext());
+    SmallVector<func::FuncOp> usedImplementations;
     for (InvokeOp invoke : invocations) {
       auto reference = invoke->getAttrOfType<FlatSymbolRefAttr>("ckl.implementation");
       if (!reference) {
@@ -55,29 +55,82 @@ public:
         signalPassFailure();
         return;
       }
+      if (implementation.isExternal() || !llvm::hasSingleElement(implementation.getBody())) {
+        invoke.emitError("selected callable implementation must have a single-block body");
+        signalPassFailure();
+        return;
+      }
 
       rewriter.setInsertionPoint(invoke);
-      // replace the invoke op with a func.call operation that calls the selected alternative
-      auto call = func::CallOp::create(rewriter, invoke.getLoc(), reference.getValue(),
-                                       invoke.getResultTypes(), invoke.getInputs());
+      // inline the function body into the invocation site
+      Block &body = implementation.getBody().front();
+      auto terminator = mlir::dyn_cast<func::ReturnOp>(body.getTerminator());
+      if (!terminator || terminator.getNumOperands() != invoke.getNumResults()) {
+        invoke.emitError(
+            "selected callable implementation must terminate with matching func.return");
+        signalPassFailure();
+        return;
+      }
+      IRMapping mapping;
+      mapping.map(body.getArguments(), invoke.getInputs());
+      for (Operation &operation : body.without_terminator())
+        rewriter.clone(operation, mapping);
+      SmallVector<Value> results;
+      for (Value result : terminator.getOperands())
+        results.push_back(mapping.lookupOrDefault(result));
+
+      Operation *callable = invoke->getParentOp();
+      while (callable && !mlir::isa<FunctionOpInterface>(callable))
+        callable = callable->getParentOp();
+      if (!callable) {
+        invoke.emitError("callable alternative invocation must be nested in a function-like op");
+        signalPassFailure();
+        return;
+      }
+      SmallVector<Attribute> provenance;
+      if (auto existing = callable->getAttrOfType<ArrayAttr>("ckl.inlined_alternatives"))
+        llvm::append_range(provenance, existing);
+      NamedAttrList record;
+      record.set("task", rewriter.getStringAttr(invoke.getCallee()));
+      record.set("implementation", rewriter.getStringAttr(reference.getValue()));
       if (auto selected = invoke.getAlternativeAttr())
-        call->setAttr("ckl.selected_alternative", selected);
-      for (NamedAttribute attribute : invoke->getDiscardableAttrs())
-        if (attribute.getName().getValue().starts_with("ckl.") &&
-            attribute.getName().getValue() != "ckl.implementation")
-          call->setAttr(attribute.getName(), attribute.getValue());
-      rewriter.replaceOp(invoke, call.getResults());
+        record.set("alternative", selected);
+      if (auto id = invoke->getAttrOfType<StringAttr>("ckl.implementation_id"))
+        record.set("implementation_id", id);
+      if (auto score = invoke->getAttrOfType<IntegerAttr>("ckl.graph_score"))
+        record.set("graph_score", score);
+      provenance.push_back(rewriter.getDictionaryAttr(record));
+      callable->setAttr("ckl.inlined_alternatives", rewriter.getArrayAttr(provenance));
+
+      rewriter.replaceOp(invoke, results);
+      if (!llvm::is_contained(usedImplementations, implementation))
+        usedImplementations.push_back(implementation);
     }
 
     SmallVector<TaskOp> deadTasks;
-    // clean up any task symbols that are no longer referenced by any invoke operations
     getOperation().walk([&](TaskOp task) {
       Operation *symbolTable = task->getParentWithTrait<OpTrait::SymbolTable>();
       if (symbolTable && SymbolTable::symbolKnownUseEmpty(task, symbolTable))
         deadTasks.push_back(task);
     });
-    for (TaskOp task : deadTasks)
+    for (TaskOp task : deadTasks) {
+      for (Attribute value : task.getAlternatives()) {
+        auto alternative = mlir::cast<DictionaryAttr>(value);
+        auto reference = alternative.getAs<FlatSymbolRefAttr>("implementation");
+        if (!reference)
+          continue;
+        if (auto implementation =
+                SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(task, reference);
+            implementation && !llvm::is_contained(usedImplementations, implementation))
+          usedImplementations.push_back(implementation);
+      }
       rewriter.eraseOp(task);
+    }
+    for (func::FuncOp implementation : usedImplementations) {
+      Operation *symbolTable = implementation->getParentWithTrait<OpTrait::SymbolTable>();
+      if (symbolTable && SymbolTable::symbolKnownUseEmpty(implementation, symbolTable))
+        rewriter.eraseOp(implementation);
+    }
   }
 };
 

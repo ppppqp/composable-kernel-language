@@ -8,10 +8,11 @@ if(NOT result EQUAL 0)
   message(FATAL_ERROR "Python callable-alternative validation failed:\n${error}")
 endif()
 foreach(expected
-    "call @direct_impl"
-    "call @permuted_impl"
-    "ckl.selected_alternative = \"direct\""
-    "ckl.selected_alternative = \"permuted\"")
+    "alternative = \"direct\""
+    "alternative = \"permuted\""
+    "implementation = \"direct_impl\""
+    "implementation = \"permuted_impl\""
+    "gpu.func @device_boundary")
   string(FIND "${output}" "${expected}" position)
   if(position EQUAL -1)
     message(FATAL_ERROR "Python callable output is missing ${expected}:\n${output}")
