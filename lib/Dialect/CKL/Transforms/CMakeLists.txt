@@ -9,6 +9,7 @@ add_mlir_dialect_library(MLIRCKLTransforms
   MLIRIR
   MLIRFuncDialect
   MLIRPass
+  MLIRTransforms
 )
 
 target_compile_options(MLIRCKLTransforms PRIVATE -fexceptions)

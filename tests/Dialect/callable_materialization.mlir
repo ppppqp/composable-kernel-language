@@ -21,7 +21,13 @@
 module {
   func.func private @direct_impl(%tile: !ckl.tile<f32, #ckl.space<[x = 4]>>)
       -> !ckl.tile<f32, #ckl.space<[x = 4]>> {
-    %marker = arith.constant 11 : index
+    %condition = arith.constant true
+    cf.cond_br %condition, ^first, ^second
+  ^first:
+    %first_marker = arith.constant 11 : index
+    return %tile : !ckl.tile<f32, #ckl.space<[x = 4]>>
+  ^second:
+    %second_marker = arith.constant 12 : index
     return %tile : !ckl.tile<f32, #ckl.space<[x = 4]>>
   }
   func.func private @permuted_impl(%tile: !ckl.tile<f32, #ckl.space<[x = 4]>>)
@@ -60,5 +66,36 @@ module {
     ckl.store_tile %result, %target[%c0] distribution = #permuted attributes {} :
         !ckl.tile<f32, #ckl.space<[x = 4]>>, memref<4xf32>
     return
+  }
+
+  gpu.module @device {
+    func.func private @device_impl(%tile: !ckl.tile<f32, #ckl.space<[x = 4]>>)
+        -> !ckl.tile<f32, #ckl.space<[x = 4]>> {
+      %condition = arith.constant true
+      cf.cond_br %condition, ^first, ^second
+    ^first:
+      %first_marker = arith.constant 31 : index
+      return %tile : !ckl.tile<f32, #ckl.space<[x = 4]>>
+    ^second:
+      %second_marker = arith.constant 32 : index
+      return %tile : !ckl.tile<f32, #ckl.space<[x = 4]>>
+    }
+    ckl.task @device_task : (!ckl.tile<f32, #ckl.space<[x = 4]>>) ->
+        !ckl.tile<f32, #ckl.space<[x = 4]>> alternatives = [
+      {name = "device", implementation_id = "layout.device", implementation = @device_impl,
+       estimated_execution_cost = 0 : i64,
+       inputs = [{name = "input", distribution = #direct, placement = "private"}],
+       outputs = [{name = "output", distribution = #direct, placement = "private"}]}
+    ]
+    gpu.func @device_boundary(%source: memref<4xf32>, %target: memref<4xf32>) kernel {
+      %c0 = arith.constant 0 : index
+      %tile = ckl.load_tile %source[%c0] distribution = #direct attributes {} :
+          memref<4xf32> -> !ckl.tile<f32, #ckl.space<[x = 4]>>
+      %result = ckl.invoke @device_task(%tile) :
+          (!ckl.tile<f32, #ckl.space<[x = 4]>>) -> !ckl.tile<f32, #ckl.space<[x = 4]>>
+      ckl.store_tile %result, %target[%c0] distribution = #direct attributes {} :
+          !ckl.tile<f32, #ckl.space<[x = 4]>>, memref<4xf32>
+      gpu.return
+    }
   }
 }

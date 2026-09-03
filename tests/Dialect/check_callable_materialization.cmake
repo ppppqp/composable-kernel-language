@@ -13,7 +13,13 @@ foreach(expected
     "implementation_id = \"layout.direct\""
     "implementation_id = \"layout.permuted\""
     "arith.constant 11 : index"
-    "arith.constant 22 : index")
+    "arith.constant 12 : index"
+    "arith.constant 22 : index"
+    "arith.constant 31 : index"
+    "arith.constant 32 : index"
+    "gpu.func @device_boundary"
+    "cf.cond_br"
+    "cf.br")
   string(FIND "${output}" "${expected}" position)
   if(position EQUAL -1)
     message(FATAL_ERROR "materialized output is missing ${expected}:\n${output}")

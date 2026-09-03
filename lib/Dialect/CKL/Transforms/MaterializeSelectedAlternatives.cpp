@@ -3,13 +3,27 @@
 #include "ckl/Dialect/CKL/IR/CKLOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Transforms/Inliner.h"
+#include "mlir/Transforms/InliningUtils.h"
 
 namespace mlir::ckl {
 namespace {
+
+class CKLInlinerInterface final : public InlinerInterface {
+public:
+  using InlinerInterface::InlinerInterface;
+
+  bool isLegalToInline(Region *destination, Region *source, bool wouldBeCloned,
+                       IRMapping &mapping) const final {
+    if (mlir::isa<FunctionOpInterface>(destination->getParentOp()) &&
+        mlir::isa<func::FuncOp>(source->getParentOp()))
+      return true;
+    return InlinerInterface::isLegalToInline(destination, source, wouldBeCloned, mapping);
+  }
+};
 
 class MaterializeSelectedAlternativesPass
     : public PassWrapper<MaterializeSelectedAlternativesPass, OperationPass<ModuleOp>> {
@@ -55,29 +69,11 @@ public:
         signalPassFailure();
         return;
       }
-      if (implementation.isExternal() || !llvm::hasSingleElement(implementation.getBody())) {
-        invoke.emitError("selected callable implementation must have a single-block body");
+      if (implementation.isExternal()) {
+        invoke.emitError("selected callable implementation must have a body");
         signalPassFailure();
         return;
       }
-
-      rewriter.setInsertionPoint(invoke);
-      // inline the function body into the invocation site
-      Block &body = implementation.getBody().front();
-      auto terminator = mlir::dyn_cast<func::ReturnOp>(body.getTerminator());
-      if (!terminator || terminator.getNumOperands() != invoke.getNumResults()) {
-        invoke.emitError(
-            "selected callable implementation must terminate with matching func.return");
-        signalPassFailure();
-        return;
-      }
-      IRMapping mapping;
-      mapping.map(body.getArguments(), invoke.getInputs());
-      for (Operation &operation : body.without_terminator())
-        rewriter.clone(operation, mapping);
-      SmallVector<Value> results;
-      for (Value result : terminator.getOperands())
-        results.push_back(mapping.lookupOrDefault(result));
 
       Operation *callable = invoke->getParentOp();
       while (callable && !mlir::isa<FunctionOpInterface>(callable))
@@ -102,7 +98,19 @@ public:
       provenance.push_back(rewriter.getDictionaryAttr(record));
       callable->setAttr("ckl.inlined_alternatives", rewriter.getArrayAttr(provenance));
 
-      rewriter.replaceOp(invoke, results);
+      rewriter.setInsertionPoint(invoke);
+      auto call = func::CallOp::create(rewriter, invoke.getLoc(), reference.getValue(),
+                                       invoke.getResultTypes(), invoke.getInputs());
+      rewriter.replaceOp(invoke, call.getResults());
+      CKLInlinerInterface inliner(&getContext());
+      InlinerConfig config;
+      if (failed(inlineCall(inliner, config.getCloneCallback(), call, implementation,
+                            &implementation.getBody(), /*shouldCloneInlinedRegion=*/true))) {
+        call.emitError("failed to inline selected callable implementation ") << reference;
+        signalPassFailure();
+        return;
+      }
+      call.erase();
       if (!llvm::is_contained(usedImplementations, implementation))
         usedImplementations.push_back(implementation);
     }
