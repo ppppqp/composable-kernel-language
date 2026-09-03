@@ -91,6 +91,14 @@ add_test(
     -P ${CMAKE_CURRENT_SOURCE_DIR}/check_callable_materialization.cmake
 )
 add_test(
+  NAME ckl-dialect-resolve-task-alternatives
+  COMMAND ${CMAKE_COMMAND}
+    -DCKL_OPT=$<TARGET_FILE:ckl-opt>
+    -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/resolve_task_alternatives.mlir
+    -DRECURSIVE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/recursive_task_alternative.mlir
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_resolve_task_alternatives.cmake
+)
+add_test(
   NAME ckl-dialect-nvidia-alternatives
   COMMAND ${CMAKE_COMMAND}
     -DCKL_OPT=$<TARGET_FILE:ckl-opt>

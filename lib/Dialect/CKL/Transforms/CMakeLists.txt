@@ -2,6 +2,7 @@ add_mlir_dialect_library(MLIRCKLTransforms
   PlanCompositions.cpp
   EnumerateAlternatives.cpp
   MaterializeSelectedAlternatives.cpp
+  ResolveTaskAlternatives.cpp
 
   LINK_LIBS PUBLIC
   CKL::Core

@@ -31,9 +31,7 @@ def _gpu_dialect():
     try:
         from mlir.dialects import gpu
     except ImportError as error:
-        raise RuntimeError(
-            "CKL device tracing requires the MLIR GPU Python bindings"
-        ) from error
+        raise RuntimeError("CKL device tracing requires the MLIR GPU Python bindings") from error
     return gpu
 
 
@@ -165,9 +163,7 @@ class TaskDef:
                 _require_annotation(parameter.name, parameter.annotation)
                 for parameter in parameters
             )
-            result_types = _result_annotations(
-                implementation.signature.return_annotation
-            )
+            result_types = _result_annotations(implementation.signature.return_annotation)
             if input_types != self.input_types or result_types != self.result_types:
                 raise TypeError(
                     f"alternative {alternative.name!r} implementation signature does not "
@@ -182,17 +178,15 @@ class TaskDef:
                 return trace.ir.StringAttr.get(value)
             if isinstance(value, int):
                 return trace.ir.IntegerAttr.get(trace.ir.IntegerType.get_signless(64), value)
-            return trace.ir.ArrayAttr.get(
-                [trace.ir.StringAttr.get(item) for item in value]
-            )
+            return trace.ir.ArrayAttr.get([trace.ir.StringAttr.get(item) for item in value])
 
         attributes = []
         for alternative in self.alternatives:
             entries = {"name": trace.ir.StringAttr.get(alternative.name)}
             entries.update(
-                (key, property_attribute(value))
-                for key, value in alternative.properties.items()
+                (key, property_attribute(value)) for key, value in alternative.properties.items()
             )
+
             def ports_attribute(ports: Sequence[Any]) -> Any:
                 return trace.ir.ArrayAttr.get(
                     [
@@ -209,6 +203,7 @@ class TaskDef:
                         for port in ports
                     ]
                 )
+
             if alternative.inputs:
                 entries["inputs"] = ports_attribute(alternative.inputs)
             if alternative.outputs:
@@ -288,16 +283,22 @@ class Func:
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self.function(*args, **kwargs)
 
-    def _emit_function(self, trace: _Trace, func_dialect: Any) -> Any:
+    def _emit_function(
+        self, trace: _Trace, func_dialect: Any, *, implementation_template: bool = False
+    ) -> Any:
         parameters = tuple(self.signature.parameters.values())
         for parameter in parameters:
             _require_annotation(parameter.name, parameter.annotation)
         result_types = _result_annotations(self.signature.return_annotation)
         function = func_dialect.FuncOp(
             self.function.__name__,
-            ([trace.type(parameter.annotation) for parameter in parameters],
-             [trace.type(result) for result in result_types]),
+            (
+                [trace.type(parameter.annotation) for parameter in parameters],
+                [trace.type(result) for result in result_types],
+            ),
         )
+        if implementation_template:
+            function.attributes["ckl.implementation_template"] = trace.ir.UnitAttr.get()
         block = function.add_entry_block()
         with trace.ir.InsertionPoint(block):
             token = _active_trace.set(trace)
@@ -313,23 +314,40 @@ class Func:
             func_dialect.ReturnOp([value.value for value in values])
         return function
 
-    def _emit_implementations(self, trace: _Trace, func_dialect: Any) -> None:
-        emitted: dict[str, Func] = {}
-        for task_definition in self.tasks:
+    def _emit_dependencies(self, trace: _Trace, func_dialect: Any) -> None:
+        emitted_functions: dict[str, Func] = {}
+        emitted_tasks: dict[str, TaskDef] = {}
+        active_tasks: set[int] = set()
+
+        def emit_task(task_definition: TaskDef) -> None:
+            # Emit the task and all of its callable implementations, recursively emitting any dependent tasks.
+            name = task_definition.function.__name__
+            if previous := emitted_tasks.get(name):
+                if previous is not task_definition:
+                    raise ValueError(f"multiple task dependencies use symbol @{name}")
+                return
+            identity = id(task_definition)
+            if identity in active_tasks:
+                raise ValueError(f"cyclic callable task dependency through @{name}")
+            active_tasks.add(identity)
             for implementation in task_definition.callable_implementations():
+                for dependency in implementation.tasks:
+                    emit_task(dependency)
                 name = implementation.function.__name__
-                if previous := emitted.get(name):
+                if previous := emitted_functions.get(name):
                     if previous is not implementation:
                         raise ValueError(f"multiple callable implementations use symbol @{name}")
                     continue
-                if implementation.tasks:
-                    raise ValueError(
-                        "callable task implementations cannot declare task dependencies yet"
-                    )
                 if name == self.function.__name__:
                     raise ValueError(f"callable implementation collides with function @{name}")
-                implementation._emit_function(trace, func_dialect)
-                emitted[name] = implementation
+                implementation._emit_function(trace, func_dialect, implementation_template=True)
+                emitted_functions[name] = implementation
+            task_definition.emit(trace)
+            emitted_tasks[task_definition.function.__name__] = task_definition
+            active_tasks.remove(identity)
+
+        for task_definition in self.tasks:
+            emit_task(task_definition)
 
     def emit(self) -> NativeModule:
         ir, func_dialect, ckl_dialect = _mlir()
@@ -347,9 +365,7 @@ class Func:
             module = ir.Module.create()
             trace = _Trace(ir, ckl_dialect)
             with ir.InsertionPoint(module.body):
-                self._emit_implementations(trace, func_dialect)
-                for task_definition in self.tasks:
-                    task_definition.emit(trace)
+                self._emit_dependencies(trace, func_dialect)
                 self._emit_function(trace, func_dialect)
         return NativeModule(context, module)
 
@@ -398,9 +414,7 @@ class JITFunction(Func):
                 gpu_module = gpu.GPUModuleOp(self.module_name)
             module_block = gpu_module.bodyRegion.blocks.append()
             with ir.InsertionPoint(module_block):
-                self._emit_implementations(trace, func_dialect)
-                for task_definition in self.tasks:
-                    task_definition.emit(trace)
+                self._emit_dependencies(trace, func_dialect)
                 function_type = ir.FunctionType.get(
                     [trace.type(parameter.annotation) for parameter in parameters], []
                 )

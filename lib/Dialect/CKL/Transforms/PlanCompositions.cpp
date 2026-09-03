@@ -168,8 +168,45 @@ public:
       llvm::cl::init(4096)};
 
   void runOnOperation() final {
+
+    /*
+    Identify all functions referenced by a task alternative
+    e.g.
+      ckl.task @composite_task alternatives = [
+        {
+          name = "composite",
+          implementation = @composite_impl
+        }
+      ]
+      then @composite_impl is inserted into implementationTemplates
+    */
+    llvm::DenseSet<Operation *> implementationTemplates;
+    getOperation().walk([&](TaskOp task) {
+      for (Attribute value : task.getAlternatives()) {
+        auto alternative = mlir::cast<DictionaryAttr>(value);
+        if (auto reference = alternative.getAs<FlatSymbolRefAttr>("implementation"))
+          if (Operation *implementation = SymbolTable::lookupNearestSymbolFrom(task, reference))
+            implementationTemplates.insert(implementation);
+      }
+    });
+    auto isInsideImplementationTemplate = [&](Operation *operation) {
+      // is this op located inside a function that only describes a available task alternative
+      // or is currently selected program code
+      for (Operation *ancestor = operation->getParentOp(); ancestor;
+           ancestor = ancestor->getParentOp())
+        // walk upward to see this operation is inside a function that is currently dormant
+        if (implementationTemplates.contains(ancestor))
+          return true;
+      return false;
+    };
+
     SmallVector<TaskComposeOp> boundaries;
-    getOperation().walk([&](TaskComposeOp op) { boundaries.push_back(op); });
+    getOperation().walk([&](TaskComposeOp op) {
+      // only consider task composition that is not inside a dormant implementation template
+      // for initial pass
+      if (!isInsideImplementationTemplate(op))
+        boundaries.push_back(op);
+    });
     struct Prepared {
       SmallVector<TaskComposeOp> edges;
       std::vector<std::vector<::ckl::core::TaskAlternative>> alternatives;
@@ -218,7 +255,10 @@ public:
     // here only to map an invoke signature to the consistently named ports in
     // every alternative of its task declaration.
     SmallVector<InvokeOp> invokes;
-    getOperation().walk([&](InvokeOp op) { invokes.push_back(op); });
+    getOperation().walk([&](InvokeOp op) {
+      if (!isInsideImplementationTemplate(op))
+        invokes.push_back(op);
+    });
     llvm::DenseMap<Operation *, std::size_t> invokeIndex;
     for (auto [index, invoke] : llvm::enumerate(invokes))
       invokeIndex[invoke] = index;
@@ -336,8 +376,8 @@ public:
           ::ckl::core::TaskAlternative boundary;
           boundary.task = "load-boundary";
           boundary.name = "fixed";
-          boundary.implementationId = "load-boundary:" + std::to_string(local) + ":" +
-                                      std::to_string(operandIndex);
+          boundary.implementationId =
+              "load-boundary:" + std::to_string(local) + ":" + std::to_string(operandIndex);
           boundary.outputs.push_back(
               {*portName,
                ::ckl::core::deserializeDistribution(load.getDistribution().getValue().str()),
@@ -345,8 +385,7 @@ public:
           const std::size_t boundaryNode = nodes.size();
           preparedGraph.alternatives.push_back({boundary});
           nodes.push_back({boundary.implementationId, {std::move(boundary)}});
-          preparedGraph.coreEdges.push_back(
-              {boundaryNode, local, *portName, *portName});
+          preparedGraph.coreEdges.push_back({boundaryNode, local, *portName, *portName});
         }
         for (auto [resultIndex, result] : llvm::enumerate(invoke.getResults())) {
           for (OpOperand &use : result.getUses()) {
@@ -361,8 +400,8 @@ public:
             ::ckl::core::TaskAlternative boundary;
             boundary.task = "store-boundary";
             boundary.name = "fixed";
-            boundary.implementationId = "store-boundary:" + std::to_string(local) + ":" +
-                                        std::to_string(resultIndex);
+            boundary.implementationId =
+                "store-boundary:" + std::to_string(local) + ":" + std::to_string(resultIndex);
             boundary.inputs.push_back(
                 {*portName,
                  ::ckl::core::deserializeDistribution(store.getDistribution().getValue().str()),
@@ -370,8 +409,7 @@ public:
             const std::size_t boundaryNode = nodes.size();
             preparedGraph.alternatives.push_back({boundary});
             nodes.push_back({boundary.implementationId, {std::move(boundary)}});
-            preparedGraph.coreEdges.push_back(
-                {local, boundaryNode, *portName, *portName});
+            preparedGraph.coreEdges.push_back({local, boundaryNode, *portName, *portName});
           }
         }
       }
@@ -984,6 +1022,7 @@ std::unique_ptr<Pass> createScheduleConversionsPass() {
 void registerCKLPasses() {
   registerEnumerateAlternativesPass();
   registerMaterializeSelectedAlternativesPass();
+  registerResolveTaskAlternativesPass();
   PassRegistration<SelectAlternativesPass>();
   PassRegistration<PlanCompositionsPass>();
   PassRegistration<ScheduleConversionsPass>();

@@ -123,6 +123,88 @@ assert "arith.constant 22 : index" not in device_ir
 assert "ckl.invoke" not in device_ir
 assert "func.call" not in device_ir
 assert "func.func" not in device_ir
+
+
+@func
+def leaf_impl(tile: tile_type) -> tile_type:
+    constant_index(41)
+    return tile
+
+
+@task(
+    alternatives=[
+        Alternative(
+            "leaf",
+            {"implementation_id": "python.leaf", "estimated_execution_cost": 0},
+            inputs=(Port("input", direct),),
+            outputs=(Port("output", direct),),
+            implementation=leaf_impl,
+        )
+    ]
+)
+def leaf_task(tile: tile_type) -> tile_type:
+    ...
+
+
+@func(tasks=[leaf_task])
+def composite_impl(tile: tile_type) -> tile_type:
+    constant_index(42)
+    return invoke(leaf_task, [tile])
+
+
+@task(
+    alternatives=[
+        Alternative(
+            "composite",
+            {"implementation_id": "python.composite", "estimated_execution_cost": 0},
+            inputs=(Port("input", direct),),
+            outputs=(Port("output", direct),),
+            implementation=composite_impl,
+        )
+    ]
+)
+def composite_task(tile: tile_type) -> tile_type:
+    ...
+
+
+nested_passes = ("--ckl-resolve-task-alternatives",)
+
+
+@jit(tasks=[composite_task], passes=nested_passes)
+def nested_host(source: memory_type, target: memory_type) -> None:
+    zero = constant_index(0)
+    tile = load_tile(source, [zero], distribution=direct)
+    result = invoke(composite_task, [tile])
+    store_tile(result, target, [zero], distribution=direct)
+
+
+@jit(
+    tasks=[composite_task],
+    passes=nested_passes,
+    device=True,
+    module_name="nested_callable_kernels",
+)
+def nested_device(source: memory_type, target: memory_type) -> None:
+    zero = constant_index(0)
+    tile = load_tile(source, [zero], distribution=direct)
+    result = invoke(composite_task, [tile])
+    store_tile(result, target, [zero], distribution=direct)
+
+
+nested_host_ir = nested_host.compile().mlir
+nested_device_ir = nested_device.compile().mlir
+for nested_ir in (nested_host_ir, nested_device_ir):
+    assert "arith.constant 41 : index" in nested_ir
+    assert "arith.constant 42 : index" in nested_ir
+    assert 'alternative = "composite"' in nested_ir
+    assert 'alternative = "leaf"' in nested_ir
+    assert "ckl.invoke" not in nested_ir
+    assert "ckl.task" not in nested_ir
+    assert "func.call" not in nested_ir
+    assert "ckl.implementation_template" not in nested_ir
+assert "gpu.func @nested_device" in nested_device_ir
 print(direct_ir)
 print(permuted_ir)
 print(device_ir)
+print(nested_host_ir)
+print(nested_device_ir)

@@ -23,6 +23,14 @@ public:
       return true;
     return InlinerInterface::isLegalToInline(destination, source, wouldBeCloned, mapping);
   }
+
+  bool isLegalToInline(Operation *operation, Region *destination, bool wouldBeCloned,
+                       IRMapping &mapping) const final {
+    // invoke operations are always legal to inline
+    if (mlir::isa<InvokeOp>(operation))
+      return true;
+    return InlinerInterface::isLegalToInline(operation, destination, wouldBeCloned, mapping);
+  }
 };
 
 class MaterializeSelectedAlternativesPass
