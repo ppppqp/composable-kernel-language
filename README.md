@@ -1,9 +1,9 @@
 # Composable Kernel Language
 
 > **Status:** CKL is an experimental project undergoing an architectural pivot. The
-> repository currently implements the layout-aware task-composition prototype described
-> below under [Current implementation](#current-implementation). The effect-derived
-> orchestration runtime is the target design, not yet an implemented feature.
+> retired layout-aware prototype has been removed. The repository is now a minimal bootstrap
+> for the effect-derived orchestration design; its dialect, analyses, and runtime are not yet
+> implemented.
 
 Composable Kernel Language (CKL) is an experimental, MLIR-based orchestration layer for
 repeated GPU programs. It derives memory effects and dependencies from kernel IR, constructs
@@ -84,41 +84,35 @@ create a real opportunity. The complete validation plan is in
 
 ## Current implementation
 
-The checked-in prototype predates this pivot. It contains a target-independent layout,
-composition, proof, and conversion-planning core; an initial CKL MLIR dialect and optimizer;
-and a Python frontend. The compiler can lower a boxed NVIDIA path to a device binary, but a
-general runtime launch API and CUDA Graph backend are not yet implemented.
+The repository intentionally contains only the reusable bootstrap after removal of the previous
+prototype:
 
-The existing task graph, callable implementations, provenance, resource lifetimes, Python
-tracing, and NVIDIA binary generation are expected to inform the orchestration work. The manual
-task-port descriptions, static execution costs, and layout-conversion search should not be
-treated as the future public orchestration API.
+- a generic `ckl-opt` driver that registers upstream MLIR dialects, passes, extensions, and GPU
+  translations;
+- Python utilities for invoking the optimizer, describing an NVIDIA target, extracting generated
+  GPU objects, and forming compilation cache keys; and
+- small tests for those Python utilities.
 
+No CKL dialect, effect analysis, orchestration IR, CUDA Graph runtime, or kernel frontend is
+currently implemented. The next code milestone is the semantic-interface and effect foundation
+described in the specification.
 
 ## Repository layout
 
 ```text
-include/ckl/Core/       public core APIs
-lib/Core/               core implementations
-include/ckl/Dialect/    MLIR dialect definitions and public APIs
-lib/Dialect/            dialect implementations and transformations
-include/ckl/Extensions/ target-specific extension APIs
-lib/Extensions/         target-specific extension implementations
-tools/ckl-opt/          CKL optimizer driver
-docs/                   target architecture and project roadmap
-specs/                  detailed project specification
-tests/Core/             semantic and property-style validation
-tests/Dialect/          MLIR round-trip, verification, and transformation tests
-python/ckl/             dependency-free Python frontend
-tests/Python/           frontend validation and generated-MLIR round trips
+tools/ckl-opt/   generic MLIR optimizer bootstrap
+python/ckl/      compilation and GPU-artifact utilities
+tests/Python/    bootstrap utility tests
+docs/            architecture overview and roadmap
+specs/           normative project specification
 ```
 
-## Building the standalone core
+## Running the bootstrap tests
 
 Requirements:
 
 - CMake 3.20 or newer
-- A C++17 compiler
+- Python 3.12
 - Ninja, when using the commands below
 
 Configure, build, and run the validation suite:
@@ -129,13 +123,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-MLIR is not required for the default build.
+The default configuration does not build native code and does not require MLIR.
 
 ## Building with a local MLIR checkout
 
-The optional compiler build requires an LLVM/MLIR build tree containing
-`MLIRConfig.cmake`, the MLIR libraries, and TableGen tools. Point `LLVM_BUILD` at the LLVM
-build directory and pass its MLIR package directory to CMake:
+The optional generic optimizer requires an LLVM/MLIR build tree containing `MLIRConfig.cmake`.
+Point `LLVM_BUILD` at the LLVM build directory and pass its MLIR package directory to CMake:
 
 ```bash
 export LLVM_BUILD=/path/to/llvm-project/build
@@ -155,40 +148,19 @@ The resulting optimizer is available at:
 build/tools/ckl-opt/ckl-opt
 ```
 
-`MLIR_DIR` selects the MLIR package. Its `MLIRConfig.cmake` locates the matching LLVM
-package and supplies the LLVM/MLIR include directories, libraries, and CMake build helpers.
+`MLIR_DIR` selects the MLIR package. The current driver intentionally registers no CKL dialect or
+pass; it is the executable scaffold for the first orchestration interfaces and analyses.
 
-## Python frontend
+## Python utilities
 
-The Python API builds generic CKL types, index maps, distributions, tasks, tile memory operations,
-and invocations using MLIR Python bindings. Compiler passes select task alternatives and introduce
-target-specific operations. It can be used directly with `uv`:
+The retained Python API contains compilation and artifact utilities. Install it in a local
+environment with:
 
 ```bash
 uv venv --python 3.12
 uv pip install -e .
-export MLIR_PYTHON_ROOT="$LLVM_BUILD/tools/mlir/python_packages/mlir_core"
-PYTHONPATH="$PWD/python:$PWD/build/python:$MLIR_PYTHON_ROOT" \
-  uv run python tests/Python/emit_traced_memory.py
+uv run python -m unittest discover -s tests/Python -p "test_*.py"
 ```
-
-```python
-@ckl.jit(tasks=[copy_task], passes=["--ckl-select-alternatives"])
-def kernel(tile: tile_type) -> tile_type:
-    return ckl.invoke(copy_task, [tile])
-
-compiled = kernel.compile()
-print(compiled.mlir)
-```
-
-Device kernels use an explicit GPU container:
-```python
-@ckl.jit(device=True, module_name="kernels", block_size=(32, 1, 1))
-def kernel(source: source_type, target: target_type) -> None:
-    ...
-```
-
-Compilation can target an NVIDIA device binary explicitly:
 
 ```python
 target = ckl.NVIDIATarget(
@@ -196,21 +168,18 @@ target = ckl.NVIDIATarget(
     features="+ptx87",
     toolkit_root=os.environ["CUDA_HOME"],
 )
-compiled = kernel.compile(ckl.CompilerOptions(target=target))
+options = ckl.CompilerOptions(target=target)
 ```
+
+`compile_module` remains available in `ckl.compiler` for raw MLIR input. It requires a built
+`ckl-opt`; extracting embedded GPU objects additionally requires matching MLIR Python bindings.
 
 ## Acknowledgments
 
-The current prototype and target design are informed by:
+The target design is informed by:
 
 - [MLIR](https://mlir.llvm.org/) for extensible IR, operation interfaces, and GPU lowering;
 - [IREE](https://iree.dev/) for asynchronous resource and command scheduling;
 - [CUDA Graphs](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html)
   for reusable GPU command graphs;
-- [AMD Composable Kernel and CK Tile](https://github.com/ROCm/rocm-libraries/tree/develop/projects/composablekernel)
-  for composable GPU kernels;
-- [NVIDIA CUTLASS/CuTe](https://github.com/nvidia/cutlass) and
-  [ROCm FlyDSL](https://github.com/ROCm/FlyDSL) for layout representations;
-- Colfax Research's [*Categorical Foundations for CuTe Layouts*](https://arxiv.org/pdf/2601.05972)
-  for formal treatment of CuTe layouts; and
-- [TileLang](https://github.com/tile-ai/tilelang) for layout inference.
+- [Taskflow](https://taskflow.github.io/) for heterogeneous task-graph programming.
