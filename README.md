@@ -1,45 +1,98 @@
 # Composable Kernel Language
 
-> NOTE: This project is still under active development.
-> Read the [blog post](https://retepy.com/posts/til/2026-08-29-ckl/) for problem statement and design.
+> **Status:** CKL is an experimental project undergoing an architectural pivot. The
+> repository currently implements the layout-aware task-composition prototype described
+> below under [Current implementation](#current-implementation). The effect-derived
+> orchestration runtime is the target design, not yet an implemented feature.
 
-Composable Kernel Language (CKL) is an experimental compiler project for composing
-layout-aware GPU tile tasks. Its goal is to let independently authored tile operations
-negotiate physical data layouts, memory placement, and communication without hiding the
-resulting costs or forcing intermediate global-memory materialization.
+Composable Kernel Language (CKL) is an experimental, MLIR-based orchestration layer for
+repeated GPU programs. It derives memory effects and dependencies from kernel IR, constructs
+an executable task graph, and will use target measurements to choose how that graph is
+executed. CKL is intended to compose kernels that are already well implemented, rather than
+predict or synthesize their intra-kernel schedules.
+
+CKL's own kernel frontend is one possible producer. Other MLIR-based GPU DSLs should be able
+to participate by implementing the required operation interfaces or registering external
+interface models. See [the orchestration design](docs/orchestration.md) for an overview and the
+[revised project specification](specs/mlir-layout-aware-gpu-compiler-spec.md) for the complete
+contract, scope, validation criteria, and roadmap.
 
 ## Motivation
 
-Existing systems such as AMD Composable Kernel, CuTe, and FlyDSL provide strong layout
-algebras and tile-programming abstractions. CKL builds on that prior art and focuses on a
-different boundary: compiler-mediated composition between separately specified tile tasks.
+Kernel DSLs generally have enough information to describe loads, stores, allocations, views,
+atomics, and synchronization, but that information is often lost at the runtime boundary.
+The application then reconstructs dependencies manually with streams, events, and graph APIs.
+Those declarations can be incomplete or become stale as kernels change.
 
-CKL emphasizes:
+CKL instead treats the kernel body as the source of truth:
 
-1. **Layout Abstraction**: Separate representations for execution ownership, per-executor values, logical tile
-   coordinates, and storage addressing. This lays the groundwork for layout inference and optimization.
-2. **Visibility**: Compiler-visible layout composition, equivalence proofs, conversion plans, and decision
-   provenance for kernel authors and compiler developers.
-3. **Composability**: Logical tasks that can use compiler-derived, target-provided, imported, or explicitly
-   authored alternatives, with automatic, partially constrained, or pinned selection. Target-specific
-   implementations participate through declared layout contracts and costs.
+1. **Infer effects:** derive reads, writes, allocation lifetimes, synchronization, and aliases
+   from operations in the kernel IR.
+2. **Build a sound graph:** add only dependencies required by SSA flow and inferred effects.
+   When an effect cannot be proven precisely, use a conservative dependency.
+3. **Keep kernels independent:** consume kernels from multiple dialects through interfaces
+   instead of teaching CKL about every operation class.
+4. **Measure orchestration:** evaluate complete execution plans on the target GPU rather than
+   relying on a static GPU performance model.
+5. **Explain decisions:** retain inferred effects, rejected transformations, measured results,
+   and the final schedule as inspectable compiler artifacts.
 
-## Architecture
+## Target architecture
 
-The project is divided into two conceptual layers.
+The intended compilation flow is:
 
-### Core
+```text
+CKL kernels -----------+
+MLIR GPU/Linalg -------+--> effect and dispatch interfaces --> orchestration IR
+other GPU dialects ----+                                      |
+                                                              +--> CUDA Graph
+                                                              +--> CUDA streams
+                                                              +--> future backends
+```
 
-The core contains the target-independent layout, composition, planning, verification, and
-provenance model. It is currently a semantic validation library rather than a production
-compiler or performance model.
+The interoperability boundary has four parts:
 
-### DSL and compiler
+- standard MLIR memory effects for reads, writes, allocations, and frees;
+- an optional CKL access-region interface for sub-buffer precision;
+- a dispatch interface describing a kernel invocation and its launch configuration; and
+- alias/view information that traces an accessed value back to an underlying resource.
 
-The compiler layer currently contains an initial MLIR dialect and an optimizer driver. It
-uses the standalone core for semantic verification and layout-conversion planning. The
-Python frontend constructs native MLIR operations and can compile a boxed NVIDIA path to a device
-binary. A general runtime launch API is not yet implemented.
+Whole-buffer effects are the conservative fallback when region information is unavailable.
+Unknown operations are rejected in strict mode or treated as ordering barriers in conservative
+mode. Manual effect annotations are reserved for foreign or opaque calls; CKL-authored kernels
+derive their effects from their bodies.
+
+Function arguments and SSA results form the kernel boundary. Manually named ports are not a
+requirement of the target design. Multiple kernel implementations are likewise optional: they
+become useful only when a DSL or author supplies genuinely different implementations with the
+same observable contract.
+
+## Initial use case
+
+The first target workload is a repeated scientific simulation or iterative solver composed of
+multiple small-to-medium kernels, such as Hotspot3D, FDTD, or a multi-field stencil pipeline.
+These programs offer analyzable memory access, repeated launch sequences, temporary-buffer
+lifetimes, reductions, and independent branches. They also provide a natural path to later
+multi-GPU halo exchange without making distributed execution part of the initial scope.
+
+CKL will be evaluated against ordinary sequential launches, single-stream CUDA Graph capture,
+manually scheduled streams, and a hand-written explicit CUDA Graph. The manual graph is the
+performance ceiling; CKL should approach it without hand-maintained dependencies and outperform
+capture only where inferred independence, memory reuse, batching, or multiple in-flight instances
+create a real opportunity. The complete validation plan is in
+[docs/orchestration.md](docs/orchestration.md#validation-plan).
+
+## Current implementation
+
+The checked-in prototype predates this pivot. It contains a target-independent layout,
+composition, proof, and conversion-planning core; an initial CKL MLIR dialect and optimizer;
+and a Python frontend. The compiler can lower a boxed NVIDIA path to a device binary, but a
+general runtime launch API and CUDA Graph backend are not yet implemented.
+
+The existing task graph, callable implementations, provenance, resource lifetimes, Python
+tracing, and NVIDIA binary generation are expected to inform the orchestration work. The manual
+task-port descriptions, static execution costs, and layout-conversion search should not be
+treated as the future public orchestration API.
 
 
 ## Repository layout
@@ -52,6 +105,8 @@ lib/Dialect/            dialect implementations and transformations
 include/ckl/Extensions/ target-specific extension APIs
 lib/Extensions/         target-specific extension implementations
 tools/ckl-opt/          CKL optimizer driver
+docs/                   target architecture and project roadmap
+specs/                  detailed project specification
 tests/Core/             semantic and property-style validation
 tests/Dialect/          MLIR round-trip, verification, and transformation tests
 python/ckl/             dependency-free Python frontend
@@ -146,9 +201,16 @@ compiled = kernel.compile(ckl.CompilerOptions(target=target))
 
 ## Acknowledgments
 
-The design is informed by the following awesome projects:
-- [AMD Composable Kernel and CK Tile](https://github.com/ROCm/rocm-libraries/tree/develop/projects/composablekernel) for the idea of composable kernel.
-- [NVIDIA CUTLASS/CuTe](https://github.com/nvidia/cutlass) for the design of data layout model.
-- [ROCm FlyDSL](https://github.com/ROCm/FlyDSL) for a mlir implementation of CUTLASS's data layout model.
-- Colfax Research's [*Categorical Foundations for CuTe Layouts*](https://arxiv.org/pdf/2601.05972) for the indepth intro to category theory.
-- [TileLang](https://github.com/tile-ai/tilelang) for the idea of layout inference.
+The current prototype and target design are informed by:
+
+- [MLIR](https://mlir.llvm.org/) for extensible IR, operation interfaces, and GPU lowering;
+- [IREE](https://iree.dev/) for asynchronous resource and command scheduling;
+- [CUDA Graphs](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html)
+  for reusable GPU command graphs;
+- [AMD Composable Kernel and CK Tile](https://github.com/ROCm/rocm-libraries/tree/develop/projects/composablekernel)
+  for composable GPU kernels;
+- [NVIDIA CUTLASS/CuTe](https://github.com/nvidia/cutlass) and
+  [ROCm FlyDSL](https://github.com/ROCm/FlyDSL) for layout representations;
+- Colfax Research's [*Categorical Foundations for CuTe Layouts*](https://arxiv.org/pdf/2601.05972)
+  for formal treatment of CuTe layouts; and
+- [TileLang](https://github.com/tile-ai/tilelang) for layout inference.

@@ -1,5 +1,7 @@
-docs/
-specs
+docs/*
+!docs/orchestration.md
+specs/*
+!specs/mlir-layout-aware-gpu-compiler-spec.md
 build/
 .cache/
 .pytest_cache/
