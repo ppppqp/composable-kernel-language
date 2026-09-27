@@ -1,9 +1,9 @@
 # Composable Kernel Language
 
 > **Status:** CKL is an experimental project undergoing an architectural pivot. The
-> retired layout-aware prototype has been removed. The repository is now a minimal bootstrap
-> for the effect-derived orchestration design; its dialect, analyses, and runtime are not yet
-> implemented.
+> retired layout-aware prototype has been removed. Milestones 0 and 1 of the effect-derived
+> orchestration design are implemented; graph construction and runtime execution remain future
+> work.
 
 Composable Kernel Language (CKL) is an experimental, MLIR-based orchestration layer for
 repeated GPU programs. It derives memory effects and dependencies from kernel IR, constructs
@@ -84,29 +84,32 @@ create a real opportunity. The complete validation plan is in
 
 ## Current implementation
 
-The repository intentionally contains only the reusable bootstrap after removal of the previous
-prototype:
+The repository contains the reusable bootstrap and the first two milestones of the new design:
 
-- a generic `ckl-opt` driver that registers upstream MLIR dialects, passes, extensions, and GPU
-  translations;
+- a CKL MLIR dialect with allocation, free, load, store, atomic, synchronization, view, and
+  interface-based dispatch operations;
+- reusable access-region and dispatch operation interfaces;
+- whole-buffer base-resource/alias analysis and an interprocedural effect-summary pass with strict
+  and conservative modes;
+- a `ckl-opt` driver that registers CKL alongside upstream MLIR dialects and GPU translations;
 - Python utilities for invoking the optimizer, describing an NVIDIA target, extracting generated
   GPU objects, and forming compilation cache keys; and
-- a CUDA Milestone 0 feasibility harness with two candidate workloads and four execution modes;
-  and
-- small tests for the retained utilities and benchmark-result selection.
+- a CUDA Milestone 0 feasibility harness with two candidate workloads and four execution modes.
 
-No CKL dialect, effect analysis, orchestration IR, CUDA Graph runtime, or kernel frontend is
-currently implemented. The next code milestone is the semantic-interface and effect foundation
-described in the specification. Milestone 0 is complete: measurements on an RTX 5060 Ti selected
-the underfilled `multi_field` workload after its explicit graph ran 1.56x faster than
-single-stream capture; the linear negative control showed no meaningful improvement.
+Milestone 0 selected the underfilled `multi_field` workload after its explicit graph ran 1.56x
+faster than single-stream capture; the linear negative control showed no meaningful improvement.
+Milestone 1 derives whole-buffer effects from kernel bodies and materializes inspectable summaries.
+No orchestration graph, CUDA Graph runtime, or kernel frontend is implemented yet. Milestone 2 is
+sound dependency-graph construction.
 
 ## Repository layout
 
 ```text
-tools/ckl-opt/   generic MLIR optimizer bootstrap
+include/ckl/     public dialect, interface, and analysis headers
+lib/             CKL dialect and semantic analysis implementation
+tools/ckl-opt/   CKL-aware MLIR optimizer driver
 python/ckl/      compilation and GPU-artifact utilities
-tests/Python/    bootstrap utility tests
+tests/           Python utilities and MLIR semantic integration tests
 benchmarks/      CUDA feasibility workloads and analysis scripts
 docs/            architecture overview and roadmap
 specs/           normative project specification
@@ -153,8 +156,22 @@ The resulting optimizer is available at:
 build/tools/ckl-opt/ckl-opt
 ```
 
-`MLIR_DIR` selects the MLIR package. The current driver intentionally registers no CKL dialect or
-pass; it is the executable scaffold for the first orchestration interfaces and analyses.
+`MLIR_DIR` selects the MLIR package. To derive summaries in strict mode:
+
+```bash
+build/tools/ckl-opt/ckl-opt input.mlir --ckl-summarize-effects
+```
+
+For foreign operations without semantic adapters, conservative mode records whole-resource
+read/write effects, an unknown-effect marker, and an ordering barrier:
+
+```bash
+build/tools/ckl-opt/ckl-opt input.mlir --allow-unregistered-dialect \
+  '--ckl-summarize-effects=strict=false'
+```
+
+Summaries are emitted as compiler-owned `ckl.effect_summary` function attributes. They are always
+recomputed from bodies; pre-existing attributes are not treated as authoritative.
 
 ## Python utilities
 

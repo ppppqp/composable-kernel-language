@@ -464,6 +464,17 @@ the GPU and exposed no scheduling headroom.
 - Implement base-resource and whole-buffer alias analysis.
 - Add strict verification, conservative unknown effects, and interprocedural summaries.
 
+**Implementation status:** complete. CKL operations expose standard MLIR read, write, allocate,
+and free effects; atomic and synchronization operations retain ordering scope. Reusable
+`AccessRegionOpInterface` and `DispatchOpInterface` contracts isolate orchestration from producer
+dialects. The `ckl-summarize-effects` pass traces CKL and upstream view-like operations to base
+resources, treats compiler allocations as fresh, conservatively aliases external buffers, and
+propagates summaries through calls and dispatches. Strict mode rejects missing semantics;
+conservative mode emits whole-resource read/write effects, an ordering barrier, and an explicit
+unknown marker. Integration tests cover CKL and upstream memory effects, views, private
+allocations, calls, dispatches, atomics, synchronization, malformed dispatches, and both unknown
+operation modes.
+
 ### Milestone 2: sound orchestration graph
 
 - Introduce minimal graph IR.

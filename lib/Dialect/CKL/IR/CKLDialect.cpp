@@ -1,0 +1,14 @@
+#include "ckl/Dialect/CKL/IR/CKLDialect.h"
+#include "ckl/Dialect/CKL/IR/CKLOps.h"
+
+using namespace mlir;
+using namespace mlir::ckl;
+
+#include "ckl/Dialect/CKL/IR/CKLOpsDialect.cpp.inc"
+
+void CKLDialect::initialize() {
+  addOperations<
+#define GET_OP_LIST
+#include "ckl/Dialect/CKL/IR/CKLOps.cpp.inc"
+      >();
+}

@@ -1,7 +1,8 @@
 # Effect-Derived GPU Orchestration
 
-This document describes CKL's target architecture. It is a design proposal and roadmap; unless
-explicitly noted otherwise, the features described here are not yet implemented.
+This document describes CKL's target architecture. Milestone 0 feasibility measurement and the
+Milestone 1 semantic foundation are implemented. Orchestration graph construction, planning, and
+runtime execution remain design targets unless explicitly noted otherwise.
 
 The normative project scope and acceptance criteria are maintained in the
 [revised project specification](../specs/mlir-layout-aware-gpu-compiler-spec.md).
@@ -239,6 +240,9 @@ replaced.
 ## Scope and roadmap
 
 ### Phase 1: sound graph construction
+
+Milestone 1's semantic foundation is implemented. The remaining Phase 1 work is Milestone 2 graph
+construction and its randomized dependency oracle.
 
 - Define and document the dispatch and optional access-region interfaces.
 - Add memory effects to CKL operations.
