@@ -1,0 +1,9 @@
+device,workload,mode,elements,cycles,warmup,repeats,median_ms,p95_ms,checksum,correct
+NVIDIA GeForce RTX 5060 Ti,multi_field,sequential,2048,200,20,9,2.717376,2.878080,373.727682,true
+NVIDIA GeForce RTX 5060 Ti,multi_field,capture,2048,200,20,9,2.871328,2.872480,373.727682,true
+NVIDIA GeForce RTX 5060 Ti,multi_field,streams,2048,200,20,9,2.167584,2.220096,373.727682,true
+NVIDIA GeForce RTX 5060 Ti,multi_field,explicit,2048,200,20,9,1.836160,1.845760,373.727682,true
+NVIDIA GeForce RTX 5060 Ti,linear_stencil,sequential,2048,200,20,9,1.180064,1.196832,2087.000461,true
+NVIDIA GeForce RTX 5060 Ti,linear_stencil,capture,2048,200,20,9,0.823392,0.824192,2087.000461,true
+NVIDIA GeForce RTX 5060 Ti,linear_stencil,streams,2048,200,20,9,1.175584,1.199840,2087.000461,true
+NVIDIA GeForce RTX 5060 Ti,linear_stencil,explicit,2048,200,20,9,0.823008,0.823488,2087.000461,true

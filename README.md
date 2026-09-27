@@ -91,11 +91,15 @@ prototype:
   translations;
 - Python utilities for invoking the optimizer, describing an NVIDIA target, extracting generated
   GPU objects, and forming compilation cache keys; and
-- small tests for those Python utilities.
+- a CUDA Milestone 0 feasibility harness with two candidate workloads and four execution modes;
+  and
+- small tests for the retained utilities and benchmark-result selection.
 
 No CKL dialect, effect analysis, orchestration IR, CUDA Graph runtime, or kernel frontend is
 currently implemented. The next code milestone is the semantic-interface and effect foundation
-described in the specification.
+described in the specification. Milestone 0 is complete: measurements on an RTX 5060 Ti selected
+the underfilled `multi_field` workload after its explicit graph ran 1.56x faster than
+single-stream capture; the linear negative control showed no meaningful improvement.
 
 ## Repository layout
 
@@ -103,6 +107,7 @@ described in the specification.
 tools/ckl-opt/   generic MLIR optimizer bootstrap
 python/ckl/      compilation and GPU-artifact utilities
 tests/Python/    bootstrap utility tests
+benchmarks/      CUDA feasibility workloads and analysis scripts
 docs/            architecture overview and roadmap
 specs/           normative project specification
 ```
@@ -173,6 +178,29 @@ options = ckl.CompilerOptions(target=target)
 
 `compile_module` remains available in `ckl.compiler` for raw MLIR input. It requires a built
 `ckl-opt`; extracting embedded GPU objects additionally requires matching MLIR Python bindings.
+
+## Milestone 0 feasibility benchmarks
+
+The optional CUDA benchmark compares sequential launches, single-stream capture, manually
+coordinated streams, and an explicit minimal-dependency graph on two workloads. It is disabled by
+default so the project remains configurable without a CUDA toolkit.
+
+```bash
+cmake -S . -B build-cuda -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCKL_BUILD_CUDA_BENCHMARKS=ON \
+  -DCMAKE_CUDA_ARCHITECTURES=120 \
+  -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-13
+cmake --build build-cuda --target ckl-milestone0
+
+python3 benchmarks/milestone0/run.py \
+  --executable build-cuda/benchmarks/milestone0/ckl-milestone0 \
+  --output benchmarks/milestone0/results/rtx5060ti.csv
+python3 benchmarks/milestone0/analyze.py benchmarks/milestone0/results/rtx5060ti.csv
+```
+
+See [the benchmark documentation](benchmarks/milestone0/README.md) for workload definitions and
+the evidence-based selection rule.
 
 ## Acknowledgments
 

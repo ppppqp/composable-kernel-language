@@ -449,6 +449,14 @@ rejected as the primary demonstration.
 - Measure launch, overlap, batching, and memory-reuse opportunity.
 - Select the primary workload from evidence.
 
+**Implementation status:** complete. The harness implements sequential launches, single-stream
+capture, manually coordinated streams, and explicit graphs. On an RTX 5060 Ti with CUDA 12.8, the
+underfilled `multi_field` candidate's explicit graph measured 1.564x faster than capture, while the
+linear negative control measured 1.000x. All modes passed checksum validation. The raw result is
+stored in `benchmarks/milestone0/results/rtx5060ti.csv`; `multi_field` is the selected primary
+workload. A full-width branched stencil was rejected because its branches individually saturated
+the GPU and exposed no scheduling headroom.
+
 ### Milestone 1: semantic foundation
 
 - Add memory effects to CKL memory, allocation, atomic, and synchronization operations.

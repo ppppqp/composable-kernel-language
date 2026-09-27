@@ -8,6 +8,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(CKL_BUILD_TESTS "Build CKL bootstrap tests" ON)
 option(CKL_ENABLE_MLIR "Build the CKL MLIR optimizer driver" OFF)
+option(CKL_BUILD_CUDA_BENCHMARKS "Build the Milestone 0 CUDA feasibility benchmarks" OFF)
+
+if(CKL_BUILD_CUDA_BENCHMARKS)
+  enable_language(CUDA)
+  find_package(CUDAToolkit REQUIRED)
+  add_subdirectory(benchmarks/milestone0)
+endif()
 
 if(CKL_ENABLE_MLIR)
   find_package(MLIR REQUIRED CONFIG)
