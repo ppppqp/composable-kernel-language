@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from ckl import CompilerOptions, NVIDIATarget
-from ckl.compiler import compilation_key
+from ckl.compiler import compilation_key, extract_gpu_objects
 
 
 class CompilerUtilitiesTest(unittest.TestCase):
@@ -26,6 +26,9 @@ class CompilerUtilitiesTest(unittest.TestCase):
         optimizer = Path(__file__)
         options = CompilerOptions(ckl_opt=optimizer)
         self.assertEqual(options.resolve_ckl_opt(), optimizer.resolve())
+
+    def test_source_without_gpu_binary_has_no_objects(self) -> None:
+        self.assertEqual(extract_gpu_objects("module {}"), ())
 
 
 if __name__ == "__main__":

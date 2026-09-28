@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
 
 
 class CompilationError(RuntimeError):
@@ -38,9 +38,7 @@ class NVIDIATarget:
             "CUDA_PATH": root,
             "CUDAToolkit_ROOT": root,
             "PATH": f"{root}/bin{os.pathsep}{os.environ.get('PATH', '')}",
-            "LD_LIBRARY_PATH": (
-                f"{root}/lib64{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}"
-            ),
+            "LD_LIBRARY_PATH": (f"{root}/lib64{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}"),
         }
 
     def cache_identity(self) -> str:
@@ -109,7 +107,7 @@ def compilation_key(source: str, command: Sequence[str]) -> str:
     ).hexdigest()
 
 
-def _extract_gpu_objects(source: str) -> tuple[GPUObject, ...]:
+def extract_gpu_objects(source: str) -> tuple[GPUObject, ...]:
     if "gpu.binary" not in source:
         return ()
     from mlir import ir
@@ -155,5 +153,5 @@ def compile_module(source: str, options: CompilerOptions) -> CompiledModule:
     if process.returncode:
         raise CompilationError(command, process.stderr)
     return CompiledModule(
-        source, process.stdout, command, cache_key, _extract_gpu_objects(process.stdout)
+        source, process.stdout, command, cache_key, extract_gpu_objects(process.stdout)
     )

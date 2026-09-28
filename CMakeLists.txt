@@ -8,11 +8,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(CKL_BUILD_TESTS "Build CKL bootstrap tests" ON)
 option(CKL_ENABLE_MLIR "Build the CKL MLIR optimizer driver" OFF)
+option(CKL_ENABLE_CUDA_RUNTIME "Build the NVIDIA execution runtime" OFF)
 option(CKL_BUILD_CUDA_BENCHMARKS "Build the Milestone 0 CUDA feasibility benchmarks" OFF)
 
 if(CKL_BUILD_CUDA_BENCHMARKS)
   enable_language(CUDA)
+endif()
+
+if(CKL_ENABLE_CUDA_RUNTIME OR CKL_BUILD_CUDA_BENCHMARKS)
   find_package(CUDAToolkit REQUIRED)
+endif()
+
+if(CKL_BUILD_CUDA_BENCHMARKS)
   add_subdirectory(benchmarks/milestone0)
 endif()
 
@@ -27,7 +34,13 @@ if(CKL_ENABLE_MLIR)
   include(AddLLVM)
   include(AddMLIR)
   add_subdirectory(include)
+endif()
+
+if(CKL_ENABLE_MLIR OR CKL_ENABLE_CUDA_RUNTIME)
   add_subdirectory(lib)
+endif()
+
+if(CKL_ENABLE_MLIR)
   add_subdirectory(tools)
 endif()
 

@@ -1,9 +1,9 @@
 # Composable Kernel Language
 
 > **Status:** CKL is an experimental project undergoing an architectural pivot. The
-> retired layout-aware prototype has been removed. Milestones 0 and 1 of the effect-derived
-> orchestration design are implemented; graph construction and runtime execution remain future
-> work.
+> retired layout-aware prototype has been removed. Milestones 0 through 3 of the effect-derived
+> orchestration design are implemented: feasibility, semantic inference, graph construction, and
+> the focused NVIDIA runtime.
 
 Composable Kernel Language (CKL) is an experimental, MLIR-based orchestration layer for
 repeated GPU programs. It derives memory effects and dependencies from kernel IR, constructs
@@ -84,7 +84,7 @@ create a real opportunity. The complete validation plan is in
 
 ## Current implementation
 
-The repository contains the reusable bootstrap and the first three milestones of the new design:
+The repository contains the reusable bootstrap and the first four milestones of the new design:
 
 - a CKL MLIR dialect with allocation, free, load, store, atomic, synchronization, view, and
   interface-based dispatch operations;
@@ -93,6 +93,8 @@ The repository contains the reusable bootstrap and the first three milestones of
   and conservative modes;
 - a minimal normalized graph IR and a graph-construction pass that derives SSA, token, memory,
   lifetime, control, and unknown-effect barrier dependencies with provenance and DOT output;
+- an optional NVIDIA Driver API runtime for ordinary launches, explicit CUDA Graphs, parameter
+  updates, executable caching, device memory, and externally generated CUBIN loading;
 - a `ckl-opt` driver that registers CKL alongside upstream MLIR dialects and GPU translations;
 - Python utilities for invoking the optimizer, describing an NVIDIA target, extracting generated
   GPU objects, and forming compilation cache keys; and
@@ -102,8 +104,9 @@ Milestone 0 selected the underfilled `multi_field` workload after its explicit g
 faster than single-stream capture; the linear negative control showed no meaningful improvement.
 Milestone 1 derives whole-buffer effects from kernel bodies and materializes inspectable summaries.
 Milestone 2 binds those summaries to dispatch operands and constructs an inspectable orchestration
-graph. No CUDA Graph runtime or kernel frontend is implemented yet; runtime execution begins in
-Milestone 3.
+graph. Milestone 3 provides the first executable NVIDIA runtime and validates compiler-generated
+CUBIN loading plus graph correctness, updates, caching, and overhead. Automatic host-code
+generation and memory reuse remain later work.
 
 To inspect the graph for the deterministic test program:
 
@@ -118,7 +121,7 @@ DOT string suitable for visualization.
 
 ```text
 include/ckl/     public dialect, interface, and analysis headers
-lib/             CKL dialect and semantic analysis implementation
+lib/             CKL dialect, analysis, core, and optional runtime implementation
 tools/ckl-opt/   CKL-aware MLIR optimizer driver
 python/ckl/      compilation and GPU-artifact utilities
 tests/           Python utilities and MLIR semantic integration tests
@@ -230,6 +233,28 @@ python3 benchmarks/milestone0/analyze.py benchmarks/milestone0/results/rtx5060ti
 
 See [the benchmark documentation](benchmarks/milestone0/README.md) for workload definitions and
 the evidence-based selection rule.
+
+## Milestone 3 NVIDIA runtime
+
+The runtime is optional and uses the CUDA Driver API. A combined MLIR/runtime build also compiles a
+kernel through `ckl-opt`, extracts its `gpu.binary` CUBIN, and executes it as an end-to-end test.
+
+```bash
+cmake -S . -B build-runtime -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCKL_ENABLE_MLIR=ON \
+  -DMLIR_DIR="$LLVM_BUILD/lib/cmake/mlir" \
+  -DCKL_ENABLE_CUDA_RUNTIME=ON \
+  -DCKL_RUNTIME_TEST_ARCH=120 \
+  -DCKL_CUDA_HOST_COMPILER=/usr/bin/g++-13
+cmake --build build-runtime
+ctest --test-dir build-runtime --output-on-failure
+```
+
+The reusable API is declared in `include/ckl/Runtime/NvidiaRuntime.h`. The validation executable
+compares ordinary launches, a cached CKL graph executable, and an independently constructed raw
+CUDA Driver graph over the same six-kernel workload. Reproduction details and checked-in results
+are in [benchmarks/milestone3](benchmarks/milestone3/README.md).
 
 ## Acknowledgments
 

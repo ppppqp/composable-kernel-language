@@ -17,3 +17,7 @@ if(CKL_ENABLE_MLIR)
         $<TARGET_FILE:ckl-opt> ${CMAKE_CURRENT_SOURCE_DIR}/MLIR
   )
 endif()
+
+if(CKL_ENABLE_CUDA_RUNTIME)
+  add_subdirectory(Runtime)
+endif()

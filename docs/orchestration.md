@@ -1,8 +1,9 @@
 # Effect-Derived GPU Orchestration
 
 This document describes CKL's target architecture. Milestone 0 feasibility measurement, the
-Milestone 1 semantic foundation, and Milestone 2 graph construction are implemented. Planning and
-runtime execution remain design targets unless explicitly noted otherwise.
+Milestone 1 semantic foundation, Milestone 2 graph construction, and the focused Milestone 3
+NVIDIA runtime are implemented. Automatic host-code generation and optimization planning remain
+design targets unless explicitly noted otherwise.
 
 The normative project scope and acceptance criteria are maintained in the
 [revised project specification](../specs/mlir-layout-aware-gpu-compiler-spec.md).
@@ -267,10 +268,16 @@ phase.
 
 ### Phase 2: executable runtime
 
-- Load and launch generated NVIDIA binaries.
-- Lower the orchestration graph to ordinary CUDA launches and explicit CUDA Graphs.
-- Support parameter update, caching, and measurement.
-- Establish the manual baseline on the initial mini-application.
+The focused Milestone 3 runtime is implemented:
+
+- load and launch compiler-generated NVIDIA CUBINs;
+- execute lowering-supplied plans as ordinary launches or explicit CUDA Graphs;
+- support kernel parameter update, executable caching, and measurement; and
+- validate correctness and overhead against an independent manual graph.
+
+Direct host-code emission from `ckl.graph` is not yet implemented; the current caller-facing
+lowering boundary accepts a validated `NvidiaPlan` containing graph dependencies, launch
+parameters, resolved functions, and bound runtime arguments.
 
 ### Phase 3: useful optimization
 

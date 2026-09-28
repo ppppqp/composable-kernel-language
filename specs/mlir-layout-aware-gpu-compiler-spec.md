@@ -493,14 +493,30 @@ node metadata because it orders work inside a launch rather than separate launch
 Integration tests cover a deterministic branched graph, provenance, independent allocations,
 explicit dependencies, lifetime ordering, and conservative unknown barriers. A fixed-seed
 generator compares 20 dispatch graphs against an independent whole-buffer dependency oracle and
-rejects both missing and unnecessary dispatch edges. Runtime differential execution begins after
-the Milestone 3 backend exists; the present differential check is structural rather than numeric.
+rejects both missing and unnecessary dispatch edges. This Milestone 2 check is structural; the
+Milestone 3 runtime suite adds numerical differential execution.
 
 ### Milestone 3: NVIDIA runtime
 
 - Load CKL-generated cubins and launch through CUDA streams.
 - Construct, instantiate, update, and cache explicit CUDA Graphs.
 - Establish correctness and overhead parity with manual baselines.
+
+**Implementation status:** complete for the focused single-device kernel-graph runtime. The
+optional `CKLNvidiaRuntime` library owns a CUDA primary context, streams, device buffers, loaded
+CUBIN modules, resolved functions, argument storage, validated source-ordered plans, instantiated
+graphs, and a caller-keyed executable cache. Plans run either as ordinary topological launches or
+as explicit CUDA Graphs, and instantiated kernel parameters can be updated without rebuilding the
+topology.
+
+The runtime suite compiles a kernel through `ckl-opt`, extracts the resulting `gpu.binary` object,
+loads the CUBIN, executes its lowered memref ABI, and validates every result. A second validation
+uses the selected six-kernel multi-field topology and compares ordinary launches, the CKL graph,
+and an independently constructed raw Driver API graph. On the RTX 5060 Ti, 200 cycles measured
+2.718 ms, 1.850 ms, and 1.873 ms respectively; CKL graph time was 0.988x the manual graph and all
+checksums matched. Cache identity reuse and `cuGraphExecKernelNodeSetParams` updates are also
+tested. The runtime currently accepts a lowering-supplied `NvidiaPlan`; automatic host-code
+emission and memory reuse are deliberately left to later milestones.
 
 ### Milestone 4: measured optimization
 

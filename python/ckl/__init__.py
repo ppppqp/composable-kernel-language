@@ -1,4 +1,11 @@
-from .compiler import CompilationError, CompiledModule, CompilerOptions, GPUObject, NVIDIATarget
+from .compiler import (
+    CompilationError,
+    CompiledModule,
+    CompilerOptions,
+    GPUObject,
+    NVIDIATarget,
+    extract_gpu_objects,
+)
 
 __all__ = [
     "CompilationError",
@@ -6,4 +13,5 @@ __all__ = [
     "CompilerOptions",
     "GPUObject",
     "NVIDIATarget",
+    "extract_gpu_objects",
 ]

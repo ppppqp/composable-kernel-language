@@ -1,0 +1,4 @@
+device,mode,elements,cycles,median_ms,checksum,correct
+NVIDIA GeForce RTX 5060 Ti,ordinary,2048,200,2.718214,373.727682,true
+NVIDIA GeForce RTX 5060 Ti,ckl_graph,2048,200,1.849911,373.727682,true
+NVIDIA GeForce RTX 5060 Ti,manual_graph,2048,200,1.873025,373.727682,true
