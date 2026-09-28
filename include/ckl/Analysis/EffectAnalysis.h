@@ -1,21 +1,19 @@
 #ifndef CKL_ANALYSIS_EFFECTANALYSIS_H
 #define CKL_ANALYSIS_EFFECTANALYSIS_H
 
-#include "mlir/IR/Value.h"
+#include "mlir/IR/BuiltinOps.h"
 
 namespace mlir {
 namespace ckl {
 
-enum class WholeBufferAliasResult { NoAlias, MayAlias, MustAlias };
-
-/// Strip view-like operations and return the underlying whole-buffer resource.
-Value getBaseResource(Value value);
-
-/// Conservative whole-buffer alias relation used by orchestration analysis.
-WholeBufferAliasResult aliasWholeBuffers(Value lhs, Value rhs);
+/// Recompute and materialize effect summaries for every function in a module.
+LogicalResult deriveEffectSummaries(ModuleOp module, bool strict = true);
 
 /// Register CKL semantic analysis and verification passes.
 void registerCKLPasses();
+
+/// Register graph-construction passes. Called by registerCKLPasses.
+void registerCKLGraphPasses();
 
 } // namespace ckl
 } // namespace mlir

@@ -1,12 +1,12 @@
 #include "ckl/Analysis/EffectAnalysis.h"
 
+#include "ckl/Core/MemoryEffects.h"
 #include "ckl/Dialect/CKL/IR/CKLInterfaces.h"
 #include "ckl/Dialect/CKL/IR/CKLOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -16,13 +16,6 @@ using namespace mlir;
 using namespace mlir::ckl;
 
 namespace {
-
-enum AccessBits : unsigned {
-  Read = 1u << 0,
-  Write = 1u << 1,
-  Allocate = 1u << 2,
-  Free = 1u << 3,
-};
 
 struct KernelSummary {
   // argumentEffects[i] is a bitmask of AccessBits for the i-th argument of the kernel.
@@ -42,18 +35,6 @@ struct KernelSummary {
 };
 
 bool isResourceType(Type type) { return isa<MemRefType, UnrankedMemRefType>(type); }
-
-unsigned classifyEffect(MemoryEffects::Effect *effect) {
-  if (isa<MemoryEffects::Read>(effect))
-    return Read;
-  if (isa<MemoryEffects::Write>(effect))
-    return Write;
-  if (isa<MemoryEffects::Allocate>(effect))
-    return Allocate;
-  if (isa<MemoryEffects::Free>(effect))
-    return Free;
-  return 0;
-}
 
 class SummaryAnalysis {
 public:
@@ -126,17 +107,8 @@ private:
       }
     }
 
-    if (Operation *definition = base.getDefiningOp()) {
-      if (auto effects = dyn_cast<MemoryEffectOpInterface>(definition)) {
-        SmallVector<MemoryEffects::EffectInstance> instances;
-        effects.getEffects(instances);
-        if (llvm::any_of(instances, [&](const auto &instance) {
-              return isa<MemoryEffects::Allocate>(instance.getEffect()) &&
-                     instance.getValue() == base;
-            }))
-          return success();
-      }
-    }
+    if (isAllocationValue(base))
+      return success();
 
     return handleUnknown(source, function, summary,
                          "cannot resolve an effect to a function resource");
@@ -221,7 +193,7 @@ private:
       SmallVector<MemoryEffects::EffectInstance> effects;
       interface.getEffects(effects);
       for (const MemoryEffects::EffectInstance &effect : effects) {
-        unsigned bits = classifyEffect(effect.getEffect());
+        unsigned bits = classifyMemoryEffect(effect.getEffect());
         if (!bits)
           continue;
         Value value = effect.getValue();
@@ -278,14 +250,14 @@ DictionaryAttr materializeSummary(MLIRContext *context, func::FuncOp function,
     if (!bits)
       continue;
     SmallVector<Attribute> effects;
-    auto add = [&](unsigned mask, StringRef name) {
+    auto add = [&](unsigned mask) {
       if (bits & mask)
-        effects.push_back(builder.getStringAttr(name));
+        effects.push_back(builder.getStringAttr(stringifyAccessEffect(mask)));
     };
-    add(Read, "read");
-    add(Write, "write");
-    add(Allocate, "allocate");
-    add(Free, "free");
+    add(Read);
+    add(Write);
+    add(Allocate);
+    add(Free);
     arguments.push_back(builder.getDictionaryAttr({
         builder.getNamedAttr("arg", builder.getI64IntegerAttr(index)),
         builder.getNamedAttr("effects", builder.getArrayAttr(effects)),
@@ -337,64 +309,29 @@ struct SummarizeEffectsPass : public PassWrapper<SummarizeEffectsPass, Operation
   }
 
   void runOnOperation() override {
-    SummaryAnalysis analysis(strict);
-    bool failedAnalysis = false;
-    for (func::FuncOp function : getOperation().getOps<func::FuncOp>()) {
-      FailureOr<KernelSummary> summary = analysis.summarize(function);
-      if (failed(summary)) {
-        failedAnalysis = true;
-        continue;
-      }
-      function->setAttr("ckl.effect_summary",
-                        materializeSummary(&getContext(), function, *summary));
-    }
-    if (failedAnalysis)
+    if (failed(deriveEffectSummaries(getOperation(), strict)))
       signalPassFailure();
   }
 };
 
 } // namespace
 
-Value mlir::ckl::getBaseResource(Value value) {
-  // follow view-like operations to find the base resource of a value
-  SmallPtrSet<Operation *, 8> visited;
-  while (Operation *definition = value.getDefiningOp()) {
-    if (!visited.insert(definition).second)
-      break;
-    auto view = dyn_cast<ViewLikeOpInterface>(definition);
-    if (!view)
-      break;
-    value = view.getViewSource();
+LogicalResult mlir::ckl::deriveEffectSummaries(ModuleOp module, bool strict) {
+  SummaryAnalysis analysis(strict);
+  bool failedAnalysis = false;
+  for (func::FuncOp function : module.getOps<func::FuncOp>()) {
+    FailureOr<KernelSummary> summary = analysis.summarize(function);
+    if (failed(summary)) {
+      failedAnalysis = true;
+      continue;
+    }
+    function->setAttr("ckl.effect_summary",
+                      materializeSummary(module.getContext(), function, *summary));
   }
-  return value;
+  return failure(failedAnalysis);
 }
 
-WholeBufferAliasResult mlir::ckl::aliasWholeBuffers(Value lhs, Value rhs) {
-  // returns MustAlias if the two values are the same base resource, NoAlias if either is an
-  // allocation, and MayAlias otherwise.
-  lhs = getBaseResource(lhs);
-  rhs = getBaseResource(rhs);
-  if (lhs == rhs)
-    return WholeBufferAliasResult::MustAlias;
-
-  auto isAllocation = [](Value value) {
-    Operation *definition = value.getDefiningOp();
-    if (!definition)
-      return false;
-    auto interface = dyn_cast<MemoryEffectOpInterface>(definition);
-    if (!interface)
-      return false;
-    SmallVector<MemoryEffects::EffectInstance> effects;
-    interface.getEffects(effects);
-    return llvm::any_of(effects, [&](const auto &effect) {
-      return isa<MemoryEffects::Allocate>(effect.getEffect()) && effect.getValue() == value;
-    });
-  };
-
-  if (isAllocation(lhs) || isAllocation(rhs))
-    // if either value is an allocation, they cannot alias
-    return WholeBufferAliasResult::NoAlias;
-  return WholeBufferAliasResult::MayAlias;
+void mlir::ckl::registerCKLPasses() {
+  PassRegistration<SummarizeEffectsPass>();
+  registerCKLGraphPasses();
 }
-
-void mlir::ckl::registerCKLPasses() { PassRegistration<SummarizeEffectsPass>(); }

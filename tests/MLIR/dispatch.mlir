@@ -8,16 +8,16 @@ module {
   }
 
   func.func @host(%input: memref<16xf32>, %output: memref<16xf32>) {
-    "ckl.dispatch"(%input, %output) {
-      after = [],
+    %done = "ckl.dispatch"(%input, %output) {
       block = array<i64: 256, 1, 1>,
       capabilities = ["sm_120"],
       device = "cuda:0",
       grid = array<i64: 1, 1, 1>,
       implementation = "kernel.ptx87.v1",
       kernel = @kernel,
+      operandSegmentSizes = array<i32: 2, 0>,
       shared_memory = 0 : i64
-    } : (memref<16xf32>, memref<16xf32>) -> ()
+    } : (memref<16xf32>, memref<16xf32>) -> !ckl.token
     func.return
   }
 }

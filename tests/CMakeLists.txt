@@ -10,7 +10,7 @@ add_test(
 
 if(CKL_ENABLE_MLIR)
   add_test(
-    NAME ckl-mlir-semantic-foundation
+    NAME ckl-mlir-analysis
     COMMAND ${CMAKE_COMMAND} -E env
       PYTHONDONTWRITEBYTECODE=1
       ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/MLIR/test_semantics.py

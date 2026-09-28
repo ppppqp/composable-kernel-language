@@ -7,6 +7,10 @@ def CKL_Dialect : Dialect {
   let name = "ckl";
   let cppNamespace = "::mlir::ckl";
   let summary = "Effect-derived GPU kernel orchestration";
+  let useDefaultTypePrinterParser = 1;
+  let extraClassDeclaration = [{
+    void registerTypes();
+  }];
 }
 
 class CKL_Op<string mnemonic, list<Trait> traits = []>

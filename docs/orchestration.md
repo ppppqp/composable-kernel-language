@@ -1,7 +1,7 @@
 # Effect-Derived GPU Orchestration
 
-This document describes CKL's target architecture. Milestone 0 feasibility measurement and the
-Milestone 1 semantic foundation are implemented. Orchestration graph construction, planning, and
+This document describes CKL's target architecture. Milestone 0 feasibility measurement, the
+Milestone 1 semantic foundation, and Milestone 2 graph construction are implemented. Planning and
 runtime execution remain design targets unless explicitly noted otherwise.
 
 The normative project scope and acceptance criteria are maintained in the
@@ -126,6 +126,19 @@ The initial implementation should infer whole-buffer dependencies. Precise affin
 regions should be added only after profiles identify false dependencies that matter in a real
 workload.
 
+The implemented `ckl-build-graph` pass emits one `ckl.graph` per host function containing
+dispatches. Dispatches produce SSA `!ckl.token` completion values, and consumers list token
+operands for dependencies that are explicit rather than memory-derived. Graph nodes retain their
+bound accesses, synchronization metadata, and source location; graph edges retain all applicable
+reasons and endpoint locations. Internal kernel synchronization is descriptive metadata, not an
+automatic dependency between separate launches. Unknown effects become cross-node barriers in
+conservative mode.
+
+The current conflict model is deliberately whole-buffer. Distinct CKL allocations are proven
+disjoint, views retain their base identity, and external resources may alias. Nested control flow
+is preserved conservatively with source-order control edges. The pass also emits a DOT rendering
+for inspection; it does not execute the graph.
+
 ## Execution planning
 
 The first backend targets a single NVIDIA GPU and can choose among ordinary CUDA launches and an
@@ -241,14 +254,16 @@ replaced.
 
 ### Phase 1: sound graph construction
 
-Milestone 1's semantic foundation is implemented. The remaining Phase 1 work is Milestone 2 graph
-construction and its randomized dependency oracle.
+Milestones 1 and 2 are implemented, completing the initial sound whole-buffer graph construction
+phase.
 
 - Define and document the dispatch and optional access-region interfaces.
 - Add memory effects to CKL operations.
 - Infer whole-buffer, interprocedural summaries.
 - Implement strict verification and conservative unknown effects.
 - Add randomized dependency and alias tests.
+- Bind summaries to actual dispatch operands and materialize graph nodes and provenance edges.
+- Check generated dispatch graphs against a fixed-seed dependency oracle.
 
 ### Phase 2: executable runtime
 

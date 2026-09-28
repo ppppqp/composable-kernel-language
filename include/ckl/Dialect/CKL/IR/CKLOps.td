@@ -3,6 +3,7 @@
 
 include "ckl/Dialect/CKL/IR/CKLDialect.td"
 include "ckl/Dialect/CKL/IR/CKLInterfaces.td"
+include "ckl/Dialect/CKL/IR/CKLTypes.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
@@ -60,19 +61,49 @@ def CKL_ViewOp : CKL_Op<"view", [Pure, ViewLikeOpInterface,
   }];
 }
 
-def CKL_DispatchOp : CKL_Op<"dispatch", [
+def CKL_DispatchOp : CKL_Op<"dispatch", [AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<DispatchOpInterface>]> {
   let summary = "describes a schedulable GPU kernel invocation";
   let arguments = (ins Variadic<AnyType>:$arguments,
+                       Variadic<CKL_TokenType>:$dependencies,
                        FlatSymbolRefAttr:$kernel,
                        DenseI64ArrayAttr:$grid,
                        DenseI64ArrayAttr:$block,
                        I64Attr:$shared_memory,
                        StrAttr:$device,
                        ArrayAttr:$capabilities,
-                       StrAttr:$implementation,
-                       ArrayAttr:$after);
+                       StrAttr:$implementation);
+  let results = (outs CKL_TokenType:$completion);
   let hasVerifier = 1;
+}
+
+def CKL_GraphOp : CKL_Op<"graph", [SingleBlock, NoTerminator,
+                                    IsolatedFromAbove]> {
+  let summary = "normalized effect-derived orchestration graph";
+  let arguments = (ins FlatSymbolRefAttr:$source,
+                       StrAttr:$name,
+                       StrAttr:$dot);
+  let regions = (region AnyRegion:$body);
+  let hasVerifier = 1;
+}
+
+def CKL_GraphNodeOp : CKL_Op<"graph_node", [HasParent<"GraphOp">]> {
+  let summary = "resource or dispatch node in a normalized graph";
+  let arguments = (ins I64Attr:$id,
+                       StrAttr:$kind,
+                       OptionalAttr<FlatSymbolRefAttr>:$kernel,
+                       ArrayAttr:$accesses,
+                       BoolAttr:$unknown,
+                       BoolAttr:$synchronizes,
+                       ArrayAttr:$ordering_scopes,
+                       StrAttr:$source);
+}
+
+def CKL_GraphEdgeOp : CKL_Op<"graph_edge", [HasParent<"GraphOp">]> {
+  let summary = "dependency edge with one or more provenance reasons";
+  let arguments = (ins I64Attr:$from,
+                       I64Attr:$to,
+                       ArrayAttr:$reasons);
 }
 
 #endif

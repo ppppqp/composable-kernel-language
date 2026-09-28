@@ -3,6 +3,7 @@
 
 #include "ckl/Dialect/CKL/IR/CKLDialect.h"
 #include "ckl/Dialect/CKL/IR/CKLInterfaces.h"
+#include "ckl/Dialect/CKL/IR/CKLTypes.h"
 #include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"

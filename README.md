@@ -84,13 +84,15 @@ create a real opportunity. The complete validation plan is in
 
 ## Current implementation
 
-The repository contains the reusable bootstrap and the first two milestones of the new design:
+The repository contains the reusable bootstrap and the first three milestones of the new design:
 
 - a CKL MLIR dialect with allocation, free, load, store, atomic, synchronization, view, and
   interface-based dispatch operations;
 - reusable access-region and dispatch operation interfaces;
 - whole-buffer base-resource/alias analysis and an interprocedural effect-summary pass with strict
   and conservative modes;
+- a minimal normalized graph IR and a graph-construction pass that derives SSA, token, memory,
+  lifetime, control, and unknown-effect barrier dependencies with provenance and DOT output;
 - a `ckl-opt` driver that registers CKL alongside upstream MLIR dialects and GPU translations;
 - Python utilities for invoking the optimizer, describing an NVIDIA target, extracting generated
   GPU objects, and forming compilation cache keys; and
@@ -99,8 +101,18 @@ The repository contains the reusable bootstrap and the first two milestones of t
 Milestone 0 selected the underfilled `multi_field` workload after its explicit graph ran 1.56x
 faster than single-stream capture; the linear negative control showed no meaningful improvement.
 Milestone 1 derives whole-buffer effects from kernel bodies and materializes inspectable summaries.
-No orchestration graph, CUDA Graph runtime, or kernel frontend is implemented yet. Milestone 2 is
-sound dependency-graph construction.
+Milestone 2 binds those summaries to dispatch operands and constructs an inspectable orchestration
+graph. No CUDA Graph runtime or kernel frontend is implemented yet; runtime execution begins in
+Milestone 3.
+
+To inspect the graph for the deterministic test program:
+
+```bash
+build/tools/ckl-opt/ckl-opt tests/MLIR/graph.mlir --ckl-build-graph
+```
+
+The emitted `ckl.graph` contains normalized nodes, dependency reasons and source locations, plus a
+DOT string suitable for visualization.
 
 ## Repository layout
 

@@ -293,23 +293,21 @@ region indexes are justified only by workload profiles.
 
 ## 8. Orchestration IR
 
-A tentative normalized graph is:
+The implemented normalized graph is an analysis snapshot associated with a source function:
 
 ```mlir
-ckl.graph @step(%a: !ckl.resource, %b: !ckl.resource) {
-  %tmp = ckl.alloc ...
-  %e0 = ckl.dispatch @update_a(%a, %tmp) grid = [...] block = [...]
-  %e1 = ckl.dispatch @update_b(%b) grid = [...] block = [...]
-  %e2 = ckl.dispatch @reduce(%tmp) after %e0 grid = [...] block = [...]
-  ckl.await %e1, %e2
-  ckl.free %tmp
-  ckl.return
-}
+"ckl.graph"() <{source = @step, name = "step.graph", dot = "..."}> ({
+  "ckl.graph_node"() <{id = 0, kind = "alloc", accesses = [...], ...}>
+  "ckl.graph_node"() <{id = 1, kind = "dispatch", kernel = @update, ...}>
+  "ckl.graph_edge"() <{from = 0, to = 1, reasons = [{kind = "ssa", ...}, ...]}>
+})
 ```
 
-Exact syntax remains open. The IR represents resource identity, size, ownership, dispatch
-arguments, launch parameters, dependencies, completion tokens, lifetime, device affinity, and
-links to provenance. It references producer kernels rather than copying their internal operations.
+The source program retains allocation, dispatch, and free operations; each dispatch produces a
+completion token. The normalized graph records resource identity, ownership and lifetime,
+dispatch arguments, dependencies, kernel synchronization metadata, and provenance without
+copying producer kernel bodies. Launch parameters and device affinity remain on source dispatches
+until executable lowering is introduced.
 
 Function arguments and SSA results replace named logical ports. Types and ABI describe structure;
 derived effects describe mutation and ordering.
@@ -482,6 +480,21 @@ operation modes.
 - Derive SSA, conflict, lifetime, and synchronization edges.
 - Emit provenance and graph visualization.
 - Add randomized oracle and differential tests.
+
+**Implementation status:** complete for the whole-buffer correctness baseline. `ckl.dispatch`
+produces an SSA `!ckl.token` and accepts token dependencies, replacing symbolic launch names with
+producer/consumer links. The `ckl-build-graph` pass recomputes kernel summaries, binds formal
+effects to actual operands, and emits normalized `ckl.graph_node` and `ckl.graph_edge` operations.
+It derives SSA, explicit-token, possible-alias memory, allocation/free lifetime, conservative
+control, and unknown-effect barrier edges. Every edge records its reason and endpoint source
+locations; every graph includes a DOT representation. Internal kernel synchronization remains
+node metadata because it orders work inside a launch rather than separate launches.
+
+Integration tests cover a deterministic branched graph, provenance, independent allocations,
+explicit dependencies, lifetime ordering, and conservative unknown barriers. A fixed-seed
+generator compares 20 dispatch graphs against an independent whole-buffer dependency oracle and
+rejects both missing and unnecessary dispatch edges. Runtime differential execution begins after
+the Milestone 3 backend exists; the present differential check is structural rather than numeric.
 
 ### Milestone 3: NVIDIA runtime
 

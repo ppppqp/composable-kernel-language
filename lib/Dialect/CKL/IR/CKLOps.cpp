@@ -2,6 +2,7 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/DenseSet.h"
 
 using namespace mlir;
 using namespace mlir::ckl;
@@ -44,6 +45,33 @@ LogicalResult AtomicRMWOp::verify() {
 
 LogicalResult SyncOp::verify() { return verifyScope(getOperation(), getScope()); }
 
+LogicalResult GraphOp::verify() {
+  if (!SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getSourceAttr()))
+    return emitOpError() << "references unknown source function " << getSourceAttr();
+  if (getBody().empty())
+    return emitOpError("requires a graph body block");
+
+  llvm::DenseSet<uint64_t> nodeIds;
+  for (Operation &operation : getBody().front()) {
+    if (auto node = dyn_cast<GraphNodeOp>(operation)) {
+      if (!nodeIds.insert(node.getId()).second)
+        return node.emitOpError("has a duplicate node id");
+      continue;
+    }
+    if (!isa<GraphEdgeOp>(operation))
+      return operation.emitOpError("is not a graph node or edge");
+  }
+  for (GraphEdgeOp edge : getBody().front().getOps<GraphEdgeOp>()) {
+    if (!nodeIds.contains(edge.getFrom()) || !nodeIds.contains(edge.getTo()))
+      return edge.emitOpError("references an unknown graph node");
+    if (edge.getFrom() >= edge.getTo())
+      return edge.emitOpError("must preserve source program order");
+    if (edge.getReasons().empty())
+      return edge.emitOpError("requires at least one provenance reason");
+  }
+  return success();
+}
+
 FlatSymbolRefAttr DispatchOp::getKernelSymbol() { return getKernelAttr(); }
 
 OperandRange DispatchOp::getDispatchArguments() { return getArguments(); }
@@ -60,7 +88,7 @@ ArrayAttr DispatchOp::getRequiredCapabilities() { return getCapabilities(); }
 
 StringAttr DispatchOp::getImplementationIdentity() { return getImplementationAttr(); }
 
-ArrayAttr DispatchOp::getExplicitDependencies() { return getAfter(); }
+OperandRange DispatchOp::getExplicitDependencies() { return getDependencies(); }
 
 LogicalResult DispatchOp::verify() {
   auto checkDimensions = [&](ArrayRef<int64_t> dimensions, StringRef name) -> LogicalResult {
@@ -77,10 +105,6 @@ LogicalResult DispatchOp::verify() {
     return emitOpError("requires non-negative shared memory");
   if (getImplementation().empty())
     return emitOpError("requires a stable implementation identity");
-
-  for (Attribute dependency : getAfter())
-    if (!isa<FlatSymbolRefAttr>(dependency))
-      return emitOpError("expects every 'after' entry to be a flat symbol reference");
 
   auto function =
       SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getKernelAttr());

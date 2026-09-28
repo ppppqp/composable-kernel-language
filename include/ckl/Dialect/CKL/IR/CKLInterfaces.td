@@ -44,8 +44,8 @@ def DispatchOpInterface : OpInterface<"DispatchOpInterface"> {
       "::mlir::ArrayAttr", "getRequiredCapabilities">,
     InterfaceMethod<"Returns a stable implementation identity.",
       "::mlir::StringAttr", "getImplementationIdentity">,
-    InterfaceMethod<"Returns explicit symbolic completion dependencies.",
-      "::mlir::ArrayAttr", "getExplicitDependencies">
+    InterfaceMethod<"Returns explicit SSA completion dependencies.",
+      "::mlir::OperandRange", "getExplicitDependencies">
   ];
 }
 
