@@ -515,8 +515,8 @@ uses the selected six-kernel multi-field topology and compares ordinary launches
 and an independently constructed raw Driver API graph. On the RTX 5060 Ti, 200 cycles measured
 2.718 ms, 1.850 ms, and 1.873 ms respectively; CKL graph time was 0.988x the manual graph and all
 checksums matched. Cache identity reuse and `cuGraphExecKernelNodeSetParams` updates are also
-tested. The runtime currently accepts a lowering-supplied `NvidiaPlan`; automatic host-code
-emission and memory reuse are deliberately left to later milestones.
+tested. The runtime accepts a lowering-supplied `NvidiaPlan`; automatic memory planning and the
+first static host-builder path are implemented in Milestone 4.
 
 ### Milestone 4: measured optimization
 
@@ -535,8 +535,16 @@ and can repeat a plan topology inside a larger graph boundary.
 `ckl-build-graph` invokes this planner automatically for compiler-owned, static, identity-layout
 integer or floating-point memrefs. It materializes resources, user node IDs, launch metadata, heap
 assignments, offsets, and reuse provenance on `ckl.graph`. Dynamic or unsupported layouts are
-marked unavailable with a reason rather than assigned an assumed size. Translating those artifacts
-into kernel ABI bindings and emitted C++ host code remains a separate lowering.
+marked unavailable with a reason rather than assigned an assumed size.
+
+`ckl-hostgen` implements the first host-code lowering for direct-pointer kernel ABIs. It emits an
+owning C++ result containing planned heap allocations, retained external buffers, packed resource
+and supported scalar arguments, transitive-reduced dispatch dependencies, and the resulting
+`NvidiaPlan`. A five-kernel validation compiles this generated builder and executes it through both
+ordinary launches and an explicit CUDA Graph against the same CUBIN. Computed scalar expressions,
+dynamic resources, and producer-specific lowered memref ABIs are explicitly rejected until a
+producer ABI interface supplies their packing rules. The direct path is selected only when every
+dispatch advertises the `cuda.direct` capability.
 
 The measured validation runs an ordinary, separately allocated reference and checks every tuned
 candidate numerically. It searches graph batches 1, 2, 4, and 8 with 1, 2, or 4 independent graph,

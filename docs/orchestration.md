@@ -1,9 +1,9 @@
 # Effect-Derived GPU Orchestration
 
 This document describes CKL's target architecture. Milestone 0 feasibility measurement, the
-Milestone 1 semantic foundation, Milestone 2 graph construction, and the focused Milestone 3
-NVIDIA runtime are implemented. Automatic host-code generation and optimization planning remain
-design targets unless explicitly noted otherwise.
+Milestone 1 semantic foundation, Milestone 2 graph construction, the focused Milestone 3 NVIDIA
+runtime, and Milestone 4 planning are implemented. Static direct-pointer graphs support generated
+C++ host-plan builders; broader producer-specific ABI lowering remains a design target.
 
 The normative project scope and acceptance criteria are maintained in the
 [revised project specification](../specs/mlir-layout-aware-gpu-compiler-spec.md).
@@ -139,8 +139,7 @@ For static identity-layout integer and floating-point memrefs, the pass also der
 sets from dispatch accesses and invokes the Core memory planner. The graph receives resource,
 heap, offset, byte-count, and reuse-provenance attributes plus the launch dimensions needed by a
 later executable lowering. Dynamic or unsupported layouts produce an explicit unavailable reason;
-they are never assigned a guessed size. Kernel ABI binding and host-code emission are not yet part
-of this pass.
+they are never assigned a guessed size.
 
 The current conflict model is deliberately whole-buffer. Distinct CKL allocations are proven
 disjoint, views retain their base identity, and external resources may alias. Nested control flow
@@ -282,9 +281,13 @@ The focused Milestone 3 runtime is implemented:
 - support kernel parameter update, executable caching, and measurement; and
 - validate correctness and overhead against an independent manual graph.
 
-Direct host-code emission from `ckl.graph` is not yet implemented; the current caller-facing
-lowering boundary accepts a validated `NvidiaPlan` containing graph dependencies, launch
-parameters, resolved functions, and bound runtime arguments.
+`ckl-hostgen` emits owning C++ plan builders from successful static `ckl.graph` plans. The emitted
+builder allocates planned heaps, retains external buffers, packs resource and supported scalar
+arguments, reconstructs a reduced dispatch dependency topology, and returns a validated
+`NvidiaPlan`. This first path intentionally supports direct device-pointer memref arguments plus
+i32, i64, f32, and f64 constants or host bindings. Computed scalars, dynamic resources, and
+producer-specific lowered memref ABIs are rejected instead of being guessed. A producer must
+advertise the `cuda.direct` dispatch capability before this ABI is selected.
 
 ### Phase 3: useful optimization
 

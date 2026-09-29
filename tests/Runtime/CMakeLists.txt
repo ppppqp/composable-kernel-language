@@ -74,4 +74,38 @@ if(CKL_ENABLE_MLIR)
     NAME ckl-generated-cubin-runtime
     COMMAND ckl-generated-cubin-validation "${generated_cubin}"
   )
+
+  set(host_plan_mlir "${CMAKE_CURRENT_BINARY_DIR}/host-plan.graph.mlir")
+  set(host_plan_cpp "${CMAKE_CURRENT_BINARY_DIR}/generated-host-plan.inc")
+  add_custom_command(
+    OUTPUT "${host_plan_mlir}"
+    COMMAND $<TARGET_FILE:ckl-opt> "${CMAKE_CURRENT_SOURCE_DIR}/host-plan.mlir"
+      --ckl-build-graph -o "${host_plan_mlir}"
+    DEPENDS ckl-opt host-plan.mlir
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${host_plan_cpp}"
+    COMMAND $<TARGET_FILE:ckl-hostgen> "${host_plan_mlir}" -o "${host_plan_cpp}"
+    DEPENDS ckl-hostgen "${host_plan_mlir}"
+    VERBATIM
+  )
+  add_custom_target(ckl-generated-host-plan DEPENDS "${host_plan_cpp}")
+
+  add_executable(ckl-generated-host-plan-validation GeneratedHostPlanValidation.cpp)
+  add_dependencies(ckl-generated-host-plan-validation
+    ckl-generated-host-plan
+    ckl-runtime-test-cubin
+  )
+  target_include_directories(ckl-generated-host-plan-validation PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}"
+  )
+  target_link_libraries(ckl-generated-host-plan-validation PRIVATE CKLNvidiaRuntime)
+  target_compile_features(ckl-generated-host-plan-validation PRIVATE cxx_std_17)
+  target_compile_options(ckl-generated-host-plan-validation PRIVATE -Wall -Wextra -Wpedantic)
+
+  add_test(
+    NAME ckl-generated-host-plan-runtime
+    COMMAND ckl-generated-host-plan-validation "${runtime_cubin}"
+  )
 endif()

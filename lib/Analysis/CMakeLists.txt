@@ -1,6 +1,7 @@
 add_mlir_library(CKLAnalysis
   EffectAnalysis.cpp
   GraphAnalysis.cpp
+  NvidiaHostEmitter.cpp
 
   LINK_LIBS PUBLIC
   CKLCore

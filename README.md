@@ -100,6 +100,8 @@ The repository contains the reusable bootstrap and the first five milestones of 
   generated CUBIN loading;
 - a device-independent memory planner that derives lifetime compatibility from graph reachability,
   excludes external and persistent resources from reuse, and records every storage decision;
+- a `ckl-hostgen` tool that emits owning C++ `NvidiaPlan` builders for static direct-pointer kernel
+  ABIs, including planned heaps, retained external buffers, packed arguments, and dependencies;
 - a `ckl-opt` driver that registers CKL alongside upstream MLIR dialects and GPU translations;
 - Python utilities for invoking the optimizer, describing an NVIDIA target, extracting generated
   GPU objects, and forming compilation cache keys; and
@@ -112,14 +114,24 @@ Milestone 2 binds those summaries to dispatch operands and constructs an inspect
 graph. Milestone 3 provides the first executable NVIDIA runtime and validates compiler-generated
 CUBIN loading plus graph correctness, updates, caching, and overhead. Milestone 4 reuses ordered
 temporaries without changing graph dependencies and measures graph batching and multiple
-instances in flight. Static memory plans are now attached automatically to `ckl.graph`; kernel ABI
-binding and automatic C++ host-code generation remain later work.
+instances in flight. Static memory plans are attached automatically to `ckl.graph`, and the
+direct-pointer ABI path now emits and executes C++ host-plan builders. General producer-specific
+ABI lowering, including arbitrary lowered memref conventions, remains later work.
 
 To inspect the graph for the deterministic test program:
 
 ```bash
 build/tools/ckl-opt/ckl-opt tests/MLIR/graph.mlir --ckl-build-graph
 ```
+
+To emit a C++ builder for a compatible statically planned graph:
+
+```bash
+build/tools/ckl-opt/ckl-opt input.mlir --ckl-build-graph -o graph.mlir
+build/tools/ckl-hostgen/ckl-hostgen graph.mlir -o generated-plan.cpp
+```
+
+This path requires dispatches to advertise the `cuda.direct` capability.
 
 The emitted `ckl.graph` contains normalized nodes, dependency reasons and source locations, plus a
 DOT string suitable for visualization.

@@ -197,6 +197,12 @@ def main() -> int:
     require("from_location" in graph.stdout and "to_location" in graph.stdout, "missing provenance")
     require('ckl.memory_plan = {assignments =' in graph.stdout, "missing compiler memory plan")
     require('ckl.launch_grid = array<i64: 1, 1, 1>' in graph.stdout, "missing launch metadata")
+    hostgen = executable.parent.parent / "ckl-hostgen" / "ckl-hostgen"
+    require(hostgen.is_file(), f"missing host generator at {hostgen}")
+    unsupported_host = run_text(hostgen, graph.stdout)
+    require(unsupported_host.returncode != 0, "host generator assumed an undeclared kernel ABI")
+    require("requires the cuda.direct dispatch capability" in unsupported_host.stderr,
+            unsupported_host.stderr)
 
     memory_plan = run(executable, inputs / "memory-plan.mlir", "--ckl-build-graph")
     require(memory_plan.returncode == 0, memory_plan.stderr)

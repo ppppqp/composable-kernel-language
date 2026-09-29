@@ -519,9 +519,36 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function) {
         builder.getBoolAttr(node.unknown), builder.getBoolAttr(node.synchronizes),
         node.orderingScopes, builder.getStringAttr(printLocation(node.source->getLoc())));
     if (node.kind == "dispatch") {
-      for (StringRef attribute : {"grid", "block", "shared_memory", "device", "implementation"})
+      for (StringRef attribute : {"grid", "block", "shared_memory", "device", "implementation",
+                                  "capabilities"})
         if (Attribute value = node.source->getAttr(attribute))
           graphNode->setAttr(("ckl.launch_" + attribute).str(), value);
+      SmallVector<Attribute> arguments;
+      auto dispatch = cast<DispatchOpInterface>(node.source);
+      for (auto [index, argument] : llvm::enumerate(dispatch.getDispatchArguments())) {
+        SmallVector<NamedAttribute> attributes = {
+            builder.getNamedAttr("index", builder.getI64IntegerAttr(index)),
+            builder.getNamedAttr("type", TypeAttr::get(argument.getType())),
+        };
+        if (isa<BaseMemRefType>(argument.getType())) {
+          attributes.push_back(builder.getNamedAttr("kind", builder.getStringAttr("resource")));
+          attributes.push_back(builder.getNamedAttr(
+              "resource", builder.getStringAttr(resourceName(argument, function, allocationIds))));
+        } else if (Operation *definition = argument.getDefiningOp()) {
+          if (Attribute value = definition->getAttr("value")) {
+            attributes.push_back(builder.getNamedAttr("kind", builder.getStringAttr("constant")));
+            attributes.push_back(builder.getNamedAttr("value", value));
+          } else {
+            attributes.push_back(builder.getNamedAttr("kind", builder.getStringAttr("unsupported")));
+          }
+        } else if (auto blockArgument = dyn_cast<BlockArgument>(argument)) {
+          attributes.push_back(builder.getNamedAttr("kind", builder.getStringAttr("scalar")));
+          attributes.push_back(builder.getNamedAttr(
+              "name", builder.getStringAttr(("arg" + Twine(blockArgument.getArgNumber())).str())));
+        }
+        arguments.push_back(builder.getDictionaryAttr(attributes));
+      }
+      graphNode->setAttr("ckl.arguments", builder.getArrayAttr(arguments));
     }
   }
   for (const auto &[edge, reasons] : edges)
