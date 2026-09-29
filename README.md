@@ -93,6 +93,8 @@ The repository contains the reusable bootstrap and the first five milestones of 
   and conservative modes;
 - a minimal normalized graph IR and a graph-construction pass that derives SSA, token, memory,
   lifetime, control, and unknown-effect barrier dependencies with provenance and DOT output;
+- compiler-derived static resource descriptors and memory plans, including heap assignments,
+  reuse explanations, and explicit diagnostics when a dynamic layout cannot yet be planned;
 - an optional NVIDIA Driver API runtime for ordinary launches, explicit CUDA Graphs, parameter
   updates, executable caching, suballocated device-memory views, topology batching, and externally
   generated CUBIN loading;
@@ -110,7 +112,8 @@ Milestone 2 binds those summaries to dispatch operands and constructs an inspect
 graph. Milestone 3 provides the first executable NVIDIA runtime and validates compiler-generated
 CUBIN loading plus graph correctness, updates, caching, and overhead. Milestone 4 reuses ordered
 temporaries without changing graph dependencies and measures graph batching and multiple
-instances in flight. Automatic host-code generation remains later work.
+instances in flight. Static memory plans are now attached automatically to `ckl.graph`; kernel ABI
+binding and automatic C++ host-code generation remain later work.
 
 To inspect the graph for the deterministic test program:
 

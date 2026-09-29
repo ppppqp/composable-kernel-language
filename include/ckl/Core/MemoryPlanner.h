@@ -6,6 +6,7 @@ Device-independent temporary-memory planning for orchestration graphs.
 #define CKL_CORE_MEMORYPLANNER_H
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -69,12 +70,22 @@ struct MemoryPlan {
   const Assignment *find(ResourceId resource) const;
 };
 
+struct MemoryPlanResult {
+  std::optional<MemoryPlan> value;
+  std::string error;
+
+  explicit operator bool() const { return value.has_value(); }
+};
+
 /// Plans storage without changing graph topology. A temporary can join a storage slot only when
 /// its complete use set is strictly ordered before or after every existing resident's use set.
 class MemoryPlanner {
 public:
   MemoryPlan plan(std::size_t nodeCount, const std::vector<GraphEdge> &edges,
                   const std::vector<Resource> &resources) const;
+  /// Non-throwing entry point for compiler pipelines built with exception handling disabled.
+  MemoryPlanResult tryPlan(std::size_t nodeCount, const std::vector<GraphEdge> &edges,
+                           const std::vector<Resource> &resources) const noexcept;
 };
 
 } // namespace mlir::ckl::planning

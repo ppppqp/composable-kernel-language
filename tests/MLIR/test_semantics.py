@@ -195,6 +195,28 @@ def main() -> int:
     require("lifetime" in graph_edges.get((4, 5), set()), "missing lifetime dependency")
     require("ssa" in graph_edges.get((0, 2), set()), "missing SSA dependency")
     require("from_location" in graph.stdout and "to_location" in graph.stdout, "missing provenance")
+    require('ckl.memory_plan = {assignments =' in graph.stdout, "missing compiler memory plan")
+    require('ckl.launch_grid = array<i64: 1, 1, 1>' in graph.stdout, "missing launch metadata")
+
+    memory_plan = run(executable, inputs / "memory-plan.mlir", "--ckl-build-graph")
+    require(memory_plan.returncode == 0, memory_plan.stderr)
+    require('baseline_bytes = 512 : i64' in memory_plan.stdout, "unexpected memory baseline")
+    require('planned_bytes = 256 : i64' in memory_plan.stdout, "ordered buffers were not reused")
+    require(
+        'resource = "alloc1", shares_with = ["alloc0"], slot = 0 : i64' in memory_plan.stdout,
+        "missing compiler-derived reuse provenance",
+    )
+    assignments = re.findall(
+        r'bytes = 64 : i64, heap = 0 : i64, offset = (\d+) : i64, '
+        r'resource = "alloc[01]", slot = 0 : i64',
+        memory_plan.stdout,
+    )
+    require(assignments == ["0", "0"], "reused resources did not receive the same offset")
+    require(
+        'status = "unavailable"' in memory_plan.stdout
+        and "requires a static identity-layout integer or float memref" in memory_plan.stdout,
+        "dynamic temporary did not produce an explicit planning diagnostic",
+    )
 
     unknown_graph = run(
         executable,

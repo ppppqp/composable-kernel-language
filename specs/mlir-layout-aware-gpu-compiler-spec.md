@@ -532,6 +532,12 @@ never recycled. Plans record heap offsets, baseline and planned bytes, prior slo
 reason for each decision. The NVIDIA runtime exposes bounded ownership-preserving allocation views
 and can repeat a plan topology inside a larger graph boundary.
 
+`ckl-build-graph` invokes this planner automatically for compiler-owned, static, identity-layout
+integer or floating-point memrefs. It materializes resources, user node IDs, launch metadata, heap
+assignments, offsets, and reuse provenance on `ckl.graph`. Dynamic or unsupported layouts are
+marked unavailable with a reason rather than assigned an assumed size. Translating those artifacts
+into kernel ABI bindings and emitted C++ host code remains a separate lowering.
+
 The measured validation runs an ordinary, separately allocated reference and checks every tuned
 candidate numerically. It searches graph batches 1, 2, 4, and 8 with 1, 2, or 4 independent graph,
 stream, and buffer-set instances. On the RTX 5060 Ti, temporary storage per instance fell from

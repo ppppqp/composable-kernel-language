@@ -1,6 +1,7 @@
 #include "ckl/Analysis/EffectAnalysis.h"
 
 #include "ckl/Core/MemoryEffects.h"
+#include "ckl/Core/MemoryPlanner.h"
 #include "ckl/Dialect/CKL/IR/CKLInterfaces.h"
 #include "ckl/Dialect/CKL/IR/CKLOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -13,6 +14,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <limits>
 #include <map>
 #include <string>
 
@@ -39,6 +41,15 @@ struct NodeInfo {
   bool unknown = false;
   bool synchronizes = false;
   bool nestedControl = false;
+};
+
+struct PlannedResourceInfo {
+  std::string name;
+  std::string device;
+  std::string addressSpace;
+  std::size_t bytes = 0;
+  SmallVector<unsigned> users;
+  bool temporary = false;
 };
 
 unsigned parseEffects(ArrayAttr effects) {
@@ -74,6 +85,200 @@ std::string resourceName(Value value, func::FuncOp function,
   llvm::raw_string_ostream stream(storage);
   value.printAsOperand(stream, OpPrintingFlags());
   return storage;
+}
+
+FailureOr<std::size_t> getStaticResourceBytes(Value resource) {
+  auto type = dyn_cast<MemRefType>(resource.getType());
+  if (!type || !type.hasStaticShape() || !type.getLayout().isIdentity())
+    return failure();
+  unsigned elementBits = 0;
+  if (auto integer = dyn_cast<IntegerType>(type.getElementType()))
+    elementBits = integer.getWidth();
+  else if (auto floating = dyn_cast<FloatType>(type.getElementType()))
+    elementBits = floating.getWidth();
+  else
+    return failure();
+  std::size_t elementBytes = (elementBits + 7) / 8;
+  std::size_t elements = static_cast<std::size_t>(type.getNumElements());
+  if (!elementBytes || !elements ||
+      elements > std::numeric_limits<std::size_t>::max() / elementBytes ||
+      elements * elementBytes > static_cast<std::size_t>(std::numeric_limits<int64_t>::max()))
+    return failure();
+  return elements * elementBytes;
+}
+
+std::string getAddressSpace(Value resource) {
+  auto type = dyn_cast<MemRefType>(resource.getType());
+  if (!type || !type.getMemorySpace())
+    return "global";
+  std::string storage;
+  llvm::raw_string_ostream stream(storage);
+  type.getMemorySpace().print(stream);
+  return storage;
+}
+
+FailureOr<int> getDeviceOrdinal(StringRef device) {
+  if (!device.consume_front("cuda:"))
+    return failure();
+  int ordinal = 0;
+  if (device.getAsInteger(10, ordinal) || ordinal < 0)
+    return failure();
+  return ordinal;
+}
+
+DictionaryAttr makeUnavailablePlan(Builder &builder, StringRef reason) {
+  // create a dictionary attribute to indicate that the memory plan is unavailable
+  return builder.getDictionaryAttr({
+      builder.getNamedAttr("reason", builder.getStringAttr(reason)),
+      builder.getNamedAttr("status", builder.getStringAttr("unavailable")),
+  });
+}
+
+void attachMemoryPlan(GraphOp graph, ArrayRef<NodeInfo> nodes,
+                      const std::map<std::pair<unsigned, unsigned>, SmallVector<Attribute>> &edges,
+                      func::FuncOp host, DenseMap<Operation *, unsigned> &allocationIds,
+                      Builder &builder) {
+  constexpr std::size_t allocationAlignment = 256;
+
+  // value -> index in resources
+  DenseMap<Value, unsigned> indices;
+  SmallVector<PlannedResourceInfo> resources;
+  std::string unavailableReason;
+
+  for (auto [nodeId, node] : llvm::enumerate(nodes)) {
+    // walk only dispatch nodes
+    if (node.kind != "dispatch")
+      continue;
+    auto deviceAttr = node.source->getAttrOfType<StringAttr>("device");
+    StringRef device = deviceAttr ? deviceAttr.getValue() : StringRef();
+    for (const BoundAccess &access : node.accesses) {
+      Value value = getBaseResource(access.resource);
+      auto [iterator, inserted] = indices.try_emplace(value, resources.size());
+      if (inserted) {
+        // if this is the first time we see this resource, create a new PlannedResourceInfo
+        PlannedResourceInfo info;
+        info.name = resourceName(value, host, allocationIds);
+        info.device = device.str();
+        info.addressSpace = getAddressSpace(value);
+        info.temporary = isAllocationValue(value);
+        if (FailureOr<std::size_t> bytes = getStaticResourceBytes(value); succeeded(bytes))
+          info.bytes = *bytes;
+        else if (info.temporary && unavailableReason.empty())
+          unavailableReason = "temporary resource " + info.name +
+                              " requires a static identity-layout integer or float memref";
+        resources.push_back(std::move(info));
+      }
+      PlannedResourceInfo &info = resources[iterator->second];
+      if (info.device != device && unavailableReason.empty())
+        unavailableReason = "resource " + info.name + " is used on multiple devices";
+      if (info.users.empty() || info.users.back() != nodeId)
+        // if one resource reads and writes the same resource, the node ID is recorded only once
+        info.users.push_back(nodeId);
+    }
+  }
+
+  SmallVector<Attribute> materializedResources;
+  // finalize the resource information and attach it to the graph
+  for (const PlannedResourceInfo &resource : resources) {
+    SmallVector<NamedAttribute> attributes = {
+        builder.getNamedAttr("address_space", builder.getStringAttr(resource.addressSpace)),
+        builder.getNamedAttr("alignment", builder.getI64IntegerAttr(allocationAlignment)),
+        builder.getNamedAttr("device", builder.getStringAttr(resource.device)),
+        builder.getNamedAttr("kind",
+                             builder.getStringAttr(resource.temporary ? "temporary" : "external")),
+        builder.getNamedAttr("name", builder.getStringAttr(resource.name)),
+    };
+    if (resource.bytes)
+      attributes.push_back(
+          builder.getNamedAttr("bytes", builder.getI64IntegerAttr(resource.bytes)));
+    SmallVector<int64_t> users(resource.users.begin(), resource.users.end());
+    attributes.push_back(builder.getNamedAttr("users", builder.getDenseI64ArrayAttr(users)));
+    materializedResources.push_back(builder.getDictionaryAttr(attributes));
+  }
+  graph->setAttr("ckl.resources", builder.getArrayAttr(materializedResources));
+
+  if (!unavailableReason.empty()) {
+    graph->setAttr("ckl.memory_plan", makeUnavailablePlan(builder, unavailableReason));
+    return;
+  }
+
+  std::vector<planning::Resource> plannerResources;
+  SmallVector<unsigned> plannerToGraphResource;
+  for (auto [resourceId, resource] : llvm::enumerate(resources)) {
+    if (!resource.temporary)
+      continue;
+    FailureOr<int> device = getDeviceOrdinal(resource.device);
+    if (failed(device)) {
+      graph->setAttr("ckl.memory_plan",
+                     makeUnavailablePlan(builder, "only cuda:<ordinal> devices are supported"));
+      return;
+    }
+    std::vector<planning::NodeId> users(resource.users.begin(), resource.users.end());
+    plannerResources.push_back({resource.name, resource.bytes, allocationAlignment,
+                                resource.addressSpace, *device, planning::ResourceKind::Temporary,
+                                std::move(users)});
+    plannerToGraphResource.push_back(resourceId);
+  }
+
+  std::vector<planning::GraphEdge> plannerEdges;
+  for (const auto &[edge, _] : edges) {
+    plannerEdges.push_back({edge.first, edge.second});
+  }
+
+  planning::MemoryPlanResult planned =
+      planning::MemoryPlanner().tryPlan(nodes.size(), plannerEdges, plannerResources);
+  if (!planned) {
+    graph->setAttr("ckl.memory_plan", makeUnavailablePlan(builder, planned.error));
+    return;
+  }
+  const planning::MemoryPlan &plan = *planned.value;
+
+  SmallVector<Attribute> heaps;
+  for (const planning::Heap &heap : plan.heaps)
+    heaps.push_back(builder.getDictionaryAttr({
+        builder.getNamedAttr("address_space", builder.getStringAttr(heap.addressSpace)),
+        builder.getNamedAttr("alignment", builder.getI64IntegerAttr(heap.alignment)),
+        builder.getNamedAttr("bytes", builder.getI64IntegerAttr(heap.bytes)),
+        builder.getNamedAttr("device", builder.getI64IntegerAttr(heap.device)),
+    }));
+
+  SmallVector<Attribute> assignments;
+  for (const planning::Assignment &assignment : plan.assignments) {
+    const PlannedResourceInfo &resource = resources[plannerToGraphResource[assignment.resource]];
+    assignments.push_back(builder.getDictionaryAttr({
+        builder.getNamedAttr("bytes", builder.getI64IntegerAttr(assignment.bytes)),
+        builder.getNamedAttr("heap", builder.getI64IntegerAttr(assignment.heap)),
+        builder.getNamedAttr("offset", builder.getI64IntegerAttr(assignment.offset)),
+        builder.getNamedAttr("resource", builder.getStringAttr(resource.name)),
+        builder.getNamedAttr("slot", builder.getI64IntegerAttr(assignment.slot)),
+    }));
+  }
+
+  SmallVector<Attribute> decisions;
+  for (const planning::ReuseDecision &decision : plan.decisions) {
+    SmallVector<Attribute> sharesWith;
+    for (planning::ResourceId previous : decision.sharesWith)
+      sharesWith.push_back(builder.getStringAttr(resources[plannerToGraphResource[previous]].name));
+    decisions.push_back(builder.getDictionaryAttr({
+        builder.getNamedAttr("reason", builder.getStringAttr(decision.reason)),
+        builder.getNamedAttr(
+            "resource",
+            builder.getStringAttr(resources[plannerToGraphResource[decision.resource]].name)),
+        builder.getNamedAttr("shares_with", builder.getArrayAttr(sharesWith)),
+        builder.getNamedAttr("slot", builder.getI64IntegerAttr(decision.slot)),
+    }));
+  }
+
+  graph->setAttr(
+      "ckl.memory_plan",
+      builder.getDictionaryAttr({
+          builder.getNamedAttr("assignments", builder.getArrayAttr(assignments)),
+          builder.getNamedAttr("baseline_bytes", builder.getI64IntegerAttr(plan.baselineBytes)),
+          builder.getNamedAttr("decisions", builder.getArrayAttr(decisions)),
+          builder.getNamedAttr("heaps", builder.getArrayAttr(heaps)),
+          builder.getNamedAttr("planned_bytes", builder.getI64IntegerAttr(plan.plannedBytes)),
+          builder.getNamedAttr("status", builder.getStringAttr("planned")),
+      }));
 }
 
 DictionaryAttr makeReason(Builder &builder, StringRef kind, StringRef detail, StringRef resource,
@@ -305,13 +510,19 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function) {
                                builder.getStringAttr((function.getSymName() + ".graph").str()),
                                builder.getStringAttr(dotStorage));
   graph.getBody().push_back(new Block());
+  attachMemoryPlan(graph, nodes, edges, function, allocationIds, builder);
   OpBuilder graphBuilder = OpBuilder::atBlockBegin(&graph.getBody().front());
   for (auto [id, node] : llvm::enumerate(nodes)) {
-    GraphNodeOp::create(graphBuilder, node.source->getLoc(), builder.getI64IntegerAttr(id),
-                        builder.getStringAttr(node.kind), node.kernel, node.materializedAccesses,
-                        builder.getBoolAttr(node.unknown), builder.getBoolAttr(node.synchronizes),
-                        node.orderingScopes,
-                        builder.getStringAttr(printLocation(node.source->getLoc())));
+    GraphNodeOp graphNode = GraphNodeOp::create(
+        graphBuilder, node.source->getLoc(), builder.getI64IntegerAttr(id),
+        builder.getStringAttr(node.kind), node.kernel, node.materializedAccesses,
+        builder.getBoolAttr(node.unknown), builder.getBoolAttr(node.synchronizes),
+        node.orderingScopes, builder.getStringAttr(printLocation(node.source->getLoc())));
+    if (node.kind == "dispatch") {
+      for (StringRef attribute : {"grid", "block", "shared_memory", "device", "implementation"})
+        if (Attribute value = node.source->getAttr(attribute))
+          graphNode->setAttr(("ckl.launch_" + attribute).str(), value);
+    }
   }
   for (const auto &[edge, reasons] : edges)
     GraphEdgeOp::create(graphBuilder, function.getLoc(), builder.getI64IntegerAttr(edge.first),

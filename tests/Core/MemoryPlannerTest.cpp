@@ -55,6 +55,9 @@ int main() try {
     rejectedCycle = true;
   }
   require(rejectedCycle, "cyclic graphs must be rejected");
+  MemoryPlanResult cycleResult = MemoryPlanner().tryPlan(2, {{0, 1}, {1, 0}}, {});
+  require(!cycleResult && cycleResult.error == "memory-planning graph must be acyclic",
+          "non-throwing planner must retain its diagnostic");
 
   std::cout << "baseline_bytes=" << plan.baselineBytes << ",planned_bytes=" << plan.plannedBytes
             << ",saved_bytes=" << plan.baselineBytes - plan.plannedBytes << '\n';

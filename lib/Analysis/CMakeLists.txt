@@ -5,6 +5,7 @@ add_mlir_library(CKLAnalysis
   LINK_LIBS PUBLIC
   CKLCore
   CKLDialect
+  CKLMemoryPlanner
   MLIRFuncDialect
   MLIRIR
   MLIRPass

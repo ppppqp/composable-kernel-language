@@ -135,6 +135,13 @@ reasons and endpoint locations. Internal kernel synchronization is descriptive m
 automatic dependency between separate launches. Unknown effects become cross-node barriers in
 conservative mode.
 
+For static identity-layout integer and floating-point memrefs, the pass also derives resource user
+sets from dispatch accesses and invokes the Core memory planner. The graph receives resource,
+heap, offset, byte-count, and reuse-provenance attributes plus the launch dimensions needed by a
+later executable lowering. Dynamic or unsupported layouts produce an explicit unavailable reason;
+they are never assigned a guessed size. Kernel ABI binding and host-code emission are not yet part
+of this pass.
+
 The current conflict model is deliberately whole-buffer. Distinct CKL allocations are proven
 disjoint, views retain their base identity, and external resources may alias. Nested control flow
 is preserved conservatively with source-order control edges. The pass also emits a DOT rendering
@@ -283,6 +290,8 @@ parameters, resolved functions, and bound runtime arguments.
 
 - Buffer lifetime planning and reuse are implemented for whole-buffer resources. Legality is
   derived from reachability between every resource user; reuse never introduces a dependency.
+- Static resource users and sizes are derived directly while building `ckl.graph`, and the
+  resulting memory plan is retained as an inspectable compiler artifact.
 - The NVIDIA validation searches graph batches of 1, 2, 4, and 8 iterations and 1, 2, or 4
   independent instances in flight, retaining timing and setup provenance for every candidate.
 - Add only the region precision needed by measured false dependencies.

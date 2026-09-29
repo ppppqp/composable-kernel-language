@@ -201,3 +201,15 @@ MemoryPlan MemoryPlanner::plan(std::size_t nodeCount, const std::vector<GraphEdg
   }
   return result;
 }
+
+MemoryPlanResult MemoryPlanner::tryPlan(std::size_t nodeCount,
+                                        const std::vector<GraphEdge> &edges,
+                                        const std::vector<Resource> &resources) const noexcept {
+  try {
+    return {plan(nodeCount, edges, resources), {}};
+  } catch (const std::exception &error) {
+    return {std::nullopt, error.what()};
+  } catch (...) {
+    return {std::nullopt, "unknown memory-planning failure"};
+  }
+}
