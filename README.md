@@ -1,9 +1,9 @@
 # Composable Kernel Language
 
 > **Status:** CKL is an experimental project undergoing an architectural pivot. The
-> retired layout-aware prototype has been removed. Milestones 0 through 3 of the effect-derived
-> orchestration design are implemented: feasibility, semantic inference, graph construction, and
-> the focused NVIDIA runtime.
+> retired layout-aware prototype has been removed. Milestones 0 through 4 of the effect-derived
+> orchestration design are implemented: feasibility, semantic inference, graph construction, the
+> focused NVIDIA runtime, and measured plan optimization.
 
 Composable Kernel Language (CKL) is an experimental, MLIR-based orchestration layer for
 repeated GPU programs. It derives memory effects and dependencies from kernel IR, constructs
@@ -84,7 +84,7 @@ create a real opportunity. The complete validation plan is in
 
 ## Current implementation
 
-The repository contains the reusable bootstrap and the first four milestones of the new design:
+The repository contains the reusable bootstrap and the first five milestones of the new design:
 
 - a CKL MLIR dialect with allocation, free, load, store, atomic, synchronization, view, and
   interface-based dispatch operations;
@@ -94,7 +94,10 @@ The repository contains the reusable bootstrap and the first four milestones of 
 - a minimal normalized graph IR and a graph-construction pass that derives SSA, token, memory,
   lifetime, control, and unknown-effect barrier dependencies with provenance and DOT output;
 - an optional NVIDIA Driver API runtime for ordinary launches, explicit CUDA Graphs, parameter
-  updates, executable caching, device memory, and externally generated CUBIN loading;
+  updates, executable caching, suballocated device-memory views, topology batching, and externally
+  generated CUBIN loading;
+- a device-independent memory planner that derives lifetime compatibility from graph reachability,
+  excludes external and persistent resources from reuse, and records every storage decision;
 - a `ckl-opt` driver that registers CKL alongside upstream MLIR dialects and GPU translations;
 - Python utilities for invoking the optimizer, describing an NVIDIA target, extracting generated
   GPU objects, and forming compilation cache keys; and
@@ -105,8 +108,9 @@ faster than single-stream capture; the linear negative control showed no meaning
 Milestone 1 derives whole-buffer effects from kernel bodies and materializes inspectable summaries.
 Milestone 2 binds those summaries to dispatch operands and constructs an inspectable orchestration
 graph. Milestone 3 provides the first executable NVIDIA runtime and validates compiler-generated
-CUBIN loading plus graph correctness, updates, caching, and overhead. Automatic host-code
-generation and memory reuse remain later work.
+CUBIN loading plus graph correctness, updates, caching, and overhead. Milestone 4 reuses ordered
+temporaries without changing graph dependencies and measures graph batching and multiple
+instances in flight. Automatic host-code generation remains later work.
 
 To inspect the graph for the deterministic test program:
 

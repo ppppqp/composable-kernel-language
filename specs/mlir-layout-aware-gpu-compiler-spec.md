@@ -524,6 +524,23 @@ emission and memory reuse are deliberately left to later milestones.
 - Tune graph boundaries, iteration batching, and in-flight instances.
 - Store reproducible measurements and decision provenance.
 
+**Implementation status:** complete for the focused whole-buffer, single-device search. A
+device-independent planner consumes graph edges and each resource's complete user set. It shares
+temporary storage only when reachability proves every use of one lifetime strictly precedes every
+use of the other; it never adds serialization edges, and persistent or external resources are
+never recycled. Plans record heap offsets, baseline and planned bytes, prior slot residents, and a
+reason for each decision. The NVIDIA runtime exposes bounded ownership-preserving allocation views
+and can repeat a plan topology inside a larger graph boundary.
+
+The measured validation runs an ordinary, separately allocated reference and checks every tuned
+candidate numerically. It searches graph batches 1, 2, 4, and 8 with 1, 2, or 4 independent graph,
+stream, and buffer-set instances. On the RTX 5060 Ti, temporary storage per instance fell from
+16,384 to 8,192 bytes. For 192 logical iterations, the selected batch-8/four-instance candidate
+measured 0.622 ms versus 2.755 ms for batch 1/one instance. All candidate results, graph setup
+costs, checksums, and the selection reason are stored in
+`benchmarks/milestone4/results/rtx5060ti.csv`. This result targets underfilled kernels and does not
+imply that maximal batching or in-flight execution is universally best.
+
 ### Milestone 5: cross-dialect reuse
 
 - Integrate a second MLIR GPU dialect through interface models.

@@ -63,12 +63,18 @@ public:
   void copyFromHost(const void *source, std::size_t bytes, std::size_t offset = 0) const;
   void copyToHost(void *destination, std::size_t bytes, std::size_t offset = 0) const;
   void fillZero() const;
+  /// Return a bounded view that shares ownership of this allocation.
+  NvidiaBuffer slice(std::size_t offset, std::size_t bytes) const;
   explicit operator bool() const { return state_ != nullptr; }
 
 private:
   friend class NvidiaRuntime;
-  explicit NvidiaBuffer(std::shared_ptr<detail::BufferState> state) : state_(std::move(state)) {}
+  explicit NvidiaBuffer(std::shared_ptr<detail::BufferState> state, std::size_t offset = 0,
+                        std::size_t bytes = 0)
+      : state_(std::move(state)), offset_(offset), bytes_(bytes) {}
   std::shared_ptr<detail::BufferState> state_;
+  std::size_t offset_ = 0;
+  std::size_t bytes_ = 0;
 };
 
 class NvidiaFunction {
@@ -138,6 +144,9 @@ public:
 
   /// Append a node in topological order. Dependencies must reference earlier nodes.
   NodeId addKernel(KernelLaunch launch, std::vector<NodeId> dependencies = {});
+  /// Clone the topology and arguments. Roots of each later iteration depend on all leaves of the
+  /// prior iteration, preserving repeated-launch semantics inside one larger graph boundary.
+  NvidiaPlan repeat(std::size_t iterations) const;
   const std::vector<Node> &nodes() const { return nodes_; }
   bool empty() const { return nodes_.empty(); }
 

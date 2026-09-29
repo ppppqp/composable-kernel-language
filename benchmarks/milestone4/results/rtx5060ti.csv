@@ -1,0 +1,14 @@
+device,batch,in_flight,nodes,temp_before_bytes,temp_after_bytes,setup_ms,median_ms,logical_iterations,checksum,correct,selected
+NVIDIA GeForce RTX 5060 Ti,1,1,5,16384,8192,0.075483,2.755265,192,1681.121008,true,false
+NVIDIA GeForce RTX 5060 Ti,1,2,5,32768,16384,0.033704,1.379852,192,1681.121008,true,false
+NVIDIA GeForce RTX 5060 Ti,1,4,5,65536,32768,0.140285,0.694906,192,1681.121008,true,false
+NVIDIA GeForce RTX 5060 Ti,2,1,10,16384,8192,0.019778,2.556539,192,1681.121008,true,false
+NVIDIA GeForce RTX 5060 Ti,2,2,10,32768,16384,0.041959,1.281796,192,1681.121008,true,false
+NVIDIA GeForce RTX 5060 Ti,2,4,10,65536,32768,0.141247,0.644369,192,1681.121008,true,false
+NVIDIA GeForce RTX 5060 Ti,4,1,20,16384,8192,0.028323,2.461850,192,1681.121008,true,false
+NVIDIA GeForce RTX 5060 Ti,4,2,20,32768,16384,0.056948,1.231201,192,1681.121008,true,false
+NVIDIA GeForce RTX 5060 Ti,4,4,20,65536,32768,0.216209,0.637797,192,1681.121008,true,false
+NVIDIA GeForce RTX 5060 Ti,8,1,40,16384,8192,0.064933,2.408800,192,1681.121008,true,false
+NVIDIA GeForce RTX 5060 Ti,8,2,40,32768,16384,0.118154,1.229087,192,1681.121008,true,false
+NVIDIA GeForce RTX 5060 Ti,8,4,40,65536,32768,0.390679,0.622107,192,1681.121008,true,true
+# decision,selected_batch=8,selected_in_flight=4,reason=lowest measured median,planner_reason=all resource uses are ordered by existing graph edges

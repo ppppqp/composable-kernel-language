@@ -36,9 +36,7 @@ if(CKL_ENABLE_MLIR)
   add_subdirectory(include)
 endif()
 
-if(CKL_ENABLE_MLIR OR CKL_ENABLE_CUDA_RUNTIME)
-  add_subdirectory(lib)
-endif()
+add_subdirectory(lib)
 
 if(CKL_ENABLE_MLIR)
   add_subdirectory(tools)

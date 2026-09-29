@@ -281,9 +281,11 @@ parameters, resolved functions, and bound runtime arguments.
 
 ### Phase 3: useful optimization
 
-- Add buffer lifetime planning and reuse.
+- Buffer lifetime planning and reuse are implemented for whole-buffer resources. Legality is
+  derived from reachability between every resource user; reuse never introduces a dependency.
+- The NVIDIA validation searches graph batches of 1, 2, 4, and 8 iterations and 1, 2, or 4
+  independent instances in flight, retaining timing and setup provenance for every candidate.
 - Add only the region precision needed by measured false dependencies.
-- Tune batching, graph boundaries, and in-flight instances.
 - Integrate a second producer dialect through external interface models.
 
 ### Later work

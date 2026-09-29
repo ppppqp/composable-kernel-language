@@ -121,30 +121,36 @@ void NvidiaStream::synchronize() const {
 std::uint64_t NvidiaBuffer::address() const {
   if (!state_)
     throw std::invalid_argument("empty NVIDIA buffer has no address");
-  return static_cast<std::uint64_t>(state_->pointer);
+  return static_cast<std::uint64_t>(state_->pointer + offset_);
 }
 
-std::size_t NvidiaBuffer::size() const { return state_ ? state_->bytes : 0; }
+std::size_t NvidiaBuffer::size() const { return state_ ? bytes_ : 0; }
 
 void NvidiaBuffer::copyFromHost(const void *source, std::size_t bytes, std::size_t offset) const {
-  if (!state_ || offset > state_->bytes || bytes > state_->bytes - offset)
+  if (!state_ || offset > bytes_ || bytes > bytes_ - offset)
     throw std::out_of_range("host-to-device copy exceeds NVIDIA buffer");
   state_->context->makeCurrent();
-  check(cuMemcpyHtoD(state_->pointer + offset, source, bytes), "cuMemcpyHtoD");
+  check(cuMemcpyHtoD(state_->pointer + offset_ + offset, source, bytes), "cuMemcpyHtoD");
 }
 
 void NvidiaBuffer::copyToHost(void *destination, std::size_t bytes, std::size_t offset) const {
-  if (!state_ || offset > state_->bytes || bytes > state_->bytes - offset)
+  if (!state_ || offset > bytes_ || bytes > bytes_ - offset)
     throw std::out_of_range("device-to-host copy exceeds NVIDIA buffer");
   state_->context->makeCurrent();
-  check(cuMemcpyDtoH(destination, state_->pointer + offset, bytes), "cuMemcpyDtoH");
+  check(cuMemcpyDtoH(destination, state_->pointer + offset_ + offset, bytes), "cuMemcpyDtoH");
 }
 
 void NvidiaBuffer::fillZero() const {
   if (!state_)
     throw std::invalid_argument("cannot clear an empty NVIDIA buffer");
   state_->context->makeCurrent();
-  check(cuMemsetD8(state_->pointer, 0, state_->bytes), "cuMemsetD8");
+  check(cuMemsetD8(state_->pointer + offset_, 0, bytes_), "cuMemsetD8");
+}
+
+NvidiaBuffer NvidiaBuffer::slice(std::size_t offset, std::size_t bytes) const {
+  if (!state_ || !bytes || offset > bytes_ || bytes > bytes_ - offset)
+    throw std::out_of_range("NVIDIA buffer slice exceeds its parent view");
+  return NvidiaBuffer(state_, offset_ + offset, bytes);
 }
 
 NvidiaFunction NvidiaModule::function(const std::string &name) const {
@@ -174,6 +180,38 @@ NvidiaPlan::NodeId NvidiaPlan::addKernel(KernelLaunch launch, std::vector<NodeId
   return id;
 }
 
+NvidiaPlan NvidiaPlan::repeat(std::size_t iterations) const {
+  if (!iterations)
+    throw std::invalid_argument("NVIDIA plan repeat count must be nonzero");
+  if (empty())
+    throw std::invalid_argument("cannot repeat an empty NVIDIA plan");
+
+  std::vector<bool> hasSuccessor(nodes_.size(), false);
+  for (const Node &node : nodes_)
+    for (NodeId dependency : node.dependencies)
+      hasSuccessor[dependency] = true;
+  std::vector<NodeId> leaves;
+  for (NodeId node = 0; node < nodes_.size(); ++node)
+    if (!hasSuccessor[node])
+      leaves.push_back(node);
+
+  NvidiaPlan result;
+  for (std::size_t iteration = 0; iteration < iterations; ++iteration) {
+    NodeId offset = result.nodes_.size();
+    for (NodeId nodeId = 0; nodeId < nodes_.size(); ++nodeId) {
+      std::vector<NodeId> dependencies;
+      dependencies.reserve(nodes_[nodeId].dependencies.size() + leaves.size());
+      for (NodeId dependency : nodes_[nodeId].dependencies)
+        dependencies.push_back(offset + dependency);
+      if (iteration && nodes_[nodeId].dependencies.empty())
+        for (NodeId leaf : leaves)
+          dependencies.push_back(offset - nodes_.size() + leaf);
+      result.addKernel(nodes_[nodeId].launch, std::move(dependencies));
+    }
+  }
+  return result;
+}
+
 NvidiaRuntime::NvidiaRuntime(int deviceOrdinal) {
   check(cuInit(0), "cuInit");
   auto state = std::make_shared<detail::ContextState>();
@@ -199,7 +237,7 @@ NvidiaBuffer NvidiaRuntime::allocate(std::size_t bytes) const {
   state->context = context_;
   state->bytes = bytes;
   check(cuMemAlloc(&state->pointer, bytes), "cuMemAlloc");
-  return NvidiaBuffer(std::move(state));
+  return NvidiaBuffer(std::move(state), 0, bytes);
 }
 
 NvidiaModule NvidiaRuntime::loadCubin(const void *data, std::size_t bytes) const {

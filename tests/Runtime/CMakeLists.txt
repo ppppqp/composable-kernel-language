@@ -27,6 +27,21 @@ add_test(
     --elements 512 --cycles 3 --warmup 1 --repeats 1
 )
 
+add_executable(ckl-milestone4-validation Milestone4Validation.cpp)
+add_dependencies(ckl-milestone4-validation ckl-runtime-test-cubin)
+target_link_libraries(ckl-milestone4-validation PRIVATE
+  CKLNvidiaRuntime
+  CKLMemoryPlanner
+)
+target_compile_features(ckl-milestone4-validation PRIVATE cxx_std_17)
+target_compile_options(ckl-milestone4-validation PRIVATE -Wall -Wextra -Wpedantic)
+
+add_test(
+  NAME ckl-milestone4
+  COMMAND ckl-milestone4-validation "${runtime_cubin}"
+    --elements 512 --cycles 8 --warmup 1 --repeats 1
+)
+
 if(CKL_ENABLE_MLIR)
   set(generated_mlir "${CMAKE_CURRENT_BINARY_DIR}/generated-kernel.mlir")
   set(generated_cubin "${CMAKE_CURRENT_BINARY_DIR}/generated-kernel.cubin")
