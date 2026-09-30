@@ -72,7 +72,7 @@ LogicalResult GraphOp::verify() {
   return success();
 }
 
-FlatSymbolRefAttr DispatchOp::getKernelSymbol() { return getKernelAttr(); }
+SymbolRefAttr DispatchOp::getKernelSymbol() { return getKernelAttr(); }
 
 OperandRange DispatchOp::getDispatchArguments() { return getArguments(); }
 

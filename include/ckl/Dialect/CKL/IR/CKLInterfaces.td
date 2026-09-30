@@ -28,8 +28,8 @@ def DispatchOpInterface : OpInterface<"DispatchOpInterface"> {
     explicit completion dependencies.
   }];
   let methods = [
-    InterfaceMethod<"Returns the referenced kernel symbol.",
-      "::mlir::FlatSymbolRefAttr", "getKernelSymbol">,
+    InterfaceMethod<"Returns the referenced kernel symbol, including any nested module path.",
+      "::mlir::SymbolRefAttr", "getKernelSymbol">,
     InterfaceMethod<"Returns ordered kernel arguments.",
       "::mlir::OperandRange", "getDispatchArguments">,
     InterfaceMethod<"Returns three grid dimensions.",

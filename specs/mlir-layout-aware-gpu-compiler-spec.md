@@ -561,6 +561,12 @@ imply that maximal batching or in-flight execution is universally best.
 - Run a mixed-dialect graph without per-call effect declarations.
 - Measure adapter complexity.
 
+The first slice is implemented against upstream `gpu.launch_func` and `gpu.func`, matching the IR
+boundary produced by FlyDSL. CKL attaches the dispatch interface externally, derives memory effects
+from the referenced GPU function, preserves nested symbols, and normalizes a mixed GPU/CKL graph.
+Static launch dimensions are required in this slice. Execution through the new path and a
+compiled-artifact adapter for Triton's expanded ABI remain to complete this milestone.
+
 ### Milestone 6: justified precision
 
 - Profile false dependencies.

@@ -224,6 +224,54 @@ def main() -> int:
         "dynamic temporary did not produce an explicit planning diagnostic",
     )
 
+    gpu_interface = run(executable, inputs / "gpu-interface.mlir", "--ckl-build-graph")
+    require(gpu_interface.returncode == 0, gpu_interface.stderr)
+    require(
+        "gpu.func @write" in gpu_interface.stdout
+        and 'effects = ["write"]' in gpu_interface.stdout,
+        "effects were not derived from the upstream GPU kernel body",
+    )
+    require(
+        "kernel = @flydsl_kernels::@write" in gpu_interface.stdout,
+        "nested upstream kernel identity was not preserved",
+    )
+    require(
+        gpu_interface.stdout.count('kind = "dispatch"') == 2,
+        "mixed CKL/GPU dispatches were not normalized through the interface",
+    )
+    gpu_edges = parse_graph_edges(gpu_interface.stdout)
+    require(
+        "memory" in gpu_edges.get((0, 1), set()),
+        "cross-dialect write/read dependency was not derived",
+    )
+    require(
+        'ckl.launch_implementation = "flydsl.write.v1"' in gpu_interface.stdout,
+        "upstream executable identity was not materialized",
+    )
+    dynamic_gpu = run_text(
+        executable,
+        """module attributes {gpu.container_module} {
+  gpu.module @kernels {
+    gpu.func @kernel(%resource: memref<4xf32>) kernel { gpu.return }
+  }
+  func.func @step(%resource: memref<4xf32>, %n: index) {
+    %one = arith.constant 1 : index
+    gpu.launch_func @kernels::@kernel
+      blocks in (%n, %one, %one) threads in (%one, %one, %one)
+      args(%resource : memref<4xf32>)
+      {ckl.device = "cuda:0", ckl.implementation = "dynamic.v1"}
+    func.return
+  }
+}
+""",
+        "--ckl-build-graph",
+    )
+    require(dynamic_gpu.returncode != 0, "dynamic GPU launch geometry was silently guessed")
+    require(
+        "did not provide static launch metadata" in dynamic_gpu.stderr,
+        dynamic_gpu.stderr,
+    )
+
     unknown_graph = run(
         executable,
         inputs / "unknown-graph.mlir",

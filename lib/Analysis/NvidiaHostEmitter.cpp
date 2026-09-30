@@ -168,7 +168,7 @@ LogicalResult emitGraph(GraphOp graph, llvm::raw_ostream &output) {
     dispatchIds.insert(node.getId());
   for (GraphNodeOp node : dispatches) {
     std::size_t id = node.getId();
-    auto kernel = node->getAttrOfType<FlatSymbolRefAttr>("kernel");
+    auto kernel = node->getAttrOfType<SymbolRefAttr>("kernel");
     auto grid = node->getAttrOfType<DenseI64ArrayAttr>("ckl.launch_grid");
     auto block = node->getAttrOfType<DenseI64ArrayAttr>("ckl.launch_block");
     auto shared = node->getAttrOfType<IntegerAttr>("ckl.launch_shared_memory");
@@ -207,7 +207,7 @@ LogicalResult emitGraph(GraphOp graph, llvm::raw_ostream &output) {
     auto blockValues = block.asArrayRef();
     output << "  [[maybe_unused]] auto node_" << id
            << " = result.plan.addKernel({module.function(\""
-           << kernel.getValue() << "\"), {" << gridValues[0] << ", " << gridValues[1] << ", "
+           << kernel.getLeafReference().getValue() << "\"), {" << gridValues[0] << ", " << gridValues[1] << ", "
            << gridValues[2] << "}, {" << blockValues[0] << ", " << blockValues[1] << ", "
            << blockValues[2] << "}, " << shared.getInt() << ", std::move(arguments_" << id
            << ")}, {";

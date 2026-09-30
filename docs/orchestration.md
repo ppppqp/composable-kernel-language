@@ -88,6 +88,24 @@ CKL computes an interprocedural effect summary for the referenced body and subst
 arguments at each dispatch site. Nested calls are summarized to a fixed point. Recursion or an
 unavailable callee body produces conservative effects.
 
+The first external model targets upstream `gpu.launch_func`, the launch operation emitted by
+FlyDSL. It preserves the nested `gpu.module`/`gpu.func` symbol, treats `kernelOperands` as the
+ordered physical argument list, maps GPU async dependencies to explicit completion dependencies,
+and derives effects directly from the referenced `gpu.func` body. Launch geometry and dynamic
+shared-memory size must currently be compile-time constants because the normalized graph stores a
+static launch descriptor. The launch carries only CKL scheduling metadata that cannot be derived
+from the kernel body: required `ckl.device` and stable `ckl.implementation` attributes, plus an
+optional `ckl.capabilities` list. The implementation identity should include the producer's body,
+specialization, ABI, and target in its cache identity; CKL deliberately does not substitute the
+kernel symbol as a potentially stale identity.
+
+Triton requires a later adapter boundary. Its compiled kernel ABI can expand logical arguments and
+add hidden scratch or descriptor arguments, so adapting TTIR alone would lose information needed
+for a correct launch. The intended integration point is Triton's compiled-kernel artifact:
+binary/module identity, exported symbol, target metadata, flattened typed signature, launch
+metadata, and hidden-argument requirements. Those fields should be materialized into executable IR
+rather than reconstructed by CKL.
+
 ### Aliases, views, and ownership
 
 Alias analysis traces casts, views, and subviews to an underlying resource and transforms their
@@ -298,7 +316,8 @@ advertise the `cuda.direct` dispatch capability before this ABI is selected.
 - The NVIDIA validation searches graph batches of 1, 2, 4, and 8 iterations and 1, 2, or 4
   independent instances in flight, retaining timing and setup provenance for every candidate.
 - Add only the region precision needed by measured false dependencies.
-- Integrate a second producer dialect through external interface models.
+- Extend the initial upstream GPU/FlyDSL-compatible external model through executable lowering and
+  measure the remaining adapter surface.
 
 ### Later work
 

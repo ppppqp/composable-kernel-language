@@ -91,7 +91,7 @@ def CKL_GraphNodeOp : CKL_Op<"graph_node", [HasParent<"GraphOp">]> {
   let summary = "resource or dispatch node in a normalized graph";
   let arguments = (ins I64Attr:$id,
                        StrAttr:$kind,
-                       OptionalAttr<FlatSymbolRefAttr>:$kernel,
+                       OptionalAttr<SymbolRefAttr>:$kernel,
                        ArrayAttr:$accesses,
                        BoolAttr:$unknown,
                        BoolAttr:$synchronizes,

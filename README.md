@@ -89,6 +89,8 @@ The repository contains the reusable bootstrap and the first five milestones of 
 - a CKL MLIR dialect with allocation, free, load, store, atomic, synchronization, view, and
   interface-based dispatch operations;
 - reusable access-region and dispatch operation interfaces;
+- an external dispatch model for upstream `gpu.launch_func` (the boundary emitted by FlyDSL), with
+  effects derived from nested `gpu.func` bodies and no per-launch effect declarations;
 - whole-buffer base-resource/alias analysis and an interprocedural effect-summary pass with strict
   and conservative modes;
 - a minimal normalized graph IR and a graph-construction pass that derives SSA, token, memory,
@@ -117,6 +119,13 @@ temporaries without changing graph dependencies and measures graph batching and 
 instances in flight. Static memory plans are attached automatically to `ckl.graph`, and the
 direct-pointer ABI path now emits and executes C++ host-plan builders. General producer-specific
 ABI lowering, including arbitrary lowered memref conventions, remains later work.
+
+The initial cross-dialect test mixes an upstream GPU launch with a CKL launch over the same
+resource and derives the required write/read edge from their kernel bodies. Static GPU launch
+metadata is normalized through the dispatch interface; dynamic launch geometry is rejected
+explicitly until the executable-plan IR can represent symbolic parameters. Triton will integrate
+at its compiled-artifact boundary because its final signature expansion and hidden arguments are
+part of the launch ABI, not properties that CKL can safely infer from TTIR alone.
 
 To inspect the graph for the deterministic test program:
 

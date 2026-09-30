@@ -8,6 +8,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -34,7 +35,7 @@ struct BoundAccess {
 struct NodeInfo {
   Operation *source = nullptr;
   StringRef kind;
-  FlatSymbolRefAttr kernel;
+  SymbolRefAttr kernel;
   SmallVector<BoundAccess> accesses;
   ArrayAttr materializedAccesses;
   ArrayAttr orderingScopes;
@@ -149,7 +150,7 @@ void attachMemoryPlan(GraphOp graph, ArrayRef<NodeInfo> nodes,
     // walk only dispatch nodes
     if (node.kind != "dispatch")
       continue;
-    auto deviceAttr = node.source->getAttrOfType<StringAttr>("device");
+    auto deviceAttr = cast<DispatchOpInterface>(node.source).getTargetDevice();
     StringRef device = deviceAttr ? deviceAttr.getValue() : StringRef();
     for (const BoundAccess &access : node.accesses) {
       Value value = getBaseResource(access.resource);
@@ -297,8 +298,8 @@ FailureOr<NodeInfo> bindDispatch(DispatchOpInterface dispatch, func::FuncOp host
                                  DenseMap<Operation *, unsigned> &allocationIds, Builder &builder) {
 
   // for the dispatch, resolve the referenced kernel and its effect summary
-  auto kernel = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(dispatch.getOperation(),
-                                                                   dispatch.getKernelSymbol());
+  auto kernel = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
+      dispatch.getOperation(), dispatch.getKernelSymbol());
   if (!kernel)
     return failure();
   auto summary = kernel->getAttrOfType<DictionaryAttr>("ckl.effect_summary");
@@ -495,7 +496,7 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function) {
   for (auto [id, node] : llvm::enumerate(nodes)) {
     dot << "  n" << id << " [label=\"" << id << ": " << node.kind;
     if (node.kernel)
-      dot << " " << node.kernel.getValue();
+      dot << " " << node.kernel.getLeafReference().getValue();
     dot << "\"];\n";
   }
   for (const auto &[edge, reasons] : edges)
@@ -519,12 +520,23 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function) {
         builder.getBoolAttr(node.unknown), builder.getBoolAttr(node.synchronizes),
         node.orderingScopes, builder.getStringAttr(printLocation(node.source->getLoc())));
     if (node.kind == "dispatch") {
-      for (StringRef attribute : {"grid", "block", "shared_memory", "device", "implementation",
-                                  "capabilities"})
-        if (Attribute value = node.source->getAttr(attribute))
-          graphNode->setAttr(("ckl.launch_" + attribute).str(), value);
-      SmallVector<Attribute> arguments;
       auto dispatch = cast<DispatchOpInterface>(node.source);
+      DenseI64ArrayAttr grid = dispatch.getGridDimensions();
+      DenseI64ArrayAttr block = dispatch.getBlockDimensions();
+      IntegerAttr sharedMemory = dispatch.getDynamicSharedMemory();
+      StringAttr device = dispatch.getTargetDevice();
+      StringAttr implementation = dispatch.getImplementationIdentity();
+      if (!grid || !block || !sharedMemory || !device || !implementation)
+        return node.source->emitError(
+            "dispatch interface did not provide static launch metadata");
+      graphNode->setAttr("ckl.launch_grid", grid);
+      graphNode->setAttr("ckl.launch_block", block);
+      graphNode->setAttr("ckl.launch_shared_memory", sharedMemory);
+      graphNode->setAttr("ckl.launch_device", device);
+      graphNode->setAttr("ckl.launch_implementation", implementation);
+      graphNode->setAttr("ckl.launch_capabilities", dispatch.getRequiredCapabilities());
+
+      SmallVector<Attribute> arguments;
       for (auto [index, argument] : llvm::enumerate(dispatch.getDispatchArguments())) {
         SmallVector<NamedAttribute> attributes = {
             builder.getNamedAttr("index", builder.getI64IntegerAttr(index)),

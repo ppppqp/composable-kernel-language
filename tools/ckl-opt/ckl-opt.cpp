@@ -1,5 +1,6 @@
 #include "ckl/Analysis/EffectAnalysis.h"
 #include "ckl/Dialect/CKL/IR/CKLDialect.h"
+#include "ckl/Dialect/CKL/IR/CKLInterfaces.h"
 #include "mlir/InitAllPasses.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllExtensions.h"
@@ -13,6 +14,7 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
   mlir::registerAllExtensions(registry);
+  mlir::ckl::registerProducerInterfaceExternalModels(registry);
   mlir::registerAllGPUToLLVMIRTranslations(registry);
   registry.insert<mlir::ckl::CKLDialect>();
   return mlir::asMainReturnCode(
