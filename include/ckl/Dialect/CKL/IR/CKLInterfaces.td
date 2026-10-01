@@ -44,6 +44,8 @@ def DispatchOpInterface : OpInterface<"DispatchOpInterface"> {
       "::mlir::ArrayAttr", "getRequiredCapabilities">,
     InterfaceMethod<"Returns a stable implementation identity.",
       "::mlir::StringAttr", "getImplementationIdentity">,
+    InterfaceMethod<"Returns the producer-owned physical argument ABI, or null if unresolved.",
+      "::mlir::StringAttr", "getArgumentABI">,
     InterfaceMethod<"Returns explicit SSA completion dependencies.",
       "::mlir::OperandRange", "getExplicitDependencies">
   ];

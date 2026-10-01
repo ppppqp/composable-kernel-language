@@ -1,5 +1,6 @@
 add_mlir_library(CKLAnalysis
   EffectAnalysis.cpp
+  GraphAlgorithms.cpp
   GraphAnalysis.cpp
   NvidiaHostEmitter.cpp
 

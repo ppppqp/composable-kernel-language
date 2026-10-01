@@ -164,6 +164,16 @@ disjoint, views retain their base identity, and external resources may alias. Ne
 is preserved conservatively with source-order control edges. The pass also emits a DOT rendering
 for inspection; it does not execute the graph.
 
+`ckl-lower-graph-to-exec` is the transformation boundary between analysis and execution. It
+consumes `ckl.graph` and emits a verified `ckl_exec.plan` containing heap sizes, resource slices,
+static launch metadata, producer ABI identity, contiguous physical argument slots, and reduced
+kernel dependencies. The transformation requires a successful static memory plan and complete
+launch/ABI metadata. It rejects unresolved ABIs rather than reproducing producer packing rules.
+
+The dependency reduction is shared with the legacy C++ host generator so both paths emit the same
+kernel topology. `ckl_exec` is intended to become the sole input to backend runtime lowering; the
+host generator remains a validation bridge while that lowering is implemented.
+
 ## Execution planning
 
 The first backend targets a single NVIDIA GPU and can choose among ordinary CUDA launches and an

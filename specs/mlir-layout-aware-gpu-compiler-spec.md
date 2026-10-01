@@ -307,7 +307,28 @@ The source program retains allocation, dispatch, and free operations; each dispa
 completion token. The normalized graph records resource identity, ownership and lifetime,
 dispatch arguments, dependencies, kernel synchronization metadata, and provenance without
 copying producer kernel bodies. Launch parameters and device affinity remain on source dispatches
-until executable lowering is introduced.
+until executable lowering.
+
+The `ckl-lower-graph-to-exec` transformation consumes this analysis snapshot and produces a
+backend-ready `ckl_exec.plan`. The executable dialect contains explicit heap allocations,
+external and temporary resource bindings, kernel launch descriptors, producer-owned ABI
+identities, ordered physical argument slots, and transitive-reduced kernel dependencies. Its
+verifier rejects invalid heap placement, unknown resource references, missing or duplicate slots,
+unsupported argument kinds, and invalid dependency references before runtime lowering.
+
+```mlir
+"ckl_exec.plan"() <{source = @step, name = "step.graph.exec", backend = "cuda"}> ({
+  "ckl_exec.heap"() <{id = 0 : i64, bytes = 4096 : i64, ...}>
+  "ckl_exec.resource"() <{name = "tmp", kind = "temporary",
+                            heap = 0 : i64, offset = 0 : i64, ...}>
+  "ckl_exec.kernel"() <{id = 1 : i64, kernel = @update, abi = "cuda.direct",
+                          arguments = [{slot = 0 : i64, kind = "resource", ...}],
+                          dependencies = array<i64>, ...}>
+})
+```
+
+Analysis accepts an unresolved producer ABI, but executable lowering does not guess one. A
+dispatch adapter must supply the physical ABI identity and ordered argument representation.
 
 Function arguments and SSA results replace named logical ports. Types and ABI describe structure;
 derived effects describe mutation and ordering.

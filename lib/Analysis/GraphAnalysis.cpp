@@ -535,6 +535,8 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function) {
       graphNode->setAttr("ckl.launch_device", device);
       graphNode->setAttr("ckl.launch_implementation", implementation);
       graphNode->setAttr("ckl.launch_capabilities", dispatch.getRequiredCapabilities());
+      if (StringAttr abi = dispatch.getArgumentABI())
+        graphNode->setAttr("ckl.launch_abi", abi);
 
       SmallVector<Attribute> arguments;
       for (auto [index, argument] : llvm::enumerate(dispatch.getDispatchArguments())) {

@@ -1,5 +1,6 @@
 #include "ckl/Analysis/NvidiaHostEmitter.h"
 
+#include "ckl/Analysis/GraphAlgorithms.h"
 #include "ckl/Dialect/CKL/IR/CKLOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "llvm/ADT/STLExtras.h"
@@ -7,9 +8,7 @@
 
 #include <cctype>
 #include <map>
-#include <set>
 #include <string>
-#include <vector>
 
 using namespace mlir;
 using namespace mlir::ckl;
@@ -75,22 +74,11 @@ LogicalResult emitGraph(GraphOp graph, llvm::raw_ostream &output) {
     return graph.emitError("NVIDIA host emission requires materialized resources");
 
   SmallVector<GraphNodeOp> dispatches;
-  std::size_t nodeCount = 0;
   for (GraphNodeOp node : graph.getBody().front().getOps<GraphNodeOp>()) {
-    nodeCount = std::max(nodeCount, static_cast<std::size_t>(node.getId() + 1));
     if (node.getKind() == "dispatch")
       dispatches.push_back(node);
   }
-  std::vector<bool> reachable(nodeCount * nodeCount, false);
-  auto index = [=](std::size_t from, std::size_t to) { return from * nodeCount + to; };
-  for (GraphEdgeOp edge : graph.getBody().front().getOps<GraphEdgeOp>())
-    reachable[index(edge.getFrom(), edge.getTo())] = true;
-  for (std::size_t via = 0; via < nodeCount; ++via)
-    for (std::size_t from = 0; from < nodeCount; ++from)
-      if (reachable[index(from, via)])
-        for (std::size_t to = 0; to < nodeCount; ++to)
-          reachable[index(from, to)] =
-              reachable[index(from, to)] || reachable[index(via, to)];
+  DispatchDependencyMap dependencies = getReducedDispatchDependencies(graph);
 
   std::map<std::string, Type> scalarBindings;
   for (GraphNodeOp node : dispatches) {
@@ -163,9 +151,6 @@ LogicalResult emitGraph(GraphOp graph, llvm::raw_ostream &output) {
            << assignment.getAs<IntegerAttr>("offset").getInt() << ";\n";
   }
 
-  std::set<std::size_t> dispatchIds;
-  for (GraphNodeOp node : dispatches)
-    dispatchIds.insert(node.getId());
   for (GraphNodeOp node : dispatches) {
     std::size_t id = node.getId();
     auto kernel = node->getAttrOfType<SymbolRefAttr>("kernel");
@@ -189,20 +174,6 @@ LogicalResult emitGraph(GraphOp graph, llvm::raw_ostream &output) {
       output << ");\n";
     }
 
-    SmallVector<std::size_t> dependencies;
-    for (std::size_t candidate : dispatchIds) {
-      if (candidate >= id || !reachable[index(candidate, id)])
-        continue;
-      bool transitive = false;
-      for (std::size_t intermediate : dispatchIds)
-        if (candidate < intermediate && intermediate < id &&
-            reachable[index(candidate, intermediate)] && reachable[index(intermediate, id)]) {
-          transitive = true;
-          break;
-        }
-      if (!transitive)
-        dependencies.push_back(candidate);
-    }
     auto gridValues = grid.asArrayRef();
     auto blockValues = block.asArrayRef();
     output << "  [[maybe_unused]] auto node_" << id
@@ -211,7 +182,7 @@ LogicalResult emitGraph(GraphOp graph, llvm::raw_ostream &output) {
            << gridValues[2] << "}, {" << blockValues[0] << ", " << blockValues[1] << ", "
            << blockValues[2] << "}, " << shared.getInt() << ", std::move(arguments_" << id
            << ")}, {";
-    llvm::interleaveComma(dependencies, output,
+    llvm::interleaveComma(dependencies.lookup(id), output,
                           [&](std::size_t dependency) { output << "node_" << dependency; });
     output << "});\n";
   }

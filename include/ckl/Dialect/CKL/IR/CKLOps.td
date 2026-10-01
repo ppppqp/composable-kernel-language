@@ -62,7 +62,7 @@ def CKL_ViewOp : CKL_Op<"view", [Pure, ViewLikeOpInterface,
 }
 
 def CKL_DispatchOp : CKL_Op<"dispatch", [AttrSizedOperandSegments,
-    DeclareOpInterfaceMethods<DispatchOpInterface>]> {
+    DeclareOpInterfaceMethods<DispatchOpInterface, ["getArgumentABI"]>]> {
   let summary = "describes a schedulable GPU kernel invocation";
   let arguments = (ins Variadic<AnyType>:$arguments,
                        Variadic<CKL_TokenType>:$dependencies,

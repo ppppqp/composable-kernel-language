@@ -28,7 +28,7 @@ DenseI64ArrayAttr dimensions(MLIRContext *context, gpu::KernelDim3 values) {
 
 struct GPULaunchFuncDispatchModel
     : public ckl::DispatchOpInterface::ExternalModel<GPULaunchFuncDispatchModel,
-                                                      gpu::LaunchFuncOp> {
+                                                     gpu::LaunchFuncOp> {
   SymbolRefAttr getKernelSymbol(Operation *operation) const {
     return cast<gpu::LaunchFuncOp>(operation).getKernel();
   }
@@ -58,6 +58,7 @@ struct GPULaunchFuncDispatchModel
   }
 
   StringAttr getTargetDevice(Operation *operation) const {
+    // e.g. "cuda:0"
     return operation->getAttrOfType<StringAttr>("ckl.device");
   }
 
@@ -68,7 +69,13 @@ struct GPULaunchFuncDispatchModel
   }
 
   StringAttr getImplementationIdentity(Operation *operation) const {
+    // e.g. compiler cache hash
     return operation->getAttrOfType<StringAttr>("ckl.implementation");
+  }
+
+  StringAttr getArgumentABI(Operation *operation) const {
+    // e.g. cuda.direct
+    return operation->getAttrOfType<StringAttr>("ckl.abi");
   }
 
   OperandRange getExplicitDependencies(Operation *operation) const {

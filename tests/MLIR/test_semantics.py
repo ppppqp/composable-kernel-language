@@ -248,6 +248,46 @@ def main() -> int:
         'ckl.launch_implementation = "flydsl.write.v1"' in gpu_interface.stdout,
         "upstream executable identity was not materialized",
     )
+    gpu_executable = run(
+        executable,
+        inputs / "gpu-interface.mlir",
+        "--ckl-build-graph",
+        "--ckl-lower-graph-to-exec",
+    )
+    require(gpu_executable.returncode == 0, gpu_executable.stderr)
+    require('"ckl.graph"' not in gpu_executable.stdout, "lowered analysis graph was retained")
+    require(
+        gpu_executable.stdout.count('"ckl_exec.kernel"') == 2,
+        "mixed dispatches did not become executable kernels",
+    )
+    require(
+        'kernel = @flydsl_kernels::@write' in gpu_executable.stdout,
+        "executable plan lost the upstream nested symbol",
+    )
+    require(
+        'abi = "cuda.direct"' in gpu_executable.stdout
+        and "logical_index = 0" in gpu_executable.stdout
+        and "slot = 0" in gpu_executable.stdout,
+        "executable plan did not materialize physical ABI slots",
+    )
+    require(
+        "dependencies = array<i64: 0>" in gpu_executable.stdout,
+        "executable plan lost the cross-dialect dependency",
+    )
+    unresolved_abi = run(
+        executable,
+        inputs / "graph.mlir",
+        "--ckl-build-graph",
+        "--ckl-lower-graph-to-exec",
+    )
+    require(unresolved_abi.returncode != 0, "executable lowering guessed an undeclared ABI")
+    require(
+        "requires complete launch and ABI metadata" in unresolved_abi.stderr,
+        unresolved_abi.stderr,
+    )
+    invalid_exec = run(executable, inputs / "invalid-exec.mlir")
+    require(invalid_exec.returncode != 0, "invalid executable resource placement passed")
+    require("placement exceeds its heap" in invalid_exec.stderr, invalid_exec.stderr)
     dynamic_gpu = run_text(
         executable,
         """module attributes {gpu.container_module} {

@@ -3,6 +3,8 @@ llvm_update_compile_flags(ckl-opt)
 target_link_libraries(ckl-opt PRIVATE
   CKLAnalysis
   CKLDialect
+  CKLExecDialect
+  CKLTransforms
   MLIROptLib
   MLIRRegisterAllPasses
   MLIRRegisterAllDialects

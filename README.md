@@ -97,6 +97,9 @@ The repository contains the reusable bootstrap and the first five milestones of 
   lifetime, control, and unknown-effect barrier dependencies with provenance and DOT output;
 - compiler-derived static resource descriptors and memory plans, including heap assignments,
   reuse explanations, and explicit diagnostics when a dynamic layout cannot yet be planned;
+- a verified `ckl_exec` dialect and `ckl-lower-graph-to-exec` transformation that materialize
+  heaps, resource bindings, producer-owned ABIs, physical argument slots, and reduced kernel
+  dependencies;
 - an optional NVIDIA Driver API runtime for ordinary launches, explicit CUDA Graphs, parameter
   updates, executable caching, suballocated device-memory views, topology batching, and externally
   generated CUBIN loading;
@@ -131,6 +134,13 @@ To inspect the graph for the deterministic test program:
 
 ```bash
 build/tools/ckl-opt/ckl-opt tests/MLIR/graph.mlir --ckl-build-graph
+```
+
+To transform a statically planned direct-ABI program into executable IR:
+
+```bash
+build/tools/ckl-opt/ckl-opt tests/Runtime/host-plan.mlir \
+  --ckl-build-graph --ckl-lower-graph-to-exec
 ```
 
 To emit a C++ builder for a compatible statically planned graph:

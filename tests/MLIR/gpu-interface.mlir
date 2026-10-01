@@ -18,7 +18,8 @@ module attributes {gpu.container_module} {
     gpu.launch_func @flydsl_kernels::@write
       blocks in (%one, %one, %one) threads in (%one, %one, %one)
       args(%resource : memref<16xf32>)
-      {ckl.device = "cuda:0", ckl.implementation = "flydsl.write.v1"}
+      {ckl.abi = "cuda.direct", ckl.device = "cuda:0",
+       ckl.implementation = "flydsl.write.v1"}
     %done = "ckl.dispatch"(%resource) {
       block = array<i64: 1, 1, 1>, capabilities = ["cuda.direct"], device = "cuda:0",
       grid = array<i64: 1, 1, 1>, implementation = "ckl.read.v1", kernel = @read,

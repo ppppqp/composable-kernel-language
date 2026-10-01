@@ -88,6 +88,13 @@ ArrayAttr DispatchOp::getRequiredCapabilities() { return getCapabilities(); }
 
 StringAttr DispatchOp::getImplementationIdentity() { return getImplementationAttr(); }
 
+StringAttr DispatchOp::getArgumentABI() {
+  for (Attribute capability : getCapabilities())
+    if (cast<StringAttr>(capability).getValue() == "cuda.direct")
+      return StringAttr::get(getContext(), "cuda.direct");
+  return {};
+}
+
 OperandRange DispatchOp::getExplicitDependencies() { return getDependencies(); }
 
 LogicalResult DispatchOp::verify() {
