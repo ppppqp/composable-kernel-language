@@ -199,10 +199,9 @@ def main() -> int:
     require('ckl.launch_grid = array<i64: 1, 1, 1>' in graph.stdout, "missing launch metadata")
     hostgen = executable.parent.parent / "ckl-hostgen" / "ckl-hostgen"
     require(hostgen.is_file(), f"missing host generator at {hostgen}")
-    unsupported_host = run_text(hostgen, graph.stdout)
-    require(unsupported_host.returncode != 0, "host generator assumed an undeclared kernel ABI")
-    require("requires the cuda.direct dispatch capability" in unsupported_host.stderr,
-            unsupported_host.stderr)
+    analysis_host = run_text(hostgen, graph.stdout)
+    require(analysis_host.returncode != 0, "host generator accepted analysis IR")
+    require("requires at least one ckl_exec.plan" in analysis_host.stderr, analysis_host.stderr)
 
     memory_plan = run(executable, inputs / "memory-plan.mlir", "--ckl-build-graph")
     require(memory_plan.returncode == 0, memory_plan.stderr)
@@ -282,6 +281,13 @@ def main() -> int:
         "dependencies = array<i64: 0>" in gpu_executable.stdout,
         "executable plan lost the cross-dialect dependency",
     )
+    generated_host = run_text(hostgen, gpu_executable.stdout)
+    require(generated_host.returncode == 0, generated_host.stderr)
+    require(
+        "ExecutionPlan plan" in generated_host.stdout
+        and 'result.plan.addKernel({"flydsl.module.v1", "write"' in generated_host.stdout,
+        "host generator did not consume the executable artifact manifest",
+    )
     unresolved_abi = run(
         executable,
         inputs / "graph.mlir",
@@ -314,13 +320,6 @@ def main() -> int:
         in conditional_exec.stderr,
         conditional_exec.stderr,
     )
-    conditional_host = run_text(hostgen, conditional_graph.stdout)
-    require(conditional_host.returncode != 0, "host generation flattened conditional dispatch")
-    require(
-        "does not support graph nodes nested in region or CFG control flow"
-        in conditional_host.stderr,
-        conditional_host.stderr,
-    )
 
     subview_graph = run(executable, inputs / "subview-dispatch.mlir", "--ckl-build-graph")
     require(subview_graph.returncode == 0, subview_graph.stderr)
@@ -339,13 +338,6 @@ def main() -> int:
         "does not support view/subview resource arguments" in subview_exec.stderr,
         subview_exec.stderr,
     )
-    subview_host = run_text(hostgen, subview_graph.stdout)
-    require(subview_host.returncode != 0, "host generation discarded a subview offset")
-    require(
-        "does not support view/subview resource arguments" in subview_host.stderr,
-        subview_host.stderr,
-    )
-
     invalid_exec = run(executable, inputs / "invalid-exec.mlir")
     require(invalid_exec.returncode != 0, "invalid executable resource placement passed")
     require("placement exceeds its heap" in invalid_exec.stderr, invalid_exec.stderr)

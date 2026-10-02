@@ -578,12 +578,13 @@ integer or floating-point memrefs. It materializes resources, user node IDs, lau
 assignments, offsets, and reuse provenance on `ckl.graph`. Dynamic or unsupported layouts are
 marked unavailable with a reason rather than assigned an assumed size.
 
-`ckl-hostgen` implements the first host-code lowering for direct-pointer kernel ABIs. It emits an
-owning C++ result containing planned heap allocations, retained external buffers, packed resource
-and supported scalar arguments, transitive-reduced dispatch dependencies, and the resulting
-`ExecutionPlan`. A five-kernel validation registers the corresponding artifact and executes the
-generated builder through both ordinary launches and an explicit CUDA Graph against the same
-CUBIN. Computed scalar expressions,
+`ckl-hostgen` implements the first host-code lowering for direct-pointer kernel ABIs. It consumes
+only verified `ckl_exec.plan` operations and emits an owning C++ result containing declared heap
+allocations, retained external buffers, packed resource and supported scalar arguments, the
+already-reduced dispatch dependencies, and the resulting `ExecutionPlan`. It rejects analysis
+graphs, preventing host emission from bypassing executable verification. A five-kernel validation
+registers the corresponding artifact and executes the generated builder through both ordinary
+launches and an explicit CUDA Graph against the same CUBIN. Computed scalar expressions,
 dynamic resources, and producer-specific lowered memref ABIs are explicitly rejected until a
 producer ABI interface supplies their packing rules. The direct path is selected only when every
 dispatch advertises the `cuda.direct` capability.

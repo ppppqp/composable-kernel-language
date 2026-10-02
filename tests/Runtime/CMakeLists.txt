@@ -75,12 +75,12 @@ if(CKL_ENABLE_MLIR)
     COMMAND ckl-generated-cubin-validation "${generated_cubin}"
   )
 
-  set(host_plan_mlir "${CMAKE_CURRENT_BINARY_DIR}/host-plan.graph.mlir")
+  set(host_plan_mlir "${CMAKE_CURRENT_BINARY_DIR}/host-plan.exec.mlir")
   set(host_plan_cpp "${CMAKE_CURRENT_BINARY_DIR}/generated-host-plan.inc")
   add_custom_command(
     OUTPUT "${host_plan_mlir}"
     COMMAND $<TARGET_FILE:ckl-opt> "${CMAKE_CURRENT_SOURCE_DIR}/host-plan.mlir"
-      --ckl-build-graph -o "${host_plan_mlir}"
+      --ckl-build-graph --ckl-lower-graph-to-exec -o "${host_plan_mlir}"
     DEPENDS ckl-opt host-plan.mlir
     VERBATIM
   )

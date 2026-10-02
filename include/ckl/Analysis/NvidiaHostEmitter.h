@@ -10,7 +10,7 @@ class raw_ostream;
 
 namespace mlir::ckl {
 
-/// Emit C++ builders for statically planned NVIDIA graphs using the direct-pointer kernel ABI.
+/// Emit C++ builders from verified CUDA ckl_exec plans using the direct-pointer kernel ABI.
 LogicalResult emitNvidiaHostBuilders(ModuleOp module, llvm::raw_ostream &output);
 
 } // namespace mlir::ckl

@@ -108,9 +108,9 @@ The repository contains the reusable bootstrap and the first five milestones of 
   resolves this handoff to CUDA modules and graph nodes;
 - a device-independent memory planner that derives lifetime compatibility from graph reachability,
   excludes external and persistent resources from reuse, and records every storage decision;
-- a `ckl-hostgen` tool that emits owning C++ unresolved `ExecutionPlan` builders for static
-  direct-pointer kernel ABIs, including planned heaps, retained external buffers, packed arguments,
-  artifact identities, and dependencies;
+- a `ckl-hostgen` tool that consumes verified `ckl_exec.plan` operations and emits owning C++
+  unresolved `ExecutionPlan` builders for static direct-pointer kernel ABIs, including planned
+  heaps, retained external buffers, packed arguments, artifact identities, and dependencies;
 - a `ckl-opt` driver that registers CKL alongside upstream MLIR dialects and GPU translations;
 - Python utilities for invoking the optimizer, describing an NVIDIA target, extracting generated
   GPU objects, and forming compilation cache keys; and
@@ -154,14 +154,16 @@ build/tools/ckl-opt/ckl-opt tests/Runtime/host-plan.mlir \
   --ckl-build-graph --ckl-lower-graph-to-exec
 ```
 
-To emit a C++ builder for a compatible statically planned graph:
+To emit a C++ builder for a compatible executable plan:
 
 ```bash
-build/tools/ckl-opt/ckl-opt input.mlir --ckl-build-graph -o graph.mlir
-build/tools/ckl-hostgen/ckl-hostgen graph.mlir -o generated-plan.cpp
+build/tools/ckl-opt/ckl-opt input.mlir \
+  --ckl-build-graph --ckl-lower-graph-to-exec -o plan.mlir
+build/tools/ckl-hostgen/ckl-hostgen plan.mlir -o generated-plan.cpp
 ```
 
-This path requires dispatches to advertise the `cuda.direct` capability.
+`ckl-hostgen` deliberately rejects `ckl.graph`; executable verification must happen first. This
+path requires dispatches to advertise the `cuda.direct` capability.
 
 The emitted `ckl.graph` contains normalized nodes, dependency reasons and source locations, plus a
 DOT string suitable for visualization.

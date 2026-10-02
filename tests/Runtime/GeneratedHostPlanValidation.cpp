@@ -43,8 +43,8 @@ int main(int argc, char **argv) try {
   inputA.copyFromHost(hostA.data(), inputA.size());
   inputB.copyFromHost(hostB.data(), inputB.size());
 
-  ckl_generated::host_graphPlan generated =
-      ckl_generated::build_host_graph(runtime, inputA, inputB, output);
+  ckl_generated::host_graph_execPlan generated =
+      ckl_generated::build_host_graph_exec(runtime, inputA, inputB, output);
   if (generated.plan.nodes().size() != 5 || generated.heaps.empty())
     throw std::runtime_error("generated host plan has an unexpected shape");
 

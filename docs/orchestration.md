@@ -181,11 +181,11 @@ static launch metadata, producer ABI identity, contiguous physical argument slot
 kernel dependencies. The transformation requires a successful static memory plan and complete
 launch/ABI metadata. It rejects unresolved ABIs rather than reproducing producer packing rules.
 
-The dependency reduction is shared with the C++ host generator so both paths emit the same kernel
-topology. The generated plan stays unresolved: it names immutable producer artifacts, entry
-points, physical ABI slots, launch geometry, and dependencies. A thin executor imports the
-artifacts and converts the plan to native CUDA or HIP commands. `ckl_exec` remains the intended
-compiler input to this handoff; the host generator is its validation bridge.
+Dependency reduction happens while lowering `ckl.graph` to `ckl_exec.plan`. The C++ host generator
+now consumes only this verified executable dialect; it no longer interprets analysis graphs or
+reconstructs their topology. The generated plan stays unresolved: it names immutable producer
+artifacts, entry points, physical ABI slots, launch geometry, and dependencies. A thin executor
+imports the artifacts and converts the plan to native CUDA or HIP commands.
 
 ## Execution planning
 
@@ -324,11 +324,12 @@ The focused Milestone 3 runtime is implemented:
 - support kernel parameter update, executable caching, and measurement; and
 - validate correctness and overhead against an independent manual graph.
 
-`ckl-hostgen` emits owning C++ plan builders from successful static `ckl.graph` plans. The emitted
-builder allocates planned heaps, retains external buffers, packs resource and supported scalar
-arguments, reconstructs a reduced dispatch dependency topology, and returns a backend-neutral
+`ckl-hostgen` emits owning C++ plan builders from verified `ckl_exec.plan` operations. The emitted
+builder allocates declared heaps, retains external buffers, packs resource and supported scalar
+arguments, copies the already-reduced dependency topology, and returns a backend-neutral
 `ExecutionPlan`. Artifact bytes live in an `ArtifactRegistry`; the NVIDIA executor resolves entry
-points only when preparing ordinary launches or a CUDA Graph. This first path intentionally
+points only when preparing ordinary launches or a CUDA Graph. Analysis IR is rejected at this
+boundary. This first path intentionally
 supports direct device-pointer memref arguments plus
 i32, i64, f32, and f64 constants or host bindings. Computed scalars, dynamic resources, and
 producer-specific lowered memref ABIs are rejected instead of being guessed. A producer must
@@ -348,9 +349,10 @@ the duration of execution.
 - The NVIDIA validation searches graph batches of 1, 2, 4, and 8 iterations and 1, 2, or 4
   independent instances in flight, retaining timing and setup provenance for every candidate.
 - Add only the region precision needed by measured false dependencies.
-- Keep the CKL-authored path primary. Extend the upstream GPU external model to FlyDSL artifact
-  export only after its ABI and ownership contract can be preserved without adopting FlyDSL's
-  complete host runtime.
+- Keep the CKL-authored path primary. FlyDSL's compiled object exposes an embedded GPU binary but
+  still packages per-kernel ABI and launch preparation inside its whole-host JIT path. Integrate it
+  only through an explicit artifact/physical-ABI manifest targeting `ckl_exec`, not through private
+  `CompiledArtifact` or `CallState` fields.
 
 ### Later work
 

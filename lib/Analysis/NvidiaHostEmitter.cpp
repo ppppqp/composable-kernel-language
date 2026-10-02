@@ -1,8 +1,8 @@
 #include "ckl/Analysis/NvidiaHostEmitter.h"
 
-#include "ckl/Analysis/GraphAlgorithms.h"
-#include "ckl/Dialect/CKL/IR/CKLOps.h"
+#include "ckl/Dialect/Exec/IR/CKLExecOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -65,113 +65,100 @@ struct ScalarBinding {
   Type type;
 };
 
-LogicalResult emitGraph(GraphOp graph, llvm::raw_ostream &output) {
-  auto memoryPlan = graph->getAttrOfType<DictionaryAttr>("ckl.memory_plan");
-  if (!memoryPlan || memoryPlan.getAs<StringAttr>("status").getValue() != "planned")
-    return graph.emitError("NVIDIA host emission requires a successful static memory plan");
-  auto resources = graph->getAttrOfType<ArrayAttr>("ckl.resources");
-  if (!resources)
-    return graph.emitError("NVIDIA host emission requires materialized resources");
-  if (failed(verifyStaticExecutionSubset(graph, "NVIDIA host emission")))
-    return failure();
+void emitCString(StringRef value, llvm::raw_ostream &output) {
+  output << '"';
+  output.write_escaped(value);
+  output << '"';
+}
 
-  SmallVector<GraphNodeOp> dispatches;
-  for (GraphNodeOp node : graph.getBody().front().getOps<GraphNodeOp>()) {
-    if (node.getKind() == "dispatch")
-      dispatches.push_back(node);
-  }
-  DispatchDependencyMap dependencies = getReducedDispatchDependencies(graph);
+LogicalResult emitPlan(exec::PlanOp plan, llvm::raw_ostream &output) {
+  if (plan.getBackend() != "cuda")
+    return plan.emitError("NVIDIA host emission requires a cuda executable plan");
 
+  SmallVector<exec::HeapOp> heaps(plan.getBody().front().getOps<exec::HeapOp>());
+  llvm::sort(heaps, [](exec::HeapOp lhs, exec::HeapOp rhs) { return lhs.getId() < rhs.getId(); });
+  DenseMap<int64_t, std::size_t> heapIndices;
+  for (auto [index, heap] : llvm::enumerate(heaps))
+    heapIndices[heap.getId()] = index;
+
+  SmallVector<exec::ResourceOp> resources(plan.getBody().front().getOps<exec::ResourceOp>());
+  SmallVector<exec::KernelOp> kernels(plan.getBody().front().getOps<exec::KernelOp>());
+  llvm::sort(kernels,
+             [](exec::KernelOp lhs, exec::KernelOp rhs) { return lhs.getId() < rhs.getId(); });
   std::map<std::string, Type> scalarBindings;
-  for (GraphNodeOp node : dispatches) {
-    auto capabilities = node->getAttrOfType<ArrayAttr>("ckl.launch_capabilities");
-    bool directPointerABI = capabilities && llvm::any_of(
-                                                capabilities.getAsRange<StringAttr>(),
-                                                [](StringAttr capability) {
-                                                  return capability.getValue() == "cuda.direct";
-                                                });
-    if (!directPointerABI)
-      return node.emitError(
-          "NVIDIA host emission requires the cuda.direct dispatch capability");
-    auto arguments = node->getAttrOfType<ArrayAttr>("ckl.arguments");
-    if (!arguments)
-      return node.emitError("NVIDIA host emission requires dispatch argument descriptors");
-    for (DictionaryAttr argument : arguments.getAsRange<DictionaryAttr>()) {
+  for (exec::KernelOp kernel : kernels) {
+    if (kernel.getAbi() != "cuda.direct")
+      return kernel.emitError("NVIDIA host emission requires the cuda.direct kernel ABI");
+    for (DictionaryAttr argument : kernel.getArguments().getAsRange<DictionaryAttr>()) {
       StringRef kind = argument.getAs<StringAttr>("kind").getValue();
-      if (kind == "unsupported")
-        return node.emitError("NVIDIA host emission does not support a computed scalar argument");
       if (kind == "scalar") {
         std::string name = argument.getAs<StringAttr>("name").getValue().str();
         Type type = argument.getAs<TypeAttr>("type").getValue();
         if (failed(cppScalarType(type)))
-          return node.emitError("NVIDIA host emission supports only i32, i64, f32, and f64 scalars");
-        scalarBindings.emplace(std::move(name), type);
+          return kernel.emitError(
+              "NVIDIA host emission supports only i32, i64, f32, and f64 scalars");
+        auto [found, inserted] = scalarBindings.emplace(name, type);
+        if (!inserted && found->second != type)
+          return kernel.emitError("scalar binding is used with inconsistent physical types");
       } else if (kind == "constant" &&
                  failed(cppScalarType(argument.getAs<TypeAttr>("type").getValue()))) {
-        return node.emitError("NVIDIA host emission encountered an unsupported constant type");
+        return kernel.emitError("NVIDIA host emission encountered an unsupported constant type");
       }
     }
   }
 
-  std::string graphName = identifier(graph.getName());
-  output << "struct " << graphName << "Plan {\n"
+  std::string planName = identifier(plan.getName());
+  output << "struct " << planName << "Plan {\n"
          << "  std::vector<mlir::ckl::runtime::NvidiaBuffer> heaps;\n"
          << "  std::vector<mlir::ckl::runtime::NvidiaBuffer> retained;\n"
          << "  mlir::ckl::runtime::ExecutionPlan plan;\n"
          << "};\n\n";
-  output << graphName << "Plan build_" << graphName
+  output << planName << "Plan build_" << planName
          << "(mlir::ckl::runtime::NvidiaRuntime &runtime";
 
-  SmallVector<DictionaryAttr> externalResources;
-  for (DictionaryAttr resource : resources.getAsRange<DictionaryAttr>())
-    if (resource.getAs<StringAttr>("kind").getValue() == "external") {
+  SmallVector<exec::ResourceOp> externalResources;
+  for (exec::ResourceOp resource : resources)
+    if (resource.getKind() == "external") {
       externalResources.push_back(resource);
       output << ",\n    const mlir::ckl::runtime::NvidiaBuffer &"
-             << identifier(resource.getAs<StringAttr>("name").getValue());
+             << identifier(resource.getName());
     }
   for (const auto &[name, type] : scalarBindings)
     output << ",\n    " << *cppScalarType(type) << ' ' << identifier(name);
-  output << ") {\n  " << graphName << "Plan result;\n";
+  output << ") {\n  " << planName << "Plan result;\n";
 
-  auto heaps = memoryPlan.getAs<ArrayAttr>("heaps");
-  for (DictionaryAttr heap : heaps.getAsRange<DictionaryAttr>())
-    output << "  result.heaps.push_back(runtime.allocate("
-           << heap.getAs<IntegerAttr>("bytes").getInt() << "));\n";
+  for (exec::HeapOp heap : heaps)
+    output << "  result.heaps.push_back(runtime.allocate(" << heap.getBytes() << "));\n";
 
   for (auto [externalIndex, resource] : llvm::enumerate(externalResources)) {
-    StringRef name = resource.getAs<StringAttr>("name").getValue();
+    StringRef name = resource.getName();
     output << "  result.retained.push_back(" << identifier(name) << ");\n"
            << "  std::uint64_t resource_" << identifier(name) << " = result.retained["
            << externalIndex << "].address();\n";
   }
-  auto assignments = memoryPlan.getAs<ArrayAttr>("assignments");
-  for (DictionaryAttr assignment : assignments.getAsRange<DictionaryAttr>()) {
-    StringRef name = assignment.getAs<StringAttr>("resource").getValue();
-    output << "  std::uint64_t resource_" << identifier(name) << " = result.heaps["
-           << assignment.getAs<IntegerAttr>("heap").getInt() << "].address() + "
-           << assignment.getAs<IntegerAttr>("offset").getInt() << ";\n";
+  for (exec::ResourceOp resource : resources) {
+    if (resource.getKind() != "temporary")
+      continue;
+    auto found = heapIndices.find(resource.getHeapAttr().getInt());
+    if (found == heapIndices.end())
+      return resource.emitError("references an unknown emitted heap");
+    output << "  std::uint64_t resource_" << identifier(resource.getName())
+           << " = result.heaps[" << found->second << "].address() + "
+           << resource.getOffsetAttr().getInt() << ";\n";
   }
 
-  for (GraphNodeOp node : dispatches) {
-    std::size_t id = node.getId();
-    auto kernel = node->getAttrOfType<SymbolRefAttr>("kernel");
-    auto implementation = node->getAttrOfType<StringAttr>("ckl.launch_implementation");
-    auto artifact = node->getAttrOfType<StringAttr>("ckl.launch_artifact");
-    auto abi = node->getAttrOfType<StringAttr>("ckl.launch_abi");
-    auto device = node->getAttrOfType<StringAttr>("ckl.launch_device");
-    auto grid = node->getAttrOfType<DenseI64ArrayAttr>("ckl.launch_grid");
-    auto block = node->getAttrOfType<DenseI64ArrayAttr>("ckl.launch_block");
-    auto shared = node->getAttrOfType<IntegerAttr>("ckl.launch_shared_memory");
-    if (!kernel || !implementation || !artifact || !abi || !device || !grid || !block ||
-        !shared)
-      return node.emitError("NVIDIA host emission requires complete launch metadata");
-    auto [backend, ordinal] = device.getValue().split(':');
+  for (exec::KernelOp kernel : kernels) {
+    std::size_t id = kernel.getId();
+    auto [backend, ordinal] = kernel.getDevice().split(':');
     int64_t deviceOrdinal = 0;
     if (backend != "cuda" || ordinal.getAsInteger(10, deviceOrdinal) || deviceOrdinal < 0)
-      return node.emitError("NVIDIA host emission requires a cuda:<ordinal> device");
+      return kernel.emitError("NVIDIA host emission requires a cuda:<ordinal> device");
     output << "  mlir::ckl::runtime::KernelArguments arguments_" << id << ";\n";
-    for (DictionaryAttr argument :
-         node->getAttrOfType<ArrayAttr>("ckl.arguments").getAsRange<DictionaryAttr>()) {
+    SmallVector<DictionaryAttr> arguments(kernel.getArguments().getAsRange<DictionaryAttr>());
+    llvm::sort(arguments, [](DictionaryAttr lhs, DictionaryAttr rhs) {
+      return lhs.getAs<IntegerAttr>("slot").getInt() < rhs.getAs<IntegerAttr>("slot").getInt();
+    });
+    for (DictionaryAttr argument : arguments) {
       StringRef kind = argument.getAs<StringAttr>("kind").getValue();
       output << "  arguments_" << id << ".add(";
       if (kind == "resource")
@@ -180,20 +167,24 @@ LogicalResult emitGraph(GraphOp graph, llvm::raw_ostream &output) {
       else if (kind == "scalar")
         output << identifier(argument.getAs<StringAttr>("name").getValue());
       else if (failed(emitConstant(argument, output)))
-        return node.emitError("failed to emit a constant kernel argument");
+        return kernel.emitError("failed to emit a constant kernel argument");
       output << ");\n";
     }
 
-    auto gridValues = grid.asArrayRef();
-    auto blockValues = block.asArrayRef();
-    output << "  [[maybe_unused]] auto node_" << id
-           << " = result.plan.addKernel({\"" << artifact.getValue() << "\", \""
-           << kernel.getLeafReference().getValue() << "\", \"" << abi.getValue() << "\", "
+    auto gridValues = kernel.getGrid();
+    auto blockValues = kernel.getBlock();
+    output << "  [[maybe_unused]] auto node_" << id << " = result.plan.addKernel({";
+    emitCString(kernel.getArtifact(), output);
+    output << ", ";
+    emitCString(kernel.getKernel().getLeafReference().getValue(), output);
+    output << ", ";
+    emitCString(kernel.getAbi(), output);
+    output << ", "
            << deviceOrdinal << ", {" << gridValues[0] << ", " << gridValues[1] << ", "
            << gridValues[2] << "}, {" << blockValues[0] << ", " << blockValues[1] << ", "
-           << blockValues[2] << "}, " << shared.getInt() << ", std::move(arguments_" << id
+           << blockValues[2] << "}, " << kernel.getSharedMemory() << ", std::move(arguments_" << id
            << ")}, {";
-    llvm::interleaveComma(dependencies.lookup(id), output,
+    llvm::interleaveComma(kernel.getDependencies(), output,
                           [&](std::size_t dependency) { output << "node_" << dependency; });
     output << "});\n";
   }
@@ -209,13 +200,13 @@ LogicalResult mlir::ckl::emitNvidiaHostBuilders(ModuleOp module, llvm::raw_ostre
          << "#include <cstdint>\n#include <utility>\n#include <vector>\n\n"
          << "namespace ckl_generated {\n\n";
   bool emitted = false;
-  for (GraphOp graph : module.getOps<GraphOp>()) {
-    if (failed(emitGraph(graph, output)))
+  for (exec::PlanOp plan : module.getOps<exec::PlanOp>()) {
+    if (failed(emitPlan(plan, output)))
       return failure();
     emitted = true;
   }
   if (!emitted)
-    return module.emitError("NVIDIA host emission requires at least one ckl.graph");
+    return module.emitError("NVIDIA host emission requires at least one ckl_exec.plan");
   output << "} // namespace ckl_generated\n";
   return success();
 }

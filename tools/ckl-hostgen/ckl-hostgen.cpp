@@ -1,5 +1,6 @@
 #include "ckl/Analysis/NvidiaHostEmitter.h"
 #include "ckl/Dialect/CKL/IR/CKLDialect.h"
+#include "ckl/Dialect/Exec/IR/CKLExecDialect.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Parser/Parser.h"
@@ -24,7 +25,7 @@ int main(int argc, char **argv) {
 
   DialectRegistry registry;
   registerAllDialects(registry);
-  registry.insert<ckl::CKLDialect>();
+  registry.insert<ckl::CKLDialect, ckl::exec::CKLExecDialect>();
   MLIRContext context(registry);
   llvm::SourceMgr sourceManager;
   std::string errorMessage;
@@ -36,6 +37,8 @@ int main(int argc, char **argv) {
   sourceManager.AddNewSourceBuffer(std::move(input), llvm::SMLoc());
   OwningOpRef<ModuleOp> module = parseSourceFile<ModuleOp>(sourceManager, &context);
   if (!module)
+    return 1;
+  if (failed(module->verify()))
     return 1;
 
   auto output = mlir::openOutputFile(outputFilename, &errorMessage);

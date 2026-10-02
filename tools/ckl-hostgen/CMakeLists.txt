@@ -3,6 +3,7 @@ llvm_update_compile_flags(ckl-hostgen)
 target_link_libraries(ckl-hostgen PRIVATE
   CKLAnalysis
   CKLDialect
+  CKLExecDialect
   MLIRIR
   MLIRParser
   MLIRRegisterAllDialects

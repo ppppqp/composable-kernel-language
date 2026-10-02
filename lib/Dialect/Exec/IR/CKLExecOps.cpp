@@ -124,6 +124,12 @@ LogicalResult PlanOp::verify() {
         auto resource = argument.getAs<StringAttr>("resource");
         if (!resource || !resources.contains(resource.getValue()))
           return kernel.emitOpError("argument references an unknown resource");
+        if (kernel.getAbi() == "cuda.direct") {
+          auto packing = argument.getAs<StringAttr>("packing");
+          if (!packing || packing.getValue() != "direct_pointer")
+            return kernel.emitOpError(
+                "cuda.direct resource arguments require direct_pointer packing");
+        }
       } else if (kind.getValue() != "constant" && kind.getValue() != "scalar") {
         return kernel.emitOpError("contains an unsupported physical argument kind");
       }
