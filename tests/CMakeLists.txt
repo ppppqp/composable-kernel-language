@@ -6,6 +6,12 @@ target_compile_features(ckl-memory-planner-test PRIVATE cxx_std_17)
 target_compile_options(ckl-memory-planner-test PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME ckl-memory-planner COMMAND ckl-memory-planner-test)
 
+add_executable(ckl-execution-plan-test Core/ExecutionPlanTest.cpp)
+target_link_libraries(ckl-execution-plan-test PRIVATE CKLRuntimeCore)
+target_compile_features(ckl-execution-plan-test PRIVATE cxx_std_17)
+target_compile_options(ckl-execution-plan-test PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME ckl-execution-plan COMMAND ckl-execution-plan-test)
+
 add_test(
   NAME ckl-python-compiler-utils
   COMMAND ${CMAKE_COMMAND} -E env

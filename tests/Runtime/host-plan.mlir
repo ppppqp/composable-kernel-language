@@ -24,27 +24,27 @@ module {
     %output_b = "ckl.alloc"() : () -> memref<257xf32>
 
     %a0 = "ckl.dispatch"(%input_a, %temporary_a, %size, %bias_a) {
-      block = array<i64: 256, 1, 1>, capabilities = ["cuda.direct"], device = "cuda:0",
+      artifact = "kernels.cubin", block = array<i64: 256, 1, 1>, capabilities = ["cuda.direct"], device = "cuda:0",
       grid = array<i64: 2, 1, 1>, implementation = "field.direct", kernel = @field,
       operandSegmentSizes = array<i32: 4, 0>, shared_memory = 0 : i64
     } : (memref<257xf32>, memref<257xf32>, i32, f32) -> !ckl.token
     %a1 = "ckl.dispatch"(%temporary_a, %output_a, %size, %bias_a, %a0) {
-      block = array<i64: 256, 1, 1>, capabilities = ["cuda.direct"], device = "cuda:0",
+      artifact = "kernels.cubin", block = array<i64: 256, 1, 1>, capabilities = ["cuda.direct"], device = "cuda:0",
       grid = array<i64: 2, 1, 1>, implementation = "field.direct", kernel = @field,
       operandSegmentSizes = array<i32: 4, 1>, shared_memory = 0 : i64
     } : (memref<257xf32>, memref<257xf32>, i32, f32, !ckl.token) -> !ckl.token
     %b0 = "ckl.dispatch"(%input_b, %temporary_b, %size, %bias_b, %a1) {
-      block = array<i64: 256, 1, 1>, capabilities = ["cuda.direct"], device = "cuda:0",
+      artifact = "kernels.cubin", block = array<i64: 256, 1, 1>, capabilities = ["cuda.direct"], device = "cuda:0",
       grid = array<i64: 2, 1, 1>, implementation = "field.direct", kernel = @field,
       operandSegmentSizes = array<i32: 4, 1>, shared_memory = 0 : i64
     } : (memref<257xf32>, memref<257xf32>, i32, f32, !ckl.token) -> !ckl.token
     %b1 = "ckl.dispatch"(%temporary_b, %output_b, %size, %bias_b, %b0) {
-      block = array<i64: 256, 1, 1>, capabilities = ["cuda.direct"], device = "cuda:0",
+      artifact = "kernels.cubin", block = array<i64: 256, 1, 1>, capabilities = ["cuda.direct"], device = "cuda:0",
       grid = array<i64: 2, 1, 1>, implementation = "field.direct", kernel = @field,
       operandSegmentSizes = array<i32: 4, 1>, shared_memory = 0 : i64
     } : (memref<257xf32>, memref<257xf32>, i32, f32, !ckl.token) -> !ckl.token
     %done = "ckl.dispatch"(%output_a, %output_b, %output, %size, %b1) {
-      block = array<i64: 256, 1, 1>, capabilities = ["cuda.direct"], device = "cuda:0",
+      artifact = "kernels.cubin", block = array<i64: 256, 1, 1>, capabilities = ["cuda.direct"], device = "cuda:0",
       grid = array<i64: 2, 1, 1>, implementation = "join.direct", kernel = @join,
       operandSegmentSizes = array<i32: 4, 1>, shared_memory = 0 : i64
     } : (memref<257xf32>, memref<257xf32>, memref<257xf32>, i32, !ckl.token) -> !ckl.token

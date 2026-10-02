@@ -5,14 +5,14 @@ Wrapper for the NVIDIA runtime API.
 #ifndef CKL_RUNTIME_NVIDIARUNTIME_H
 #define CKL_RUNTIME_NVIDIARUNTIME_H
 
+#include "ckl/Runtime/ExecutionPlan.h"
+
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -26,12 +26,6 @@ struct StreamState;
 struct BufferState;
 struct GraphState;
 } // namespace detail
-
-struct Dim3 {
-  unsigned x = 1;
-  unsigned y = 1;
-  unsigned z = 1;
-};
 
 class DriverError : public std::runtime_error {
 public:
@@ -102,28 +96,6 @@ private:
   std::shared_ptr<detail::ModuleState> state_;
 };
 
-class KernelArguments {
-public:
-  KernelArguments() = default;
-
-  template <typename T> KernelArguments &add(T value) {
-    static_assert(std::is_trivially_copyable_v<T>,
-                  "CUDA kernel arguments must be trivially copyable");
-    std::vector<std::byte> bytes(sizeof(T));
-    std::memcpy(bytes.data(), &value, sizeof(T));
-    values_.push_back(std::move(bytes));
-    return *this;
-  }
-
-  std::size_t size() const { return values_.size(); }
-
-private:
-  friend class NvidiaRuntime;
-  friend class NvidiaGraphExecutable;
-  std::vector<void *> rawPointers() const;
-  std::vector<std::vector<std::byte>> values_;
-};
-
 struct KernelLaunch {
   NvidiaFunction function;
   Dim3 grid;
@@ -177,9 +149,24 @@ public:
   explicit NvidiaRuntime(int deviceOrdinal = 0);
 
   NvidiaStream createStream() const;
+  /// Borrow a CUDA stream owned by the embedding framework. Zero selects CUDA's default stream;
+  /// nonzero handles must remain alive while the wrapper is used.
+  NvidiaStream importStream(std::uintptr_t nativeHandle) const;
   NvidiaBuffer allocate(std::size_t bytes) const;
+  /// Borrow externally allocated device memory. CKL never frees the imported allocation.
+  NvidiaBuffer importBuffer(std::uint64_t address, std::size_t bytes) const;
   NvidiaModule loadCubin(const void *data, std::size_t bytes) const;
   NvidiaModule loadCubinFile(const std::filesystem::path &path) const;
+
+  /// Resolve a producer-neutral plan by importing its artifacts into this CUDA context.
+  NvidiaPlan resolve(const ExecutionPlan &plan, const ArtifactRegistry &artifacts) const;
+  void launchOrdinary(const ExecutionPlan &plan, const ArtifactRegistry &artifacts,
+                      const NvidiaStream &stream) const;
+  NvidiaGraphExecutable instantiate(const ExecutionPlan &plan,
+                                    const ArtifactRegistry &artifacts) const;
+  std::shared_ptr<NvidiaGraphExecutable> getOrCreateGraph(const std::string &key,
+                                                          const ExecutionPlan &plan,
+                                                          const ArtifactRegistry &artifacts);
 
   /// Submit every node in topological order to one stream. This is intentionally serialized.
   void launchOrdinary(const NvidiaPlan &plan, const NvidiaStream &stream) const;

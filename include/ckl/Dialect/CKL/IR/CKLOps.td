@@ -72,6 +72,7 @@ def CKL_DispatchOp : CKL_Op<"dispatch", [AttrSizedOperandSegments,
                        I64Attr:$shared_memory,
                        StrAttr:$device,
                        ArrayAttr:$capabilities,
+                       OptionalAttr<StrAttr>:$artifact,
                        StrAttr:$implementation);
   let results = (outs CKL_TokenType:$completion);
   let hasVerifier = 1;

@@ -119,17 +119,20 @@ LogicalResult lowerGraph(GraphOp graph) {
   for (GraphNodeOp node : dispatches) {
     auto kernel = node->getAttrOfType<SymbolRefAttr>("kernel");
     auto implementation = node->getAttrOfType<StringAttr>("ckl.launch_implementation");
+    auto artifact = node->getAttrOfType<StringAttr>("ckl.launch_artifact");
     auto abi = node->getAttrOfType<StringAttr>("ckl.launch_abi");
     auto device = node->getAttrOfType<StringAttr>("ckl.launch_device");
     auto grid = node->getAttrOfType<DenseI64ArrayAttr>("ckl.launch_grid");
     auto block = node->getAttrOfType<DenseI64ArrayAttr>("ckl.launch_block");
     auto sharedMemory = node->getAttrOfType<IntegerAttr>("ckl.launch_shared_memory");
     ArrayAttr arguments = materializePhysicalArguments(node, builder);
-    if (!kernel || !implementation || !abi || !device || !grid || !block || !sharedMemory ||
+    if (!kernel || !implementation || !artifact || !abi || !device || !grid || !block ||
+        !sharedMemory ||
         !arguments)
       return node.emitError("executable lowering requires complete launch and ABI metadata");
     exec::KernelOp::create(builder, node.getLoc(), builder.getI64IntegerAttr(node.getId()), kernel,
-                           implementation, abi, device, grid, block, sharedMemory, arguments,
+                           implementation, artifact, abi, device, grid, block, sharedMemory,
+                           arguments,
                            builder.getDenseI64ArrayAttr(dependencies.lookup(node.getId())));
   }
 

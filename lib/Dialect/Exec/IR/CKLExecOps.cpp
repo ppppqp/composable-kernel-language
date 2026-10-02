@@ -50,8 +50,9 @@ LogicalResult ResourceOp::verify() {
 LogicalResult KernelOp::verify() {
   if (getIdAttr().getInt() < 0)
     return emitOpError("requires a non-negative id");
-  if (getImplementation().empty() || getAbi().empty() || getDevice().empty())
-    return emitOpError("requires implementation, ABI, and device identities");
+  if (getImplementation().empty() || getArtifact().empty() || getAbi().empty() ||
+      getDevice().empty())
+    return emitOpError("requires implementation, artifact, ABI, and device identities");
   if (failed(verifyDimensions(getOperation(), getGrid(), "grid")) ||
       failed(verifyDimensions(getOperation(), getBlock(), "block")))
     return failure();

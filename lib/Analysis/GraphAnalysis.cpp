@@ -526,7 +526,8 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function) {
       IntegerAttr sharedMemory = dispatch.getDynamicSharedMemory();
       StringAttr device = dispatch.getTargetDevice();
       StringAttr implementation = dispatch.getImplementationIdentity();
-      if (!grid || !block || !sharedMemory || !device || !implementation)
+      StringAttr artifact = dispatch.getArtifactIdentity();
+      if (!grid || !block || !sharedMemory || !device || !implementation || !artifact)
         return node.source->emitError(
             "dispatch interface did not provide static launch metadata");
       graphNode->setAttr("ckl.launch_grid", grid);
@@ -534,6 +535,7 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function) {
       graphNode->setAttr("ckl.launch_shared_memory", sharedMemory);
       graphNode->setAttr("ckl.launch_device", device);
       graphNode->setAttr("ckl.launch_implementation", implementation);
+      graphNode->setAttr("ckl.launch_artifact", artifact);
       graphNode->setAttr("ckl.launch_capabilities", dispatch.getRequiredCapabilities());
       if (StringAttr abi = dispatch.getArgumentABI())
         graphNode->setAttr("ckl.launch_abi", abi);

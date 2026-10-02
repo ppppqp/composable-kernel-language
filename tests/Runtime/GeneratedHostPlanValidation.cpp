@@ -29,7 +29,8 @@ int main(int argc, char **argv) try {
     throw std::invalid_argument("usage: ckl-generated-host-plan-validation <cubin>");
   constexpr std::size_t elements = 257;
   NvidiaRuntime runtime;
-  NvidiaModule module = runtime.loadCubinFile(argv[1]);
+  ArtifactRegistry artifacts;
+  artifacts.add(KernelArtifact::readFile("kernels.cubin", "cuda.cubin", "sm_test", argv[1]));
   NvidiaStream stream = runtime.createStream();
   NvidiaBuffer inputA = runtime.allocate(elements * sizeof(float));
   NvidiaBuffer inputB = runtime.allocate(elements * sizeof(float));
@@ -43,16 +44,16 @@ int main(int argc, char **argv) try {
   inputB.copyFromHost(hostB.data(), inputB.size());
 
   ckl_generated::host_graphPlan generated =
-      ckl_generated::build_host_graph(runtime, module, inputA, inputB, output);
+      ckl_generated::build_host_graph(runtime, inputA, inputB, output);
   if (generated.plan.nodes().size() != 5 || generated.heaps.empty())
     throw std::runtime_error("generated host plan has an unexpected shape");
 
   output.fillZero();
-  runtime.launchOrdinary(generated.plan, stream);
+  runtime.launchOrdinary(generated.plan, artifacts, stream);
   stream.synchronize();
   double ordinary = checksum(output, elements);
   output.fillZero();
-  NvidiaGraphExecutable graph = runtime.instantiate(generated.plan);
+  NvidiaGraphExecutable graph = runtime.instantiate(generated.plan, artifacts);
   graph.launch(stream);
   stream.synchronize();
   double graphed = checksum(output, elements);

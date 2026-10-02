@@ -170,9 +170,11 @@ static launch metadata, producer ABI identity, contiguous physical argument slot
 kernel dependencies. The transformation requires a successful static memory plan and complete
 launch/ABI metadata. It rejects unresolved ABIs rather than reproducing producer packing rules.
 
-The dependency reduction is shared with the legacy C++ host generator so both paths emit the same
-kernel topology. `ckl_exec` is intended to become the sole input to backend runtime lowering; the
-host generator remains a validation bridge while that lowering is implemented.
+The dependency reduction is shared with the C++ host generator so both paths emit the same kernel
+topology. The generated plan stays unresolved: it names immutable producer artifacts, entry
+points, physical ABI slots, launch geometry, and dependencies. A thin executor imports the
+artifacts and converts the plan to native CUDA or HIP commands. `ckl_exec` remains the intended
+compiler input to this handoff; the host generator is its validation bridge.
 
 ## Execution planning
 
@@ -217,9 +219,10 @@ mini-application. The chosen program should contain multiple sub-millisecond ker
 buffers, at least one independent branch, a reduction, and many repeated iterations. A program
 dominated by a single saturating kernel is not an orchestration benchmark.
 
-At least one evaluation program should mix kernels originating in two dialects, initially CKL and
-an upstream MLIR dialect such as GPU, Linalg, or Affine. The graph must be constructed through
-interfaces with no per-call effect annotation.
+An optional reuse evaluation should mix CKL kernels with an upstream MLIR GPU dialect, with FlyDSL
+as the preferred first target. Its graph must be constructed through interfaces with no per-call
+effect annotation. This evaluation measures adapter quality; it is not a correctness or usefulness
+requirement for the CKL-authored workload.
 
 ## Validation plan
 
@@ -278,7 +281,8 @@ The initial system should:
 - demonstrate a material improvement over single-stream capture on at least two workloads where
   dependency precision, memory reuse, batching, or in-flight execution exposes real opportunity;
 - show a concrete reduction in temporary memory on a workload with reusable lifetimes; and
-- orchestrate kernels from at least two dialects through interfaces.
+- execute a CKL-authored workload through the artifact/ABI handoff without host-side function
+  resolution. A second-dialect adapter is an additional reuse result, not an acceptance gate.
 
 Before building sophisticated analyses, manually implement the sequential, captured, and optimal
 explicit-graph versions of candidate workloads. If the explicit graph provides no meaningful
@@ -311,11 +315,18 @@ The focused Milestone 3 runtime is implemented:
 
 `ckl-hostgen` emits owning C++ plan builders from successful static `ckl.graph` plans. The emitted
 builder allocates planned heaps, retains external buffers, packs resource and supported scalar
-arguments, reconstructs a reduced dispatch dependency topology, and returns a validated
-`NvidiaPlan`. This first path intentionally supports direct device-pointer memref arguments plus
+arguments, reconstructs a reduced dispatch dependency topology, and returns a backend-neutral
+`ExecutionPlan`. Artifact bytes live in an `ArtifactRegistry`; the NVIDIA executor resolves entry
+points only when preparing ordinary launches or a CUDA Graph. This first path intentionally
+supports direct device-pointer memref arguments plus
 i32, i64, f32, and f64 constants or host bindings. Computed scalars, dynamic resources, and
 producer-specific lowered memref ABIs are rejected instead of being guessed. A producer must
 advertise the `cuda.direct` dispatch capability before this ABI is selected.
+
+The CUDA executor can borrow externally owned buffers and streams, allowing a framework or DSL to
+retain allocation and stream ownership while CKL owns submission inside an orchestrated region.
+The corresponding handles must belong to the executor's CUDA device/context and remain alive for
+the duration of execution.
 
 ### Phase 3: useful optimization
 
@@ -326,8 +337,9 @@ advertise the `cuda.direct` dispatch capability before this ABI is selected.
 - The NVIDIA validation searches graph batches of 1, 2, 4, and 8 iterations and 1, 2, or 4
   independent instances in flight, retaining timing and setup provenance for every candidate.
 - Add only the region precision needed by measured false dependencies.
-- Extend the initial upstream GPU/FlyDSL-compatible external model through executable lowering and
-  measure the remaining adapter surface.
+- Keep the CKL-authored path primary. Extend the upstream GPU external model to FlyDSL artifact
+  export only after its ABI and ownership contract can be preserved without adopting FlyDSL's
+  complete host runtime.
 
 ### Later work
 

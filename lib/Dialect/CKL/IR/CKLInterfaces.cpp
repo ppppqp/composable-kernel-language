@@ -73,6 +73,12 @@ struct GPULaunchFuncDispatchModel
     return operation->getAttrOfType<StringAttr>("ckl.implementation");
   }
 
+  StringAttr getArtifactIdentity(Operation *operation) const {
+    if (auto artifact = operation->getAttrOfType<StringAttr>("ckl.artifact"))
+      return artifact;
+    return getImplementationIdentity(operation);
+  }
+
   StringAttr getArgumentABI(Operation *operation) const {
     // e.g. cuda.direct
     return operation->getAttrOfType<StringAttr>("ckl.abi");

@@ -88,6 +88,10 @@ ArrayAttr DispatchOp::getRequiredCapabilities() { return getCapabilities(); }
 
 StringAttr DispatchOp::getImplementationIdentity() { return getImplementationAttr(); }
 
+StringAttr DispatchOp::getArtifactIdentity() {
+  return getArtifactAttr() ? getArtifactAttr() : getImplementationAttr();
+}
+
 StringAttr DispatchOp::getArgumentABI() {
   for (Attribute capability : getCapabilities())
     if (cast<StringAttr>(capability).getValue() == "cuda.direct")

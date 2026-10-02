@@ -101,12 +101,16 @@ The repository contains the reusable bootstrap and the first five milestones of 
   heaps, resource bindings, producer-owned ABIs, physical argument slots, and reduced kernel
   dependencies;
 - an optional NVIDIA Driver API runtime for ordinary launches, explicit CUDA Graphs, parameter
-  updates, executable caching, suballocated device-memory views, topology batching, and externally
-  generated CUBIN loading;
+  updates, executable caching, suballocated device-memory views, topology batching, borrowed
+  framework buffers/streams, and externally generated CUBIN loading;
+- a backend-neutral runtime handoff consisting of immutable producer artifacts, byte-exact
+  physical ABI arguments, and topologically ordered `ExecutionPlan` nodes; the NVIDIA executor
+  resolves this handoff to CUDA modules and graph nodes;
 - a device-independent memory planner that derives lifetime compatibility from graph reachability,
   excludes external and persistent resources from reuse, and records every storage decision;
-- a `ckl-hostgen` tool that emits owning C++ `NvidiaPlan` builders for static direct-pointer kernel
-  ABIs, including planned heaps, retained external buffers, packed arguments, and dependencies;
+- a `ckl-hostgen` tool that emits owning C++ unresolved `ExecutionPlan` builders for static
+  direct-pointer kernel ABIs, including planned heaps, retained external buffers, packed arguments,
+  artifact identities, and dependencies;
 - a `ckl-opt` driver that registers CKL alongside upstream MLIR dialects and GPU translations;
 - Python utilities for invoking the optimizer, describing an NVIDIA target, extracting generated
   GPU objects, and forming compilation cache keys; and
@@ -120,15 +124,18 @@ graph. Milestone 3 provides the first executable NVIDIA runtime and validates co
 CUBIN loading plus graph correctness, updates, caching, and overhead. Milestone 4 reuses ordered
 temporaries without changing graph dependencies and measures graph batching and multiple
 instances in flight. Static memory plans are attached automatically to `ckl.graph`, and the
-direct-pointer ABI path now emits and executes C++ host-plan builders. General producer-specific
-ABI lowering, including arbitrary lowered memref conventions, remains later work.
+direct-pointer ABI path now emits and executes C++ host-plan builders. Those builders no longer
+resolve CUDA functions: a producer registers compiled artifacts and CKL's NVIDIA executor imports
+them when it prepares the plan. General producer-specific ABI lowering, including arbitrary
+lowered memref conventions, remains later work.
 
-The initial cross-dialect test mixes an upstream GPU launch with a CKL launch over the same
+The optional cross-dialect test mixes an upstream GPU launch with a CKL launch over the same
 resource and derives the required write/read edge from their kernel bodies. Static GPU launch
 metadata is normalized through the dispatch interface; dynamic launch geometry is rejected
-explicitly until the executable-plan IR can represent symbolic parameters. Triton will integrate
-at its compiled-artifact boundary because its final signature expansion and hidden arguments are
-part of the launch ABI, not properties that CKL can safely infer from TTIR alone.
+explicitly until the executable-plan IR can represent symbolic parameters. FlyDSL is the preferred
+first external integration target because its `gpu.launch_func` boundary and explicit MLIR ABI are
+closer to CKL. External DSL integration is evidence of reuse, not a prerequisite for CKL's own DSL
+and thin runtime to be useful.
 
 To inspect the graph for the deterministic test program:
 

@@ -248,6 +248,10 @@ def main() -> int:
         'ckl.launch_implementation = "flydsl.write.v1"' in gpu_interface.stdout,
         "upstream executable identity was not materialized",
     )
+    require(
+        'ckl.launch_artifact = "flydsl.module.v1"' in gpu_interface.stdout,
+        "upstream artifact identity was not materialized",
+    )
     gpu_executable = run(
         executable,
         inputs / "gpu-interface.mlir",
@@ -263,6 +267,10 @@ def main() -> int:
     require(
         'kernel = @flydsl_kernels::@write' in gpu_executable.stdout,
         "executable plan lost the upstream nested symbol",
+    )
+    require(
+        'artifact = "flydsl.module.v1"' in gpu_executable.stdout,
+        "executable plan lost the upstream artifact identity",
     )
     require(
         'abi = "cuda.direct"' in gpu_executable.stdout

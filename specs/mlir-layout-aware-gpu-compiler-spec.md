@@ -337,9 +337,15 @@ derived effects describe mutation and ordering.
 
 ### 9.1 CUDA backend
 
-The initial backend loads generated cubins, resolves functions, manages device memory, runs kernels
-and copies through streams, constructs explicit CUDA Graphs, updates supported node parameters,
-caches executables, and records warm-up and steady-state measurements.
+The compiler/runtime boundary is a backend-neutral `ExecutionPlan`. Each node names an immutable
+producer artifact, exported entry point, producer-owned physical ABI, byte-exact argument slots,
+device, launch geometry, and predecessor nodes. An `ArtifactRegistry` accepts objects directly from
+a producer compiler or its cache. It does not require the producer's native launcher.
+
+The initial CUDA executor imports registered CUBINs, resolves functions, manages or borrows device
+memory and streams, runs kernels, constructs explicit CUDA Graphs, updates supported node
+parameters, caches executables, and records warm-up and steady-state measurements. Artifact
+resolution is an executor responsibility rather than generated host-code responsibility.
 
 CUDA schedules ready graph nodes. CKL controls dependency topology, graph boundaries, launch
 parameters, memory, batching, and supplied implementations—not internal hardware scheduling.
@@ -453,8 +459,11 @@ The initial system must:
 3. materially outperform single-stream capture on at least two workloads with genuine graph,
    memory, batching, or in-flight opportunity;
 4. reduce peak temporary memory on one nontrivial workload;
-5. orchestrate kernels from two dialects through interfaces; and
+5. execute CKL-authored kernels through the artifact/ABI runtime handoff; and
 6. explain all conservative and optimized dependencies.
+
+Integration with a second dialect is a separate portability result. It is desirable but does not
+gate the usefulness of CKL's own DSL and runtime.
 
 Before sophisticated analysis begins, candidate workloads get sequential, captured, and manually
 optimal implementations. A workload whose explicit graph does not meaningfully beat capture is
@@ -536,7 +545,8 @@ uses the selected six-kernel multi-field topology and compares ordinary launches
 and an independently constructed raw Driver API graph. On the RTX 5060 Ti, 200 cycles measured
 2.718 ms, 1.850 ms, and 1.873 ms respectively; CKL graph time was 0.988x the manual graph and all
 checksums matched. Cache identity reuse and `cuGraphExecKernelNodeSetParams` updates are also
-tested. The runtime accepts a lowering-supplied `NvidiaPlan`; automatic memory planning and the
+tested. The low-level CUDA implementation still accepts a resolved `NvidiaPlan`; the public
+producer boundary added later is an unresolved `ExecutionPlan`. Automatic memory planning and the
 first static host-builder path are implemented in Milestone 4.
 
 ### Milestone 4: measured optimization
@@ -561,8 +571,9 @@ marked unavailable with a reason rather than assigned an assumed size.
 `ckl-hostgen` implements the first host-code lowering for direct-pointer kernel ABIs. It emits an
 owning C++ result containing planned heap allocations, retained external buffers, packed resource
 and supported scalar arguments, transitive-reduced dispatch dependencies, and the resulting
-`NvidiaPlan`. A five-kernel validation compiles this generated builder and executes it through both
-ordinary launches and an explicit CUDA Graph against the same CUBIN. Computed scalar expressions,
+`ExecutionPlan`. A five-kernel validation registers the corresponding artifact and executes the
+generated builder through both ordinary launches and an explicit CUDA Graph against the same
+CUBIN. Computed scalar expressions,
 dynamic resources, and producer-specific lowered memref ABIs are explicitly rejected until a
 producer ABI interface supplies their packing rules. The direct path is selected only when every
 dispatch advertises the `cuda.direct` capability.
@@ -576,17 +587,23 @@ costs, checksums, and the selection reason are stored in
 `benchmarks/milestone4/results/rtx5060ti.csv`. This result targets underfilled kernels and does not
 imply that maximal batching or in-flight execution is universally best.
 
-### Milestone 5: cross-dialect reuse
+### Milestone 5: thin runtime boundary
 
-- Integrate a second MLIR GPU dialect through interface models.
-- Run a mixed-dialect graph without per-call effect declarations.
-- Measure adapter complexity.
+- Separate producer artifacts and physical ABI arguments from native CUDA handles.
+- Resolve backend-neutral plans inside the selected executor.
+- Interoperate with caller-owned allocations and streams.
+- Keep external DSL adapters optional and measure their complexity independently.
 
-The first slice is implemented against upstream `gpu.launch_func` and `gpu.func`, matching the IR
-boundary produced by FlyDSL. CKL attaches the dispatch interface externally, derives memory effects
-from the referenced GPU function, preserves nested symbols, and normalizes a mixed GPU/CKL graph.
-Static launch dimensions are required in this slice. Execution through the new path and a
-compiled-artifact adapter for Triton's expanded ABI remain to complete this milestone.
+**Implementation status:** the first runtime slice is implemented. `KernelArtifact`,
+`ArtifactRegistry`, `KernelInvocation`, and `ExecutionPlan` form a CUDA-independent handoff.
+Generated host plans contain artifact and entry-point identities rather than resolved CUDA
+functions. The NVIDIA executor imports registered CUBINs, resolves the plan, and supports borrowed
+device allocations and streams without taking ownership. Runtime validation covers an MLIR-built
+CUBIN, a nontrivial generated plan, and externally owned buffer storage.
+
+The semantic reuse slice against upstream `gpu.launch_func` and `gpu.func` remains available and
+matches FlyDSL's compiler IR boundary. A FlyDSL artifact/ABI adapter is the preferred optional next
+integration; Triton's more complicated expanded ABI is not on the critical path.
 
 ### Milestone 6: justified precision
 
@@ -606,10 +623,10 @@ dialect-neutral layer possible. CKL reuses upstream interfaces before defining i
 
 ### IREE
 
-IREE Stream already models asynchronous resources, lifetimes, scheduling, and commands. CKL's
-intended distinction is a smaller embeddable layer for composing already-lowered kernels from GPU
-DSLs without adopting an end-to-end tensor compiler/runtime. Expanding into general tensor lowering
-would erase that distinction.
+IREE Stream already models asynchronous resources, lifetimes, scheduling, and commands. IREE may
+consume a CKL plan as an optional executor, but it is not CKL's required runtime contract. The
+native CUDA/HIP executors keep CKL embeddable for producer DSLs that do not use IREE. Expanding into
+general tensor lowering would erase that distinction.
 
 ### CUDA Graphs
 

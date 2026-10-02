@@ -15,14 +15,15 @@ int main(int argc, char **argv) try {
   constexpr std::int64_t elements = 257;
   NvidiaRuntime runtime;
   NvidiaStream stream = runtime.createStream();
-  NvidiaModule module = runtime.loadCubinFile(argv[1]);
   NvidiaBuffer buffer = runtime.allocate(elements * sizeof(float));
+  // Model a framework-owned allocation: the imported view is borrowed and CKL will not free it.
+  NvidiaBuffer imported = runtime.importBuffer(buffer.address(), buffer.size());
   std::vector<float> input(elements);
   for (std::int64_t index = 0; index < elements; ++index)
     input[index] = static_cast<float>(index) * 0.25f;
   buffer.copyFromHost(input.data(), buffer.size());
 
-  std::uint64_t pointer = buffer.address();
+  std::uint64_t pointer = imported.address();
   std::int64_t offset = 0;
   std::int64_t stride = 1;
   KernelArguments arguments;
@@ -32,12 +33,20 @@ int main(int argc, char **argv) try {
       .add(elements)
       .add(stride)
       .add(elements);
-  KernelLaunch launch{module.function("increment"),
-                      {static_cast<unsigned>((elements + 255) / 256), 1, 1},
-                      {256, 1, 1}, 0, std::move(arguments)};
-  NvidiaPlan plan;
-  plan.addKernel(std::move(launch));
-  NvidiaGraphExecutable graph = runtime.instantiate(plan);
+  ArtifactRegistry artifacts;
+  artifacts.add(
+      KernelArtifact::readFile("producer-object", "cuda.cubin", "sm_test", argv[1]));
+  KernelInvocation invocation{"producer-object",
+                              "increment",
+                              "mlir.strided-memref.v1",
+                              0,
+                              {static_cast<unsigned>((elements + 255) / 256), 1, 1},
+                              {256, 1, 1},
+                              0,
+                              std::move(arguments)};
+  ExecutionPlan plan;
+  plan.addKernel(std::move(invocation));
+  NvidiaGraphExecutable graph = runtime.instantiate(plan, artifacts);
   graph.launch(stream);
   stream.synchronize();
 

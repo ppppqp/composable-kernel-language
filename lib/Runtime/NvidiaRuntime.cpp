@@ -4,6 +4,7 @@
 #include <cuda.h>
 
 #include <fstream>
+#include <unordered_map>
 
 using namespace mlir::ckl::runtime;
 
@@ -36,6 +37,7 @@ namespace mlir::ckl::runtime::detail {
 struct ContextState {
   CUdevice device{};
   CUcontext context{};
+  int deviceOrdinal = 0;
 
   ~ContextState() {
     if (context)
@@ -60,9 +62,10 @@ struct ModuleState {
 struct StreamState {
   std::shared_ptr<ContextState> context;
   CUstream stream{};
+  bool owned = true;
 
   ~StreamState() {
-    if (stream) {
+    if (stream && owned) {
       context->makeCurrent();
       cuStreamDestroy(stream);
     }
@@ -73,9 +76,10 @@ struct BufferState {
   std::shared_ptr<ContextState> context;
   CUdeviceptr pointer{};
   std::size_t bytes{};
+  bool owned = true; // whether this allocation is owned by CKL or borrowed from an external source
 
   ~BufferState() {
-    if (pointer) {
+    if (pointer && owned) {
       context->makeCurrent();
       cuMemFree(pointer);
     }
@@ -102,14 +106,6 @@ struct GraphState {
 DriverError::DriverError(std::string operation, int result, std::string description)
     : std::runtime_error(std::move(operation) + " failed: " + std::move(description)),
       result_(result) {}
-
-std::vector<void *> KernelArguments::rawPointers() const {
-  std::vector<void *> pointers;
-  pointers.reserve(values_.size());
-  for (const std::vector<std::byte> &value : values_)
-    pointers.push_back(const_cast<std::byte *>(value.data()));
-  return pointers;
-}
 
 void NvidiaStream::synchronize() const {
   if (!state_)
@@ -215,6 +211,7 @@ NvidiaPlan NvidiaPlan::repeat(std::size_t iterations) const {
 NvidiaRuntime::NvidiaRuntime(int deviceOrdinal) {
   check(cuInit(0), "cuInit");
   auto state = std::make_shared<detail::ContextState>();
+  state->deviceOrdinal = deviceOrdinal;
   check(cuDeviceGet(&state->device, deviceOrdinal), "cuDeviceGet");
   check(cuDevicePrimaryCtxRetain(&state->context, state->device), "cuDevicePrimaryCtxRetain");
   state->makeCurrent();
@@ -229,6 +226,14 @@ NvidiaStream NvidiaRuntime::createStream() const {
   return NvidiaStream(std::move(state));
 }
 
+NvidiaStream NvidiaRuntime::importStream(std::uintptr_t nativeHandle) const {
+  auto state = std::make_shared<detail::StreamState>();
+  state->context = context_;
+  state->stream = reinterpret_cast<CUstream>(nativeHandle);
+  state->owned = false;
+  return NvidiaStream(std::move(state));
+}
+
 NvidiaBuffer NvidiaRuntime::allocate(std::size_t bytes) const {
   if (!bytes)
     throw std::invalid_argument("NVIDIA allocation size must be nonzero");
@@ -237,6 +242,17 @@ NvidiaBuffer NvidiaRuntime::allocate(std::size_t bytes) const {
   state->context = context_;
   state->bytes = bytes;
   check(cuMemAlloc(&state->pointer, bytes), "cuMemAlloc");
+  return NvidiaBuffer(std::move(state), 0, bytes);
+}
+
+NvidiaBuffer NvidiaRuntime::importBuffer(std::uint64_t address, std::size_t bytes) const {
+  if (!address || !bytes)
+    throw std::invalid_argument("imported NVIDIA buffer requires an address and size");
+  auto state = std::make_shared<detail::BufferState>();
+  state->context = context_;
+  state->pointer = static_cast<CUdeviceptr>(address);
+  state->bytes = bytes;
+  state->owned = false;
   return NvidiaBuffer(std::move(state), 0, bytes);
 }
 
@@ -262,6 +278,55 @@ NvidiaModule NvidiaRuntime::loadCubinFile(const std::filesystem::path &path) con
   if (!input.read(data.data(), size))
     throw std::runtime_error("failed to read CUBIN: " + path.string());
   return loadCubin(data.data(), data.size());
+}
+
+NvidiaPlan NvidiaRuntime::resolve(const ExecutionPlan &plan,
+                                  const ArtifactRegistry &artifacts) const {
+  if (plan.empty())
+    throw std::invalid_argument("cannot resolve an empty execution plan");
+
+  std::unordered_map<std::string, NvidiaModule> modules;
+  NvidiaPlan resolved;
+  for (const ExecutionPlan::Node &node : plan.nodes()) {
+    const KernelInvocation &invocation = node.invocation;
+    if (invocation.deviceOrdinal != context_->deviceOrdinal)
+      throw std::invalid_argument("kernel invocation targets a different NVIDIA device");
+    auto found = modules.find(invocation.artifact);
+    if (found == modules.end()) {
+      const KernelArtifact &artifact = artifacts.lookup(invocation.artifact);
+      if (artifact.format() != "cuda.cubin")
+        throw std::invalid_argument("NVIDIA executor does not support artifact format: " +
+                                    artifact.format());
+      found =
+          modules.emplace(invocation.artifact, loadCubin(artifact.data(), artifact.size())).first;
+    }
+    KernelLaunch launch{found->second.function(invocation.entryPoint), invocation.grid,
+                        invocation.block, invocation.sharedMemoryBytes, invocation.arguments};
+    resolved.addKernel(std::move(launch), node.dependencies);
+  }
+  return resolved;
+}
+
+void NvidiaRuntime::launchOrdinary(const ExecutionPlan &plan, const ArtifactRegistry &artifacts,
+                                   const NvidiaStream &stream) const {
+  launchOrdinary(resolve(plan, artifacts), stream);
+}
+
+NvidiaGraphExecutable NvidiaRuntime::instantiate(const ExecutionPlan &plan,
+                                                 const ArtifactRegistry &artifacts) const {
+  return instantiate(resolve(plan, artifacts));
+}
+
+std::shared_ptr<NvidiaGraphExecutable>
+NvidiaRuntime::getOrCreateGraph(const std::string &key, const ExecutionPlan &plan,
+                                const ArtifactRegistry &artifacts) {
+  if (key.empty())
+    throw std::invalid_argument("graph cache key must not be empty");
+  if (auto found = graphCache_.find(key); found != graphCache_.end())
+    return found->second;
+  auto executable = std::make_shared<NvidiaGraphExecutable>(instantiate(plan, artifacts));
+  graphCache_.emplace(key, executable);
+  return executable;
 }
 
 void NvidiaRuntime::launchOrdinary(const NvidiaPlan &plan, const NvidiaStream &stream) const {
