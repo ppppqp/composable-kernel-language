@@ -330,6 +330,16 @@ unsupported argument kinds, and invalid dependency references before runtime low
 Analysis accepts an unresolved producer ABI, but executable lowering does not guess one. A
 dispatch adapter must supply the physical ABI identity and ordered argument representation.
 
+The analysis graph may conservatively contain dispatches nested in structured control flow or CFG
+regions, but the current static executable subset requires every graph node to be unconditional in
+the host entry block. Lowering and host emission reject conditional or repeated nodes until their
+predicates and trip counts have an explicit executable representation.
+
+Resource normalization does not rewrite launch ABI semantics. Argument descriptors separately
+record whether a resource can be packed as a base direct pointer. The initial direct-pointer path
+rejects views/subviews and non-identity layouts; a producer adapter may later provide expanded
+physical slots that preserve offsets, sizes, and strides.
+
 Function arguments and SSA results replace named logical ports. Types and ABI describe structure;
 derived effects describe mutation and ordering.
 

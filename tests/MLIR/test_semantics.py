@@ -293,6 +293,59 @@ def main() -> int:
         "requires complete launch and ABI metadata" in unresolved_abi.stderr,
         unresolved_abi.stderr,
     )
+
+    conditional_graph = run(
+        executable, inputs / "conditional-dispatch.mlir", "--ckl-build-graph"
+    )
+    require(conditional_graph.returncode == 0, conditional_graph.stderr)
+    require(
+        'ckl.execution_control = "unsupported_control_flow"' in conditional_graph.stdout,
+        "conditional dispatch was not marked non-executable",
+    )
+    conditional_exec = run(
+        executable,
+        inputs / "conditional-dispatch.mlir",
+        "--ckl-build-graph",
+        "--ckl-lower-graph-to-exec",
+    )
+    require(conditional_exec.returncode != 0, "conditional dispatch became unconditional")
+    require(
+        "does not support graph nodes nested in region or CFG control flow"
+        in conditional_exec.stderr,
+        conditional_exec.stderr,
+    )
+    conditional_host = run_text(hostgen, conditional_graph.stdout)
+    require(conditional_host.returncode != 0, "host generation flattened conditional dispatch")
+    require(
+        "does not support graph nodes nested in region or CFG control flow"
+        in conditional_host.stderr,
+        conditional_host.stderr,
+    )
+
+    subview_graph = run(executable, inputs / "subview-dispatch.mlir", "--ckl-build-graph")
+    require(subview_graph.returncode == 0, subview_graph.stderr)
+    require(
+        'packing = "unsupported_view"' in subview_graph.stdout,
+        "subview ABI packing hazard was not retained",
+    )
+    subview_exec = run(
+        executable,
+        inputs / "subview-dispatch.mlir",
+        "--ckl-build-graph",
+        "--ckl-lower-graph-to-exec",
+    )
+    require(subview_exec.returncode != 0, "subview offset was discarded by executable lowering")
+    require(
+        "does not support view/subview resource arguments" in subview_exec.stderr,
+        subview_exec.stderr,
+    )
+    subview_host = run_text(hostgen, subview_graph.stdout)
+    require(subview_host.returncode != 0, "host generation discarded a subview offset")
+    require(
+        "does not support view/subview resource arguments" in subview_host.stderr,
+        subview_host.stderr,
+    )
+
     invalid_exec = run(executable, inputs / "invalid-exec.mlir")
     require(invalid_exec.returncode != 0, "invalid executable resource placement passed")
     require("placement exceeds its heap" in invalid_exec.stderr, invalid_exec.stderr)

@@ -129,6 +129,10 @@ resolve CUDA functions: a producer registers compiled artifacts and CKL's NVIDIA
 them when it prepares the plan. General producer-specific ABI lowering, including arbitrary
 lowered memref conventions, remains later work.
 
+Executable lowering is deliberately fail-closed: dispatches nested in host control flow and
+direct-pointer arguments derived from views/subviews or non-identity layouts remain valid analysis
+inputs but are rejected before host code or an unconditional executable plan can be emitted.
+
 The optional cross-dialect test mixes an upstream GPU launch with a CKL launch over the same
 resource and derives the required write/read edge from their kernel bodies. Static GPU launch
 metadata is normalized through the dispatch interface; dynamic launch geometry is rejected

@@ -72,6 +72,8 @@ LogicalResult emitGraph(GraphOp graph, llvm::raw_ostream &output) {
   auto resources = graph->getAttrOfType<ArrayAttr>("ckl.resources");
   if (!resources)
     return graph.emitError("NVIDIA host emission requires materialized resources");
+  if (failed(verifyStaticExecutionSubset(graph, "NVIDIA host emission")))
+    return failure();
 
   SmallVector<GraphNodeOp> dispatches;
   for (GraphNodeOp node : graph.getBody().front().getOps<GraphNodeOp>()) {

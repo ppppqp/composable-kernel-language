@@ -44,3 +44,42 @@ DispatchDependencyMap mlir::ckl::getReducedDispatchDependencies(GraphOp graph) {
     }
   return result;
 }
+
+LogicalResult mlir::ckl::verifyStaticExecutionSubset(GraphOp graph, StringRef consumer) {
+  for (GraphNodeOp node : graph.getBody().front().getOps<GraphNodeOp>()) {
+    auto execution = node->getAttrOfType<StringAttr>("ckl.execution_control");
+    if (!execution || execution.getValue() != "unconditional")
+      return node.emitError() << consumer
+                              << " does not support graph nodes nested in region or CFG control "
+                                 "flow; conditional and repeated execution must be represented "
+                                 "explicitly before lowering";
+    if (node.getKind() != "dispatch")
+      continue;
+    auto arguments = node->getAttrOfType<ArrayAttr>("ckl.arguments");
+    if (!arguments)
+      return node.emitError() << consumer << " requires dispatch argument descriptors";
+    for (DictionaryAttr argument : arguments.getAsRange<DictionaryAttr>()) {
+      auto kind = argument.getAs<StringAttr>("kind");
+      if (!kind || kind.getValue() != "resource")
+        continue;
+      auto packing = argument.getAs<StringAttr>("packing");
+      if (!packing)
+        return node.emitError()
+               << consumer << " requires explicit resource ABI packing metadata";
+      if (packing.getValue() == "unsupported_view")
+        return node.emitError()
+               << consumer
+               << " does not support view/subview resource arguments in the direct-pointer ABI; "
+                  "the producer must preserve the view offset in physical argument packing";
+      if (packing.getValue() == "unsupported_layout")
+        return node.emitError()
+               << consumer
+               << " does not support non-identity or unranked resource layouts in the "
+                  "direct-pointer ABI";
+      if (packing.getValue() != "direct_pointer")
+        return node.emitError() << consumer << " encountered unknown resource ABI packing '"
+                                << packing.getValue() << "'";
+    }
+  }
+  return success();
+}

@@ -13,6 +13,11 @@ using DispatchDependencyMap = llvm::DenseMap<int64_t, llvm::SmallVector<int64_t>
 /// nodes are retained as dependencies between their surrounding dispatches.
 DispatchDependencyMap getReducedDispatchDependencies(GraphOp graph);
 
+/// Reject graph features that the current static executable plan cannot preserve. Analysis graphs
+/// may contain these features for diagnostics, but neither executable lowering nor host emission
+/// may silently change their semantics.
+LogicalResult verifyStaticExecutionSubset(GraphOp graph, StringRef consumer);
+
 } // namespace mlir::ckl
 
 #endif

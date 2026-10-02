@@ -164,6 +164,17 @@ disjoint, views retain their base identity, and external resources may alias. Ne
 is preserved conservatively with source-order control edges. The pass also emits a DOT rendering
 for inspection; it does not execute the graph.
 
+Conservative graph construction is not evidence that a graph is executable. Every materialized
+node records whether it is unconditionally executed in the single host entry block. Executable
+lowering and host generation reject nodes nested in structured control flow or a multi-block CFG;
+ordering edges cannot encode a branch predicate or loop trip count. Conditional and repeated work
+must first be represented explicitly in executable IR.
+
+Dependency resources and launch arguments are also kept distinct. A subview is normalized to its
+base allocation for alias analysis, while its argument descriptor is marked as requiring view-aware
+packing. The current `cuda.direct` host path accepts only base, identity-layout memrefs and rejects
+views, subviews, and non-identity layouts instead of silently dropping their offsets.
+
 `ckl-lower-graph-to-exec` is the transformation boundary between analysis and execution. It
 consumes `ckl.graph` and emits a verified `ckl_exec.plan` containing heap sizes, resource slices,
 static launch metadata, producer ABI identity, contiguous physical argument slots, and reduced

@@ -88,6 +88,11 @@ std::string resourceName(Value value, func::FuncOp function,
   return storage;
 }
 
+bool hasStaticExecutionControl(Operation *operation, func::FuncOp host) {
+  return llvm::hasSingleElement(host.getBody()) && operation->getParentOp() == host &&
+         operation->getBlock() == &host.getBody().front();
+}
+
 FailureOr<std::size_t> getStaticResourceBytes(Value resource) {
   auto type = dyn_cast<MemRefType>(resource.getType());
   if (!type || !type.hasStaticShape() || !type.getLayout().isIdentity())
@@ -313,7 +318,7 @@ FailureOr<NodeInfo> bindDispatch(DispatchOpInterface dispatch, func::FuncOp host
   node.orderingScopes = summary.getAs<ArrayAttr>("ordering_scopes");
   node.unknown = summary.getAs<BoolAttr>("unknown").getValue();
   node.synchronizes = summary.getAs<BoolAttr>("synchronizes").getValue();
-  node.nestedControl = dispatch->getParentOp() != host;
+  node.nestedControl = !hasStaticExecutionControl(dispatch.getOperation(), host);
 
   SmallVector<Attribute> accesses;
   auto summaryAccesses = summary.getAs<ArrayAttr>("accesses");
@@ -354,7 +359,7 @@ LogicalResult appendLifetimeNode(Operation *operation, func::FuncOp host,
   NodeInfo node;
   node.source = operation;
   node.orderingScopes = builder.getArrayAttr({});
-  node.nestedControl = operation->getParentOp() != host;
+  node.nestedControl = !hasStaticExecutionControl(operation, host);
   bool allocates = false;
   bool frees = false;
   SmallVector<Attribute> accesses;
@@ -519,6 +524,9 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function) {
         builder.getStringAttr(node.kind), node.kernel, node.materializedAccesses,
         builder.getBoolAttr(node.unknown), builder.getBoolAttr(node.synchronizes),
         node.orderingScopes, builder.getStringAttr(printLocation(node.source->getLoc())));
+    graphNode->setAttr("ckl.execution_control",
+                       builder.getStringAttr(node.nestedControl ? "unsupported_control_flow"
+                                                                : "unconditional"));
     if (node.kind == "dispatch") {
       auto dispatch = cast<DispatchOpInterface>(node.source);
       DenseI64ArrayAttr grid = dispatch.getGridDimensions();
@@ -550,6 +558,16 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function) {
           attributes.push_back(builder.getNamedAttr("kind", builder.getStringAttr("resource")));
           attributes.push_back(builder.getNamedAttr(
               "resource", builder.getStringAttr(resourceName(argument, function, allocationIds))));
+          Value base = getBaseResource(argument);
+          StringRef packing = "direct_pointer";
+          if (base != argument) {
+            packing = "unsupported_view";
+          } else if (auto type = dyn_cast<MemRefType>(argument.getType());
+                     !type || !type.getLayout().isIdentity()) {
+            packing = "unsupported_layout";
+          }
+          attributes.push_back(
+              builder.getNamedAttr("packing", builder.getStringAttr(packing)));
         } else if (Operation *definition = argument.getDefiningOp()) {
           if (Attribute value = definition->getAttr("value")) {
             attributes.push_back(builder.getNamedAttr("kind", builder.getStringAttr("constant")));

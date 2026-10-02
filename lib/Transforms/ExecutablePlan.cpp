@@ -66,6 +66,8 @@ LogicalResult lowerGraph(GraphOp graph) {
   auto status = memoryPlan ? memoryPlan.getAs<StringAttr>("status") : StringAttr();
   if (!memoryPlan || !resources || !status || status.getValue() != "planned")
     return graph.emitError("executable lowering requires a successful static memory plan");
+  if (failed(verifyStaticExecutionSubset(graph, "executable lowering")))
+    return failure();
 
   SmallVector<GraphNodeOp> dispatches;
   for (GraphNodeOp node : graph.getBody().front().getOps<GraphNodeOp>())
@@ -127,8 +129,7 @@ LogicalResult lowerGraph(GraphOp graph) {
     auto sharedMemory = node->getAttrOfType<IntegerAttr>("ckl.launch_shared_memory");
     ArrayAttr arguments = materializePhysicalArguments(node, builder);
     if (!kernel || !implementation || !artifact || !abi || !device || !grid || !block ||
-        !sharedMemory ||
-        !arguments)
+        !sharedMemory || !arguments)
       return node.emitError("executable lowering requires complete launch and ABI metadata");
     exec::KernelOp::create(builder, node.getLoc(), builder.getI64IntegerAttr(node.getId()), kernel,
                            implementation, artifact, abi, device, grid, block, sharedMemory,
