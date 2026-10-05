@@ -354,6 +354,13 @@ the duration of execution.
   only through an explicit artifact/physical-ABI manifest targeting `ckl_exec`, not through private
   `CompiledArtifact` or `CallState` fields.
 
+The versioned JSON executable manifest provides that producer-facing boundary.
+`ckl-import-manifest` converts explicit heaps, resources, launch metadata, dependencies, and
+physical argument slots into a verified `ckl_exec.plan`. It is intentionally post-analysis: a DSL
+can use CKL graph construction to derive dependencies or export an already-proven plan, but the
+importer does not accept effect annotations and does not reconstruct missing dependencies. The
+same host generator and executor consume imported and CKL-lowered plans.
+
 ### Later work
 
 - Additional CUDA Graph features such as conditional or programmatic dependencies.

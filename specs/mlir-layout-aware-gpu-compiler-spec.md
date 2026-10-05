@@ -616,6 +616,14 @@ The semantic reuse slice against upstream `gpu.launch_func` and `gpu.func` remai
 matches FlyDSL's compiler IR boundary. A FlyDSL artifact/ABI adapter is the preferred optional next
 integration; Triton's more complicated expanded ABI is not on the critical path.
 
+A producer-neutral executable manifest v1 and `ckl-import-manifest` tool form the stable side of
+that adapter. The JSON contract names artifacts by `ArtifactRegistry` key and carries explicit
+resources, launch geometry, dependencies, and ordered physical ABI descriptors. Import produces a
+verified `ckl_exec.plan`, which then follows the same host-generation and runtime path as a
+CKL-analyzed program. Artifact bytes remain owned by the producer and are registered separately.
+The importer is a post-analysis boundary and therefore never guesses effects, topology, or ABI
+packing omitted by the producer.
+
 ### Milestone 6: justified precision
 
 - Profile false dependencies.

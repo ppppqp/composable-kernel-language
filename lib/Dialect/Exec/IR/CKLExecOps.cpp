@@ -115,9 +115,11 @@ LogicalResult PlanOp::verify() {
       auto slot = argument.getAs<IntegerAttr>("slot");
       auto logicalIndex = argument.getAs<IntegerAttr>("logical_index");
       auto kind = argument.getAs<StringAttr>("kind");
-      if (!slot || slot.getInt() < 0 || !logicalIndex || logicalIndex.getInt() < 0 || !kind)
+      auto type = argument.getAs<TypeAttr>("type");
+      if (!slot || slot.getInt() < 0 || !logicalIndex || logicalIndex.getInt() < 0 || !kind ||
+          !type)
         return kernel.emitOpError(
-            "argument descriptor requires non-negative slot and logical index");
+            "argument descriptor requires non-negative slot and logical index plus a type");
       if (!slots.insert(slot.getInt()).second)
         return kernel.emitOpError("contains a duplicate physical argument slot");
       if (kind.getValue() == "resource") {
@@ -130,7 +132,15 @@ LogicalResult PlanOp::verify() {
             return kernel.emitOpError(
                 "cuda.direct resource arguments require direct_pointer packing");
         }
-      } else if (kind.getValue() != "constant" && kind.getValue() != "scalar") {
+      } else if (kind.getValue() == "scalar") {
+        auto name = argument.getAs<StringAttr>("name");
+        if (!name || name.getValue().empty())
+          return kernel.emitOpError("scalar argument requires a non-empty binding name");
+      } else if (kind.getValue() == "constant") {
+        auto value = dyn_cast_or_null<TypedAttr>(argument.get("value"));
+        if (!value || value.getType() != type.getValue())
+          return kernel.emitOpError("constant argument requires a value matching its type");
+      } else {
         return kernel.emitOpError("contains an unsupported physical argument kind");
       }
     }

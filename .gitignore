@@ -1,5 +1,6 @@
 docs/*
 !docs/orchestration.md
+!docs/executable-manifest.md
 specs/*
 !specs/mlir-layout-aware-gpu-compiler-spec.md
 build/

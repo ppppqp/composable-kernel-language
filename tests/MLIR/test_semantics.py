@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 import re
 import subprocess
@@ -199,6 +200,10 @@ def main() -> int:
     require('ckl.launch_grid = array<i64: 1, 1, 1>' in graph.stdout, "missing launch metadata")
     hostgen = executable.parent.parent / "ckl-hostgen" / "ckl-hostgen"
     require(hostgen.is_file(), f"missing host generator at {hostgen}")
+    manifest_importer = (
+        executable.parent.parent / "ckl-import-manifest" / "ckl-import-manifest"
+    )
+    require(manifest_importer.is_file(), f"missing manifest importer at {manifest_importer}")
     analysis_host = run_text(hostgen, graph.stdout)
     require(analysis_host.returncode != 0, "host generator accepted analysis IR")
     require("requires at least one ckl_exec.plan" in analysis_host.stderr, analysis_host.stderr)
@@ -288,6 +293,27 @@ def main() -> int:
         and 'result.plan.addKernel({"flydsl.module.v1", "write"' in generated_host.stdout,
         "host generator did not consume the executable artifact manifest",
     )
+
+    external_manifest = run(manifest_importer, inputs / "external-plan.json")
+    require(external_manifest.returncode == 0, external_manifest.stderr)
+    require(
+        'name = "flydsl.external"' in external_manifest.stdout
+        and 'kernel = @flydsl_kernels::@stage' in external_manifest.stdout
+        and 'packing = "direct_pointer"' in external_manifest.stdout,
+        "external manifest did not preserve producer identities and physical ABI",
+    )
+    external_host = run_text(hostgen, external_manifest.stdout)
+    require(external_host.returncode == 0, external_host.stderr)
+    require(
+        "build_flydsl_external" in external_host.stdout
+        and 'result.plan.addKernel({"flydsl.module.v1", "stage"' in external_host.stdout,
+        "imported manifest did not reach host generation",
+    )
+    invalid_manifest = json.loads((inputs / "external-plan.json").read_text())
+    del invalid_manifest["plan"]["kernels"][0]["arguments"][0]["packing"]
+    rejected_manifest = run_text(manifest_importer, json.dumps(invalid_manifest))
+    require(rejected_manifest.returncode != 0, "manifest importer guessed resource packing")
+    require("arguments[0].packing" in rejected_manifest.stderr, rejected_manifest.stderr)
     unresolved_abi = run(
         executable,
         inputs / "graph.mlir",

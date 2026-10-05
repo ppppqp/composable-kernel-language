@@ -111,6 +111,9 @@ The repository contains the reusable bootstrap and the first five milestones of 
 - a `ckl-hostgen` tool that consumes verified `ckl_exec.plan` operations and emits owning C++
   unresolved `ExecutionPlan` builders for static direct-pointer kernel ABIs, including planned
   heaps, retained external buffers, packed arguments, artifact identities, and dependencies;
+- a versioned `ckl-import-manifest` boundary through which an external DSL can provide resources,
+  launch metadata, dependencies, artifact identities, and physical ABI slots without linking to
+  CKL's compiler libraries;
 - a `ckl-opt` driver that registers CKL alongside upstream MLIR dialects and GPU translations;
 - Python utilities for invoking the optimizer, describing an NVIDIA target, extracting generated
   GPU objects, and forming compilation cache keys; and
@@ -164,6 +167,18 @@ build/tools/ckl-hostgen/ckl-hostgen plan.mlir -o generated-plan.cpp
 
 `ckl-hostgen` deliberately rejects `ckl.graph`; executable verification must happen first. This
 path requires dispatches to advertise the `cuda.direct` capability.
+
+An external compiler can construct the same verified executable IR through the v1 JSON manifest:
+
+```bash
+build/tools/ckl-import-manifest/ckl-import-manifest \
+  tests/MLIR/external-plan.json -o external-plan.mlir
+build/tools/ckl-hostgen/ckl-hostgen external-plan.mlir -o external-plan.cpp
+```
+
+The [executable manifest contract](docs/executable-manifest.md) is post-analysis: CKL validates its
+explicit physical ABI and topology but does not guess missing effects, argument packing, or
+dependencies.
 
 The emitted `ckl.graph` contains normalized nodes, dependency reasons and source locations, plus a
 DOT string suitable for visualization.
