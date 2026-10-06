@@ -371,9 +371,11 @@ describes the JIT host wrapper rather than the device-kernel ABI.
 
 FlyDSL also exports a verified launch plan for a deliberately narrow subset: top-level
 straight-line `gpu.launch_func` operations, static grid/block/shared-memory values, direct raw
-global-pointer arguments, basic scalars, and scalar constants. It rejects nested control flow,
-computed or view-derived arguments, FlyDSL memrefs whose ABI can expand, clustered launches, and
-cooperative launches. `flydsl_executable_manifest()` translates the accepted plain-data plan into
+global-pointer or memref arguments, basic scalars, and scalar constants. For the initial contiguous
+memref subset, CKL requires specialization-time packed layout bytes and expands each operand into
+its pointer and by-value descriptor physical slots. It rejects nested control flow, computed or
+view-derived arguments, missing or implicit descriptor data, clustered launches, and cooperative
+launches. `flydsl_executable_manifest()` translates the accepted plain-data plan into
 manifest v1. Launches initially form a source-order dependency chain, preserving behavior while
 deferring effect-derived edge removal.
 

@@ -2,6 +2,7 @@
 
 #include <hip/hip_runtime_api.h>
 
+#include <algorithm>
 #include <fstream>
 #include <unordered_map>
 
@@ -50,8 +51,15 @@ struct StreamState {
   std::shared_ptr<ContextState> context;
   hipStream_t stream{};
   bool owned = true;
+  // Convenience launches may resolve a temporary plan. Keep its modules alive until all work
+  // already submitted to this stream has completed.
+  std::vector<std::shared_ptr<ModuleState>> pendingModules;
 
   ~StreamState() {
+    if (stream && !pendingModules.empty()) {
+      context->makeCurrentNoThrow();
+      (void)hipStreamSynchronize(stream);
+    }
     if (stream && owned) {
       context->makeCurrentNoThrow();
       (void)hipStreamDestroy(stream);
@@ -78,6 +86,8 @@ struct GraphState {
   hipGraph_t graph{};
   hipGraphExec_t executable{};
   std::vector<hipGraphNode_t> nodes;
+  // Native graph nodes refer to functions from these modules for the executable's full lifetime.
+  std::vector<std::shared_ptr<ModuleState>> modules;
 
   ~GraphState() {
     context->makeCurrentNoThrow();
@@ -99,6 +109,7 @@ void HipStream::synchronize() const {
     throw std::invalid_argument("cannot synchronize an empty HIP stream");
   state_->context->makeCurrent();
   check(hipStreamSynchronize(state_->stream), "hipStreamSynchronize");
+  state_->pendingModules.clear();
 }
 
 std::uint64_t HipBuffer::address() const {
@@ -307,7 +318,21 @@ HipPlan HipRuntime::resolve(const ExecutionPlan &plan, const ArtifactRegistry &a
 
 void HipRuntime::launchOrdinary(const ExecutionPlan &plan, const ArtifactRegistry &artifacts,
                                 const HipStream &stream) const {
-  launchOrdinary(resolve(plan, artifacts), stream);
+  if (!stream.state_)
+    throw std::invalid_argument("ordinary launch requires a HIP stream");
+  if (stream.state_->context != context_)
+    throw std::invalid_argument("ordinary launch stream belongs to a different context");
+  HipPlan resolved = resolve(plan, artifacts);
+  // `resolved` is local, but HIP launches are asynchronous. Transfer module lifetime to the
+  // stream before enqueueing so destruction of the temporary plan cannot unload executing code.
+  for (const HipPlan::Node &node : resolved.nodes()) {
+    const std::shared_ptr<hip_detail::ModuleState> &module = node.launch.function.module_;
+    auto found = std::find(stream.state_->pendingModules.begin(), stream.state_->pendingModules.end(),
+                           module);
+    if (found == stream.state_->pendingModules.end())
+      stream.state_->pendingModules.push_back(module);
+  }
+  launchOrdinary(resolved, stream);
 }
 
 HipGraphExecutable HipRuntime::instantiate(const ExecutionPlan &plan,
@@ -359,6 +384,10 @@ HipGraphExecutable HipRuntime::instantiate(const HipPlan &plan) const {
   for (const HipPlan::Node &node : plan.nodes()) {
     if (!node.launch.function.module_ || node.launch.function.module_->context != context_)
       throw std::invalid_argument("graph launch function belongs to a different context");
+    auto retained = std::find(state->modules.begin(), state->modules.end(),
+                              node.launch.function.module_);
+    if (retained == state->modules.end())
+      state->modules.push_back(node.launch.function.module_);
     std::vector<hipGraphNode_t> dependencies;
     dependencies.reserve(node.dependencies.size());
     for (HipPlan::NodeId dependency : node.dependencies)

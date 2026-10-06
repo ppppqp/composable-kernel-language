@@ -153,6 +153,56 @@ class CompilerUtilitiesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "dynamic launch dimensions"):
             flydsl_executable_manifest(artifact)
 
+    def test_flydsl_memref_expands_to_pointer_and_descriptor_bytes(self) -> None:
+        @dataclass(frozen=True)
+        class Argument:
+            logical_index: int = 0
+            kind: str = "memref"
+            source_type: str = "!fly.memref<f32, global, (?, ?):(?, 1)>"
+            binding: str = "input"
+            value: None = None
+
+        @dataclass(frozen=True)
+        class Launch:
+            id: int = 0
+            kernel: str = "@kernels::@stage"
+            grid: tuple = (1, 1, 1)
+            block: tuple = (64, 1, 1)
+            shared_memory: int = 0
+            arguments: tuple = (Argument(),)
+            dependencies: tuple = ()
+
+        @dataclass(frozen=True)
+        class Plan:
+            host_entry: str = "launch"
+            launches: tuple = (Launch(),)
+
+        @dataclass(frozen=True)
+        class Export:
+            compiled_ir: str = "module {}"
+            source_ir: str = "module { func.func @launch() { return } }"
+            host_entry: str = "launch"
+            backend: str = "rocm"
+            target: str = "gfx1200"
+            kernel_abi: str = "rocm.bare_ptr"
+            device_objects: tuple = ()
+            launch_plan: Plan = Plan()
+            launch_plan_error: None = None
+
+        artifact = import_flydsl_artifact(Export())
+        with self.assertRaisesRegex(ValueError, "requires packed layout descriptor bytes"):
+            flydsl_executable_manifest(artifact)
+
+        manifest = flydsl_executable_manifest(
+            artifact, resource_layouts={"input": bytes(range(16))}
+        )
+        arguments = manifest["plan"]["kernels"][0]["arguments"]
+        self.assertEqual([argument["slot"] for argument in arguments], [0, 1])
+        self.assertEqual(arguments[0]["kind"], "resource")
+        self.assertEqual(arguments[1]["kind"], "bytes")
+        self.assertEqual(arguments[1]["type"], "vector<16xi8>")
+        self.assertEqual(arguments[1]["value"], list(range(16)))
+
     def test_flydsl_artifact_emits_rocm_cpp_bundle(self) -> None:
         @dataclass(frozen=True)
         class DeviceObject:
@@ -223,6 +273,68 @@ class CompilerUtilitiesTest(unittest.TestCase):
             self.assertEqual(bundle.artifact_loader, "load_flydsl_launch_artifacts")
             self.assertIn(bundle.plan_builder, generated)
             self.assertIn(bundle.artifact_loader, generated)
+
+    def test_flydsl_bundle_deduplicates_identical_target_objects(self) -> None:
+        @dataclass(frozen=True)
+        class DeviceObject:
+            data: bytes = b"\x7fELF-test"
+            format: int = 0
+            target: str = '#rocdl.target<chip = "gfx1200">'
+
+        @dataclass(frozen=True)
+        class Argument:
+            logical_index: int = 0
+            kind: str = "memref"
+            source_type: str = "!fly.memref<f32, global, (?):(1)>"
+            binding: str = "output"
+            value: None = None
+
+        @dataclass(frozen=True)
+        class Launch:
+            id: int = 0
+            kernel: str = "@kernels::@stage"
+            grid: tuple = (1, 1, 1)
+            block: tuple = (64, 1, 1)
+            shared_memory: int = 0
+            arguments: tuple = (Argument(),)
+            dependencies: tuple = ()
+
+        @dataclass(frozen=True)
+        class Plan:
+            host_entry: str = "launch"
+            launches: tuple = (Launch(),)
+
+        @dataclass(frozen=True)
+        class Export:
+            compiled_ir: str = "module {}"
+            source_ir: str = "module { func.func @launch() { return } }"
+            host_entry: str = "launch"
+            backend: str = "rocm"
+            target: str = "gfx1200"
+            kernel_abi: str = "rocm.bare_ptr"
+            device_objects: tuple = (
+                DeviceObject(),
+                DeviceObject(target='#rocdl.target<chip = "gfx1200", flags = {no_wave64}>'),
+            )
+            launch_plan: Plan = Plan()
+            launch_plan_error: None = None
+
+        artifact = import_flydsl_artifact(Export())
+        repository = Path(__file__).resolve().parents[2]
+        importer = repository / "build/tools/ckl-import-manifest/ckl-import-manifest"
+        hostgen = repository / "build/tools/ckl-hostgen/ckl-hostgen"
+        if not importer.is_file() or not hostgen.is_file():
+            self.skipTest("CKL MLIR tools are not built")
+        with TemporaryDirectory() as temporary:
+            bundle = emit_flydsl_cpp_bundle(
+                artifact,
+                Path(temporary),
+                resource_layouts={"output": b"\x00\x01\x00\x00"},
+                manifest_importer=importer,
+                host_generator=hostgen,
+            )
+            self.assertEqual(bundle.device_object.read_bytes(), b"\x7fELF-test")
+            self.assertIn("addBytes", bundle.host_source.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

@@ -145,6 +145,14 @@ LogicalResult PlanOp::verify() {
         auto value = dyn_cast_or_null<TypedAttr>(argument.get("value"));
         if (!value || value.getType() != type.getValue())
           return kernel.emitOpError("constant argument requires a value matching its type");
+      } else if (kind.getValue() == "bytes") {
+        auto value = dyn_cast_or_null<DenseI8ArrayAttr>(argument.get("value"));
+        auto vector = dyn_cast<VectorType>(type.getValue());
+        if (!value || value.empty() || !vector || vector.getRank() != 1 ||
+            !vector.getElementType().isInteger(8) ||
+            static_cast<int64_t>(value.size()) != vector.getNumElements())
+          return kernel.emitOpError(
+              "bytes argument requires a non-empty vector<Nxi8> type and N byte values");
       } else {
         return kernel.emitOpError("contains an unsupported physical argument kind");
       }

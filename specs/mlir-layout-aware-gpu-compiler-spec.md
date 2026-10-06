@@ -633,9 +633,11 @@ imports producer-copied GPU-object bytes and creates a deterministic artifact-re
 The plain-data handoff avoids loading two MLIR Python extensions in the same process and removes
 the dependency on private `CompiledArtifact`, `_keepalive`, and `CallState` state. FlyDSL now also
 extracts a restricted launch plan while its MLIR module is live. The accepted subset is
-straight-line top-level launches with static geometry, raw global pointers, basic scalars, and
-constants; control flow, computed views, memref ABI expansion, clusters, and cooperative launches
-are rejected with a retained diagnostic. CKL converts accepted plans to executable manifest v1.
+straight-line top-level launches with static geometry, raw global pointers or direct memrefs, basic
+scalars, and constants. CKL expands the supported statically specialized contiguous memrefs into a
+bare pointer plus explicit packed shape/stride bytes. Control flow, computed views, implicit or
+missing memref descriptors, clusters, and cooperative launches are rejected with a retained
+diagnostic. CKL converts accepted plans to executable manifest v1.
 The initial exporter conservatively chains launches in source order; effect-derived edge removal
 remains required for optimized execution. The optional HIP executor accepts `rocm.hsaco` artifacts
 and `rocm.bare_ptr` invocations through the same `ArtifactRegistry` and `ExecutionPlan`, supports

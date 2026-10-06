@@ -288,23 +288,27 @@ FlyDSL's patched public boundary can be imported without intercepting its execut
 compiled = flyc.compile(program, *arguments)
 exported = compiled.artifact.export_for_orchestration()
 artifact = ckl.import_flydsl_artifact(exported)
-manifest = ckl.flydsl_executable_manifest(artifact)
-bundle = ckl.emit_flydsl_cpp_bundle(artifact, "build/flydsl-bundle")
+layouts = {"input": packed_input_shape_and_stride}
+manifest = ckl.flydsl_executable_manifest(artifact, resource_layouts=layouts)
+bundle = ckl.emit_flydsl_cpp_bundle(
+    artifact, "build/flydsl-bundle", resource_layouts=layouts
+)
 ```
 
 FlyDSL copies its embedded `gpu.binary` payloads into plain Python objects while its own MLIR
 runtime owns the module. CKL normalizes those bytes and assigns a deterministic artifact identity,
 without loading a second MLIR Python extension in the same process. FlyDSL currently identifies
 their physical device ABI as `rocm.bare_ptr`. For straight-line launches with static dimensions,
-direct raw global pointers, and basic scalar arguments, FlyDSL also exports a verified plain-data
-launch plan and CKL converts it to executable manifest v1. `emit_flydsl_cpp_bundle` runs that
+direct raw global pointers or contiguous memrefs, and basic scalar arguments, FlyDSL also exports a
+verified plain-data launch plan. CKL expands memrefs into a pointer plus caller-supplied packed
+shape/stride bytes and converts the result to executable manifest v1. `emit_flydsl_cpp_bundle` runs that
 manifest through CKL verification and host generation, writes the HSACO beside it, and emits one
 C++ include containing a typed `HipRuntime` plan builder and an `ArtifactRegistry` loader. The
 generated loader takes the bundle directory, so artifact placement remains explicit and the
 binary is not copied into C++ source. The returned bundle reports the stable generated
 `plan_builder` and `artifact_loader` symbol names, which are derived from FlyDSL's host entry rather
-than the content hash. More complex control flow, computed views, memref ABI
-expansion, and multi-object artifacts are rejected.
+than the content hash. More complex control flow, computed views, implicit memref ABI
+descriptors, and genuinely distinct multi-object artifacts are rejected.
 
 ## Milestone 0 feasibility benchmarks
 

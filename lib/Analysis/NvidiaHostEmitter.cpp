@@ -8,6 +8,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cctype>
+#include <cstddef>
 #include <map>
 #include <string>
 
@@ -128,6 +129,9 @@ LogicalResult emitPlan(exec::PlanOp plan, const BackendConfig &config,
       } else if (kind == "constant" &&
                  failed(cppScalarType(argument.getAs<TypeAttr>("type").getValue()))) {
         return kernel.emitError("host emission encountered an unsupported constant type");
+      } else if (kind == "bytes" &&
+                 !argument.getAs<DenseI8ArrayAttr>("value")) {
+        return kernel.emitError("host emission encountered invalid byte arguments");
       }
     }
   }
@@ -187,6 +191,17 @@ LogicalResult emitPlan(exec::PlanOp plan, const BackendConfig &config,
     });
     for (DictionaryAttr argument : arguments) {
       StringRef kind = argument.getAs<StringAttr>("kind").getValue();
+      if (kind == "bytes") {
+        DenseI8ArrayAttr bytes = argument.getAs<DenseI8ArrayAttr>("value");
+        int64_t slot = argument.getAs<IntegerAttr>("slot").getInt();
+        output << "  const std::byte argument_bytes_" << id << '_' << slot << "[] = {";
+        llvm::interleaveComma(bytes.asArrayRef(), output, [&](int8_t value) {
+          output << "std::byte{" << static_cast<unsigned>(static_cast<uint8_t>(value)) << "}";
+        });
+        output << "};\n  arguments_" << id << ".addBytes(argument_bytes_" << id << '_'
+               << slot << ", sizeof(argument_bytes_" << id << '_' << slot << "));\n";
+        continue;
+      }
       output << "  arguments_" << id << ".add(";
       if (kind == "resource")
         output << "resource_"

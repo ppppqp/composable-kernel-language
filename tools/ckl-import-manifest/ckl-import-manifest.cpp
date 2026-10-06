@@ -223,6 +223,22 @@ private:
                                       "constant type must be integer or floating point");
       }
       attributes.append("value", constant);
+    } else if (*kind == "bytes") {
+      const auto *values = argument.getArray("value");
+      if (!values || values->empty())
+        return failOr<DictionaryAttr>((path + ".value").str(),
+                                      "must be a non-empty byte array");
+      SmallVector<int8_t> bytes;
+      bytes.reserve(values->size());
+      for (const auto &[index, value] : llvm::enumerate(*values)) {
+        auto byte = value.getAsInteger();
+        if (!byte || *byte < 0 || *byte > 255)
+          return failOr<DictionaryAttr>(
+              (path + ".value[" + llvm::Twine(index) + "]").str(),
+              "must be an integer from 0 through 255");
+        bytes.push_back(static_cast<int8_t>(*byte));
+      }
+      attributes.append("value", builder.getDenseI8ArrayAttr(bytes));
     }
     return builder.getDictionaryAttr(attributes);
   }

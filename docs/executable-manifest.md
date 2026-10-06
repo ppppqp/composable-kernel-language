@@ -27,14 +27,16 @@ Each kernel provides its producer implementation identity, artifact registry key
 symbol, device, launch dimensions, dynamic shared-memory size, and ordered argument descriptors.
 Argument `slot` values are physical ABI positions and must be contiguous. `logical_index` records
 which producer-level operand generated a slot, so one logical operand may expand into multiple
-physical slots in a future ABI adapter.
+physical slots in an ABI adapter.
 
 The v1 host path supports:
 
 - CUDA `cuda.direct` resources with `packing: "direct_pointer"`;
 - ROCm `rocm.bare_ptr` resources with `packing: "bare_pointer"`;
 - named runtime `scalar` arguments of type `i32`, `i64`, `f32`, or `f64`; and
-- embedded `constant` arguments of those scalar types.
+- embedded `constant` arguments of those scalar types; and
+- embedded `bytes` arguments with a `vector<Nxi8>` type and exactly `N` byte values, for
+  producer-defined by-value ABI records such as static memref layout descriptors.
 
 Artifact bytes are intentionally not embedded in the manifest. `artifact` is a stable key into
 the runtime `ArtifactRegistry`; the producer can register an in-memory CUBIN while retaining its
@@ -57,13 +59,14 @@ deliberately does not read private `CompiledArtifact` or `CallState` fields. Fly
 `rocm.bare_ptr` device ABI is distinct from the host-wrapper ABI represented by `CallState`.
 FlyDSL extracts supported straight-line launch regions while its own MLIR runtime owns the module,
 and `flydsl_executable_manifest()` converts that plain-data plan into this schema. The first subset
-accepts direct global pointers, basic scalars/constants, and static launch dimensions. It rejects
-control flow, computed views, memrefs with possible ABI expansion, clustered launches, and
-cooperative launches. The emitted source-order dependency chain is conservative. CKL's optional
+accepts direct global pointers, direct contiguous memrefs with caller-supplied packed layout
+descriptors, basic scalars/constants, and static launch dimensions. It rejects control flow,
+computed views, memrefs without explicit ABI descriptor bytes, clustered launches, and cooperative
+launches. The emitted source-order dependency chain is conservative. CKL's optional
 HIP executor consumes the result after each copied object is registered as a `rocm.hsaco`
 `KernelArtifact`. `emit_flydsl_cpp_bundle()` automates this narrow bridge: it writes the single
 HSACO payload, runs the manifest importer and host generator, and emits a C++ include with the
 typed HIP plan builder plus an artifact-registry loader. The loader reads the neighboring HSACO at
-application startup; artifact bytes are not embedded in generated source. Multi-object FlyDSL
-artifacts remain unsupported because manifest v1 gives a launch one artifact identity rather than
-a target-selection set.
+application startup; artifact bytes are not embedded in generated source. Duplicate target objects
+with byte-identical payloads are collapsed; multiple distinct FlyDSL payloads remain unsupported
+because manifest v1 gives a launch one artifact identity rather than a target-selection set.

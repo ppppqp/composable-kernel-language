@@ -7,7 +7,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Mapping, Protocol, Sequence
 
 from ..compiler import GPUObject
 
@@ -164,8 +164,19 @@ def import_flydsl_artifact(exported: FlyDSLOrchestrationArtifact) -> FlyDSLArtif
     )
 
 
-def flydsl_executable_manifest(artifact: FlyDSLArtifact, *, device: int = 0) -> dict:
-    """Convert a verified FlyDSL launch plan to CKL executable-manifest v1."""
+def flydsl_executable_manifest(
+    artifact: FlyDSLArtifact,
+    *,
+    device: int = 0,
+    resource_layouts: Mapping[str, bytes] | None = None,
+) -> dict:
+    """Convert a verified FlyDSL launch plan to CKL executable-manifest v1.
+
+    FlyDSL memrefs are logical launch operands. For its ROCm bare-pointer ABI,
+    each one becomes a pointer followed by a packed, by-value layout descriptor.
+    The descriptor bytes are specialization data supplied by the caller that
+    owns the concrete tensor shapes and strides.
+    """
     if artifact.launch_plan is None:
         reason = artifact.launch_plan_error or "the producer did not export a launch plan"
         raise ValueError(f"FlyDSL artifact is not executable through CKL: {reason}")
@@ -176,16 +187,18 @@ def flydsl_executable_manifest(artifact: FlyDSLArtifact, *, device: int = 0) -> 
         argument.binding
         for launch in artifact.launch_plan.launches
         for argument in launch.arguments
-        if argument.kind == "resource"
+        if argument.kind in {"resource", "memref"}
     }
     if None in resource_names:
         raise ValueError("FlyDSL resource argument has no host binding")
     device_name = f"{artifact.backend}:{device}"
 
+    layouts = {} if resource_layouts is None else dict(resource_layouts)
     kernels = []
     for launch in artifact.launch_plan.launches:
         arguments = []
-        for slot, argument in enumerate(launch.arguments):
+        slot = 0
+        for argument in launch.arguments:
             descriptor = {
                 "slot": slot,
                 "logical_index": argument.logical_index,
@@ -194,6 +207,41 @@ def flydsl_executable_manifest(artifact: FlyDSLArtifact, *, device: int = 0) -> 
             }
             if argument.kind == "resource":
                 descriptor.update(resource=argument.binding, packing="bare_pointer")
+                arguments.append(descriptor)
+                slot += 1
+                continue
+            elif argument.kind == "memref":
+                if argument.binding is None:
+                    raise ValueError("FlyDSL memref argument has no host binding")
+                try:
+                    layout = bytes(layouts[argument.binding])
+                except KeyError as error:
+                    raise ValueError(
+                        f"FlyDSL memref {argument.binding!r} requires packed layout descriptor bytes"
+                    ) from error
+                if not layout:
+                    raise ValueError(
+                        f"FlyDSL memref {argument.binding!r} has an empty layout descriptor"
+                    )
+                descriptor.update(
+                    kind="resource",
+                    type="memref<?xi8>",
+                    resource=argument.binding,
+                    packing="bare_pointer",
+                )
+                arguments.append(descriptor)
+                slot += 1
+                arguments.append(
+                    {
+                        "slot": slot,
+                        "logical_index": argument.logical_index,
+                        "kind": "bytes",
+                        "type": f"vector<{len(layout)}xi8>",
+                        "value": list(layout),
+                    }
+                )
+                slot += 1
+                continue
             elif argument.kind == "scalar":
                 descriptor["name"] = argument.binding
             elif argument.kind == "constant":
@@ -201,6 +249,7 @@ def flydsl_executable_manifest(artifact: FlyDSLArtifact, *, device: int = 0) -> 
             else:
                 raise ValueError(f"unsupported FlyDSL launch argument kind: {argument.kind}")
             arguments.append(descriptor)
+            slot += 1
         kernels.append(
             {
                 "id": launch.id,
@@ -272,6 +321,7 @@ def emit_flydsl_cpp_bundle(
     output_directory: Path | str,
     *,
     device: int = 0,
+    resource_layouts: Mapping[str, bytes] | None = None,
     manifest_importer: Path | None = None,
     host_generator: Path | None = None,
 ) -> FlyDSLCppBundle:
@@ -282,15 +332,24 @@ def emit_flydsl_cpp_bundle(
     in generated C++.
     """
 
-    manifest = flydsl_executable_manifest(artifact, device=device)
+    manifest = flydsl_executable_manifest(
+        artifact, device=device, resource_layouts=resource_layouts
+    )
     if artifact.backend != "rocm":
         raise ValueError(f"unsupported FlyDSL bundle backend: {artifact.backend}")
-    if len(artifact.gpu_objects) != 1:
+    unique_objects = []
+    seen_payloads = set()
+    for gpu_object in artifact.gpu_objects:
+        digest = hashlib.sha256(gpu_object.data).digest()
+        if digest not in seen_payloads:
+            seen_payloads.add(digest)
+            unique_objects.append(gpu_object)
+    if len(unique_objects) != 1:
         raise ValueError(
-            "FlyDSL C++ bundle emission currently requires exactly one GPU object, "
-            f"got {len(artifact.gpu_objects)}"
+            "FlyDSL C++ bundle emission currently requires exactly one unique GPU object, "
+            f"got {len(unique_objects)} unique payloads from {len(artifact.gpu_objects)} objects"
         )
-    device_object = artifact.gpu_objects[0]
+    device_object = unique_objects[0]
     if not device_object.data.startswith(b"\x7fELF"):
         raise ValueError("FlyDSL ROCm GPU object is not an ELF HSACO")
 

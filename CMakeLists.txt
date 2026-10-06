@@ -11,6 +11,13 @@ option(CKL_ENABLE_MLIR "Build the CKL MLIR optimizer driver" OFF)
 option(CKL_ENABLE_CUDA_RUNTIME "Build the NVIDIA execution runtime" OFF)
 option(CKL_ENABLE_HIP_RUNTIME "Build the HIP execution runtime" OFF)
 option(CKL_BUILD_CUDA_BENCHMARKS "Build the Milestone 0 CUDA feasibility benchmarks" OFF)
+option(CKL_BUILD_HIP_BENCHMARKS "Build the HIP runtime-overhead benchmarks" OFF)
+
+if(CKL_BUILD_HIP_BENCHMARKS)
+  set(CKL_ENABLE_HIP_RUNTIME ON)
+  # The Stage 1 in-process bridge links the thin runtime into a shared library.
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
 
 if(CKL_BUILD_CUDA_BENCHMARKS)
   enable_language(CUDA)
@@ -27,6 +34,11 @@ endif()
 
 if(CKL_BUILD_CUDA_BENCHMARKS)
   add_subdirectory(benchmarks/milestone0)
+endif()
+
+if(CKL_BUILD_HIP_BENCHMARKS)
+  add_subdirectory(benchmarks/hip-runtime-overhead)
+  add_subdirectory(benchmarks/flydsl-stage1)
 endif()
 
 if(CKL_ENABLE_MLIR)
