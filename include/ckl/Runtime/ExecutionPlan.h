@@ -76,6 +76,8 @@ public:
   std::size_t size() const { return values_.size(); }
 
 private:
+  friend class HipRuntime;
+  friend class HipGraphExecutable;
   friend class NvidiaRuntime;
   friend class NvidiaGraphExecutable;
   std::vector<void *> rawPointers() const;

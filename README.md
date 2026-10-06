@@ -3,7 +3,8 @@
 > **Status:** CKL is an experimental project undergoing an architectural pivot. The
 > retired layout-aware prototype has been removed. Milestones 0 through 4 of the effect-derived
 > orchestration design are implemented: feasibility, semantic inference, graph construction, the
-> focused NVIDIA runtime, and measured plan optimization.
+> focused NVIDIA runtime, and measured plan optimization. Milestone 5 now includes a producer
+> artifact boundary, FlyDSL launch-plan export, and an optional HIP executor.
 
 Composable Kernel Language (CKL) is an experimental, MLIR-based orchestration layer for
 repeated GPU programs. It derives memory effects and dependencies from kernel IR, constructs
@@ -129,8 +130,11 @@ temporaries without changing graph dependencies and measures graph batching and 
 instances in flight. Static memory plans are attached automatically to `ckl.graph`, and the
 direct-pointer ABI path now emits and executes C++ host-plan builders. Those builders no longer
 resolve CUDA functions: a producer registers compiled artifacts and CKL's NVIDIA executor imports
-them when it prepares the plan. General producer-specific ABI lowering, including arbitrary
-lowered memref conventions, remains later work.
+them when it prepares the plan. The optional HIP executor consumes the same `ArtifactRegistry` and
+`ExecutionPlan`; it accepts `rocm.hsaco` artifacts with the `rocm.bare_ptr` ABI, supports owned or
+borrowed buffers and streams, and executes ordinary launches or HIP Graphs. General
+producer-specific ABI lowering, including arbitrary lowered memref conventions, remains later
+work.
 
 Executable lowering is deliberately fail-closed: dispatches nested in host control flow and
 direct-pointer arguments derived from views/subviews or non-identity layouts remain valid analysis
@@ -283,12 +287,16 @@ FlyDSL's patched public boundary can be imported without intercepting its execut
 compiled = flyc.compile(program, *arguments)
 exported = compiled.artifact.export_for_orchestration()
 artifact = ckl.import_flydsl_artifact(exported)
+manifest = ckl.flydsl_executable_manifest(artifact)
 ```
 
 FlyDSL copies its embedded `gpu.binary` payloads into plain Python objects while its own MLIR
 runtime owns the module. CKL normalizes those bytes and assigns a deterministic artifact identity,
 without loading a second MLIR Python extension in the same process. FlyDSL currently identifies
-their physical device ABI as `rocm.bare_ptr`; execution will require the planned HIP backend rather
+their physical device ABI as `rocm.bare_ptr`. For straight-line launches with static dimensions,
+direct raw global pointers, and basic scalar arguments, FlyDSL also exports a verified plain-data
+launch plan and CKL converts it to executable manifest v1. More complex control flow, computed
+views, and memref ABI expansion are rejected. Execution will require the planned HIP backend rather
 than the existing NVIDIA executor.
 
 ## Milestone 0 feasibility benchmarks
@@ -335,6 +343,25 @@ The reusable API is declared in `include/ckl/Runtime/NvidiaRuntime.h`. The valid
 compares ordinary launches, a cached CKL graph executable, and an independently constructed raw
 CUDA Driver graph over the same six-kernel workload. Reproduction details and checked-in results
 are in [benchmarks/milestone3](benchmarks/milestone3/README.md).
+
+## Milestone 5 HIP runtime
+
+The HIP runtime uses only the host API (`hip_runtime_api.h` and `libamdhip64`), avoiding HIP's
+device-compilation CMake package in applications that only embed CKL. Build it with:
+
+```bash
+cmake -S . -B build-hip -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCKL_ENABLE_HIP_RUNTIME=ON \
+  -DCKL_HIP_RUNTIME_TEST_ARCH=gfx942
+cmake --build build-hip
+ctest --test-dir build-hip --output-on-failure
+```
+
+The API is declared in `include/ckl/Runtime/HipRuntime.h`. The validation compiles a small HSACO,
+registers it as a `KernelArtifact`, and checks ordinary launches, HIP Graph execution, graph-cache
+reuse, and borrowed-buffer offset preservation. It is reported as skipped when no HIP device is
+accessible.
 
 ## Acknowledgments
 

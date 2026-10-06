@@ -6,7 +6,9 @@
 
 **Initial target:** A single NVIDIA GPU through CUDA and CUDA Graphs
 
-**Future targets:** HIP Graph and multi-GPU CUDA/NCCL execution
+**Secondary target:** A single AMD GPU through HIP module launches and HIP Graphs
+
+**Future targets:** Multi-GPU CUDA/HIP and NCCL/RCCL execution
 
 ## 1. Executive summary
 
@@ -629,9 +631,17 @@ The FlyDSL checkout now has a public `OrchestrationArtifact` export reachable th
 `rocm.bare_ptr` device ABI while leaving the native runtime uninitialized. CKL's Python adapter
 imports producer-copied GPU-object bytes and creates a deterministic artifact-registry identity.
 The plain-data handoff avoids loading two MLIR Python extensions in the same process and removes
-the dependency on private `CompiledArtifact`, `_keepalive`, and `CallState` state. It does not yet
-claim executable interoperability: manifest construction for supported launch regions and the HIP
-executor remain required.
+the dependency on private `CompiledArtifact`, `_keepalive`, and `CallState` state. FlyDSL now also
+extracts a restricted launch plan while its MLIR module is live. The accepted subset is
+straight-line top-level launches with static geometry, raw global pointers, basic scalars, and
+constants; control flow, computed views, memref ABI expansion, clusters, and cooperative launches
+are rejected with a retained diagnostic. CKL converts accepted plans to executable manifest v1.
+The initial exporter conservatively chains launches in source order; effect-derived edge removal
+remains required for optimized execution. The optional HIP executor accepts `rocm.hsaco` artifacts
+and `rocm.bare_ptr` invocations through the same `ArtifactRegistry` and `ExecutionPlan`, supports
+borrowed resources, and materializes ordinary launches or HIP Graphs. Its validation compiles a
+real HSACO and skips execution when no HIP device is accessible. ROCm host-builder emission and a
+Python-to-C++ artifact-registration bridge remain later integration work.
 
 ### Milestone 6: justified precision
 
@@ -639,8 +649,8 @@ executor remain required.
 - Add only the interval, strided, or affine regions needed to remove them.
 - Compare whole-buffer and region-aware results with the manual oracle.
 
-Later work includes conditional and programmatic CUDA Graph features, HIP Graph, multi-GPU device
-placement, P2P/NCCL nodes, and topology-aware communication overlap.
+Later work includes conditional and programmatic CUDA Graph features, richer HIP Graph, multi-GPU
+device placement, P2P/NCCL nodes, and topology-aware communication overlap.
 
 ## 14. Relationship to existing systems
 

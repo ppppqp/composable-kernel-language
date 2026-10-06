@@ -367,13 +367,26 @@ GPU-object bytes, host entry, target, and the `rocm.bare_ptr` device ABI. CKL im
 object through `import_flydsl_artifact`, normalizes its objects, and assigns a stable registry
 identity. Copying objects on the producer side avoids loading FlyDSL's bundled MLIR extension and
 CKL's upstream MLIR extension in one Python process. `CallState` remains private because it
-describes the JIT host wrapper rather than the device-kernel ABI. Automatic plan export and a HIP
-executor are the remaining execution steps.
+describes the JIT host wrapper rather than the device-kernel ABI.
+
+FlyDSL also exports a verified launch plan for a deliberately narrow subset: top-level
+straight-line `gpu.launch_func` operations, static grid/block/shared-memory values, direct raw
+global-pointer arguments, basic scalars, and scalar constants. It rejects nested control flow,
+computed or view-derived arguments, FlyDSL memrefs whose ABI can expand, clustered launches, and
+cooperative launches. `flydsl_executable_manifest()` translates the accepted plain-data plan into
+manifest v1. Launches initially form a source-order dependency chain, preserving behavior while
+deferring effect-derived edge removal.
+
+The optional HIP executor resolves these backend-neutral plans from `rocm.hsaco` artifacts and the
+`rocm.bare_ptr` ABI. Like the CUDA path, it supports owned and borrowed buffers/streams, ordinary
+topological submission, explicit command-graph instantiation, and executable caching. ROCm
+host-builder emission and the Python-to-C++ artifact registration bridge remain separate
+integration steps.
 
 ### Later work
 
 - Additional CUDA Graph features such as conditional or programmatic dependencies.
-- HIP Graph or another command-graph backend.
+- Additional HIP Graph features and profiling.
 - Multi-GPU placement and P2P/NCCL nodes.
 - Communication/computation overlap and topology-aware planning.
 

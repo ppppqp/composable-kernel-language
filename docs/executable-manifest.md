@@ -53,6 +53,12 @@ FlyDSL now exposes `CompiledFunction.artifact.export_for_orchestration()`. CKL's
 and assigns a deterministic artifact identity. Device payloads cross the boundary as plain bytes,
 so CKL does not load another MLIR Python runtime beside FlyDSL's bundled runtime. The adapter
 deliberately does not read private `CompiledArtifact` or `CallState` fields. FlyDSL's exported
-`rocm.bare_ptr` device ABI is distinct
-from the host-wrapper ABI represented by `CallState`; completing executable integration requires
-the HIP executor and automatic conversion of supported launch regions into this manifest.
+`rocm.bare_ptr` device ABI is distinct from the host-wrapper ABI represented by `CallState`.
+FlyDSL extracts supported straight-line launch regions while its own MLIR runtime owns the module,
+and `flydsl_executable_manifest()` converts that plain-data plan into this schema. The first subset
+accepts direct global pointers, basic scalars/constants, and static launch dimensions. It rejects
+control flow, computed views, memrefs with possible ABI expansion, clustered launches, and
+cooperative launches. The emitted source-order dependency chain is conservative. CKL's optional
+HIP executor consumes the result after the caller registers each copied object as a `rocm.hsaco`
+`KernelArtifact`. Automatic C++ host-builder emission for ROCm plans remains separate from the
+runtime executor.

@@ -33,3 +33,7 @@ endif()
 if(CKL_ENABLE_CUDA_RUNTIME)
   add_subdirectory(Runtime)
 endif()
+
+if(CKL_ENABLE_HIP_RUNTIME AND NOT CKL_ENABLE_CUDA_RUNTIME)
+  add_subdirectory(Runtime)
+endif()

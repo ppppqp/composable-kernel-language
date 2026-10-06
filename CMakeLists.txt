@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(CKL_BUILD_TESTS "Build CKL bootstrap tests" ON)
 option(CKL_ENABLE_MLIR "Build the CKL MLIR optimizer driver" OFF)
 option(CKL_ENABLE_CUDA_RUNTIME "Build the NVIDIA execution runtime" OFF)
+option(CKL_ENABLE_HIP_RUNTIME "Build the HIP execution runtime" OFF)
 option(CKL_BUILD_CUDA_BENCHMARKS "Build the Milestone 0 CUDA feasibility benchmarks" OFF)
 
 if(CKL_BUILD_CUDA_BENCHMARKS)
@@ -17,6 +18,11 @@ endif()
 
 if(CKL_ENABLE_CUDA_RUNTIME OR CKL_BUILD_CUDA_BENCHMARKS)
   find_package(CUDAToolkit REQUIRED)
+endif()
+
+if(CKL_ENABLE_HIP_RUNTIME)
+  find_path(CKL_HIP_INCLUDE_DIR hip/hip_runtime_api.h REQUIRED)
+  find_library(CKL_HIP_LIBRARY amdhip64 REQUIRED)
 endif()
 
 if(CKL_BUILD_CUDA_BENCHMARKS)

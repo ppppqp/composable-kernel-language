@@ -6,7 +6,7 @@ from .compiler import (
     NVIDIATarget,
     extract_gpu_objects,
 )
-from .integrations import FlyDSLArtifact, import_flydsl_artifact
+from .integrations import FlyDSLArtifact, flydsl_executable_manifest, import_flydsl_artifact
 
 __all__ = [
     "CompilationError",
@@ -16,5 +16,6 @@ __all__ = [
     "NVIDIATarget",
     "extract_gpu_objects",
     "FlyDSLArtifact",
+    "flydsl_executable_manifest",
     "import_flydsl_artifact",
 ]
