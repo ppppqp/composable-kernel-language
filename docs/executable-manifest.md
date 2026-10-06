@@ -29,9 +29,10 @@ Argument `slot` values are physical ABI positions and must be contiguous. `logic
 which producer-level operand generated a slot, so one logical operand may expand into multiple
 physical slots in a future ABI adapter.
 
-The v1 NVIDIA host path supports:
+The v1 host path supports:
 
-- `resource` arguments with `packing: "direct_pointer"`;
+- CUDA `cuda.direct` resources with `packing: "direct_pointer"`;
+- ROCm `rocm.bare_ptr` resources with `packing: "bare_pointer"`;
 - named runtime `scalar` arguments of type `i32`, `i64`, `f32`, or `f64`; and
 - embedded `constant` arguments of those scalar types.
 
@@ -59,6 +60,10 @@ and `flydsl_executable_manifest()` converts that plain-data plan into this schem
 accepts direct global pointers, basic scalars/constants, and static launch dimensions. It rejects
 control flow, computed views, memrefs with possible ABI expansion, clustered launches, and
 cooperative launches. The emitted source-order dependency chain is conservative. CKL's optional
-HIP executor consumes the result after the caller registers each copied object as a `rocm.hsaco`
-`KernelArtifact`. Automatic C++ host-builder emission for ROCm plans remains separate from the
-runtime executor.
+HIP executor consumes the result after each copied object is registered as a `rocm.hsaco`
+`KernelArtifact`. `emit_flydsl_cpp_bundle()` automates this narrow bridge: it writes the single
+HSACO payload, runs the manifest importer and host generator, and emits a C++ include with the
+typed HIP plan builder plus an artifact-registry loader. The loader reads the neighboring HSACO at
+application startup; artifact bytes are not embedded in generated source. Multi-object FlyDSL
+artifacts remain unsupported because manifest v1 gives a launch one artifact identity rather than
+a target-selection set.

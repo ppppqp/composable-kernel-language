@@ -641,7 +641,11 @@ remains required for optimized execution. The optional HIP executor accepts `roc
 and `rocm.bare_ptr` invocations through the same `ArtifactRegistry` and `ExecutionPlan`, supports
 borrowed resources, and materializes ordinary launches or HIP Graphs. Its validation compiles a
 real HSACO and skips execution when no HIP device is accessible. ROCm host-builder emission and a
-Python-to-C++ artifact-registration bridge remain later integration work.
+Python-to-C++ artifact-registration bridge are implemented for the deliberately narrow, single
+HSACO FlyDSL subset. The Python bridge retains manifest v1 as the trust boundary, invokes the same
+importer and host generator as standalone users, and emits a typed plan builder plus a registry
+loader that reads the HSACO from the generated bundle directory. It does not introduce Python
+bindings to the runtime or embed large device binaries in C++ source.
 
 ### Milestone 6: justified precision
 

@@ -131,6 +131,11 @@ LogicalResult PlanOp::verify() {
           if (!packing || packing.getValue() != "direct_pointer")
             return kernel.emitOpError(
                 "cuda.direct resource arguments require direct_pointer packing");
+        } else if (kernel.getAbi() == "rocm.bare_ptr") {
+          auto packing = argument.getAs<StringAttr>("packing");
+          if (!packing || packing.getValue() != "bare_pointer")
+            return kernel.emitOpError(
+                "rocm.bare_ptr resource arguments require bare_pointer packing");
         }
       } else if (kind.getValue() == "scalar") {
         auto name = argument.getAs<StringAttr>("name");

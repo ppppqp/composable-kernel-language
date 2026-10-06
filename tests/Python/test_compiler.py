@@ -1,10 +1,12 @@
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from ckl import (
     CompilerOptions,
     NVIDIATarget,
+    emit_flydsl_cpp_bundle,
     flydsl_executable_manifest,
     import_flydsl_artifact,
 )
@@ -150,6 +152,77 @@ class CompilerUtilitiesTest(unittest.TestCase):
         artifact = import_flydsl_artifact(Export())
         with self.assertRaisesRegex(ValueError, "dynamic launch dimensions"):
             flydsl_executable_manifest(artifact)
+
+    def test_flydsl_artifact_emits_rocm_cpp_bundle(self) -> None:
+        @dataclass(frozen=True)
+        class DeviceObject:
+            data: bytes = b"\x7fELF-test"
+            format: int = 0
+            target: str = '#rocdl.target<chip = "gfx942">'
+
+        @dataclass(frozen=True)
+        class Argument:
+            logical_index: int
+            kind: str
+            source_type: str
+            binding: str | None = None
+            value: int | float | None = None
+
+        @dataclass(frozen=True)
+        class Launch:
+            id: int = 0
+            kernel: str = "@kernels::@add_bias"
+            grid: tuple = (4, 1, 1)
+            block: tuple = (256, 1, 1)
+            shared_memory: int = 0
+            arguments: tuple = (
+                Argument(0, "resource", "!fly.ptr<f32, global>", "values"),
+                Argument(1, "scalar", "i32", "count"),
+                Argument(2, "constant", "f32", value=1.0),
+            )
+            dependencies: tuple = ()
+
+        @dataclass(frozen=True)
+        class Plan:
+            host_entry: str = "launch"
+            launches: tuple = (Launch(),)
+
+        @dataclass(frozen=True)
+        class Export:
+            compiled_ir: str = "module {}"
+            source_ir: str = "module { func.func @launch() { return } }"
+            host_entry: str = "launch"
+            backend: str = "rocm"
+            target: str = "gfx942"
+            kernel_abi: str = "rocm.bare_ptr"
+            device_objects: tuple = (DeviceObject(),)
+            launch_plan: Plan = Plan()
+            launch_plan_error: None = None
+
+        artifact = import_flydsl_artifact(Export())
+        repository = Path(__file__).resolve().parents[2]
+        importer = repository / "build/tools/ckl-import-manifest/ckl-import-manifest"
+        hostgen = repository / "build/tools/ckl-hostgen/ckl-hostgen"
+        if not importer.is_file() or not hostgen.is_file():
+            self.skipTest("CKL MLIR tools are not built")
+        with TemporaryDirectory() as temporary:
+            bundle = emit_flydsl_cpp_bundle(
+                artifact,
+                Path(temporary),
+                manifest_importer=importer,
+                host_generator=hostgen,
+            )
+            self.assertEqual(bundle.device_object.read_bytes(), b"\x7fELF-test")
+            generated = bundle.host_source.read_text()
+            self.assertIn('#include "ckl/Runtime/HipRuntime.h"', generated)
+            self.assertIn("HipRuntime &runtime", generated)
+            self.assertIn("rocm.bare_ptr", generated)
+            self.assertIn("KernelArtifact::readFile", generated)
+            self.assertIn('"rocm.hsaco"', generated)
+            self.assertEqual(bundle.plan_builder, "build_flydsl_launch")
+            self.assertEqual(bundle.artifact_loader, "load_flydsl_launch_artifacts")
+            self.assertIn(bundle.plan_builder, generated)
+            self.assertIn(bundle.artifact_loader, generated)
 
 
 if __name__ == "__main__":

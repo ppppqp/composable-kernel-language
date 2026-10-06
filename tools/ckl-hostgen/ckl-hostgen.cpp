@@ -1,4 +1,4 @@
-#include "ckl/Analysis/NvidiaHostEmitter.h"
+#include "ckl/Analysis/HostEmitter.h"
 #include "ckl/Dialect/CKL/IR/CKLDialect.h"
 #include "ckl/Dialect/Exec/IR/CKLExecDialect.h"
 #include "mlir/InitAllDialects.h"
@@ -21,7 +21,7 @@ llvm::cl::opt<std::string> outputFilename("o", llvm::cl::desc("Output C++ file")
 
 int main(int argc, char **argv) {
   llvm::InitLLVM init(argc, argv);
-  llvm::cl::ParseCommandLineOptions(argc, argv, "CKL NVIDIA host-plan generator\n");
+  llvm::cl::ParseCommandLineOptions(argc, argv, "CKL host-plan generator\n");
 
   DialectRegistry registry;
   registerAllDialects(registry);
@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
     llvm::errs() << errorMessage << '\n';
     return 1;
   }
-  if (failed(ckl::emitNvidiaHostBuilders(*module, output->os())))
+  if (failed(ckl::emitHostBuilders(*module, output->os())))
     return 1;
   output->keep();
   return 0;

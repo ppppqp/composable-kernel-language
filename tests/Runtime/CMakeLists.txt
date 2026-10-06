@@ -146,6 +146,27 @@ if(CKL_ENABLE_HIP_RUNTIME)
 
   add_executable(ckl-hip-runtime-validation HipRuntimeValidation.cpp)
   add_dependencies(ckl-hip-runtime-validation ckl-runtime-test-hsaco)
+  if(CKL_ENABLE_MLIR)
+    set(hip_host_plan_mlir "${CMAKE_CURRENT_BINARY_DIR}/hip-host-plan.mlir")
+    set(hip_host_plan_cpp "${CMAKE_CURRENT_BINARY_DIR}/generated-hip-host-plan.inc")
+    add_custom_command(
+      OUTPUT "${hip_host_plan_mlir}"
+      COMMAND $<TARGET_FILE:ckl-import-manifest>
+        "${CMAKE_CURRENT_SOURCE_DIR}/hip-host-plan.json" -o "${hip_host_plan_mlir}"
+      DEPENDS ckl-import-manifest hip-host-plan.json
+      VERBATIM
+    )
+    add_custom_command(
+      OUTPUT "${hip_host_plan_cpp}"
+      COMMAND $<TARGET_FILE:ckl-hostgen> "${hip_host_plan_mlir}" -o "${hip_host_plan_cpp}"
+      DEPENDS ckl-hostgen "${hip_host_plan_mlir}"
+      VERBATIM
+    )
+    add_custom_target(ckl-generated-hip-host-plan DEPENDS "${hip_host_plan_cpp}")
+    add_dependencies(ckl-hip-runtime-validation ckl-generated-hip-host-plan)
+    target_include_directories(ckl-hip-runtime-validation PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_definitions(ckl-hip-runtime-validation PRIVATE CKL_HAS_GENERATED_HIP_PLAN=1)
+  endif()
   target_link_libraries(ckl-hip-runtime-validation PRIVATE CKLHipRuntime)
   target_compile_features(ckl-hip-runtime-validation PRIVATE cxx_std_17)
   target_compile_options(ckl-hip-runtime-validation PRIVATE -Wall -Wextra -Wpedantic)

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "plan": {
+    "source": "@launch",
+    "name": "flydsl.test.plan",
+    "backend": "rocm",
+    "heaps": [],
+    "resources": [
+      {
+        "name": "values",
+        "kind": "external",
+        "device": "rocm:0",
+        "address_space": "global",
+        "alignment": 4
+      }
+    ],
+    "kernels": [
+      {
+        "id": 0,
+        "kernel": "@kernels::@add_bias",
+        "implementation": "flydsl.test.add_bias.0",
+        "artifact": "flydsl.test",
+        "abi": "rocm.bare_ptr",
+        "device": "rocm:0",
+        "grid": [4, 1, 1],
+        "block": [256, 1, 1],
+        "shared_memory": 0,
+        "arguments": [
+          {"slot": 0, "logical_index": 0, "kind": "resource", "resource": "values", "packing": "bare_pointer", "type": "memref<?xi8>"},
+          {"slot": 1, "logical_index": 1, "kind": "scalar", "name": "count", "type": "i32"},
+          {"slot": 2, "logical_index": 2, "kind": "constant", "value": 1.0, "type": "f32"}
+        ],
+        "dependencies": []
+      },
+      {
+        "id": 1,
+        "kernel": "@kernels::@add_bias",
+        "implementation": "flydsl.test.add_bias.1",
+        "artifact": "flydsl.test",
+        "abi": "rocm.bare_ptr",
+        "device": "rocm:0",
+        "grid": [4, 1, 1],
+        "block": [256, 1, 1],
+        "shared_memory": 0,
+        "arguments": [
+          {"slot": 0, "logical_index": 0, "kind": "resource", "resource": "values", "packing": "bare_pointer", "type": "memref<?xi8>"},
+          {"slot": 1, "logical_index": 1, "kind": "scalar", "name": "count", "type": "i32"},
+          {"slot": 2, "logical_index": 2, "kind": "constant", "value": 2.0, "type": "f32"}
+        ],
+        "dependencies": [0]
+      }
+    ]
+  }
+}

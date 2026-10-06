@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import re
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, Sequence
 
 from ..compiler import GPUObject
@@ -65,6 +70,22 @@ class FlyDSLArtifact:
     gpu_objects: tuple[GPUObject, ...]
     launch_plan: FlyDSLLaunchPlan | None
     launch_plan_error: str | None
+
+
+@dataclass(frozen=True)
+class FlyDSLCppBundle:
+    """Files needed to compile and load one FlyDSL plan through CKL."""
+
+    directory: Path
+    manifest: Path
+    device_object: Path
+    host_source: Path
+    plan_builder: str
+    artifact_loader: str
+
+
+class FlyDSLBridgeError(RuntimeError):
+    pass
 
 
 def _import_launch_plan(plan: object | None) -> FlyDSLLaunchPlan | None:
@@ -200,7 +221,7 @@ def flydsl_executable_manifest(artifact: FlyDSLArtifact, *, device: int = 0) -> 
         "schema_version": 1,
         "plan": {
             "source": f"@{artifact.launch_plan.host_entry}",
-            "name": artifact.identity,
+            "name": f"flydsl.{artifact.launch_plan.host_entry}",
             "backend": artifact.backend,
             "heaps": [],
             "resources": [
@@ -216,3 +237,98 @@ def flydsl_executable_manifest(artifact: FlyDSLArtifact, *, device: int = 0) -> 
             "kernels": kernels,
         },
     }
+
+
+def _resolve_tool(explicit: Path | None, environment: str, relative: str) -> Path:
+    candidate = explicit
+    if candidate is None and (configured := os.environ.get(environment)):
+        candidate = Path(configured)
+    if candidate is None:
+        candidate = Path(__file__).resolve().parents[3] / "build" / "tools" / relative / relative
+    candidate = Path(candidate)
+    if not candidate.is_file():
+        raise FileNotFoundError(
+            f"{relative} was not found at {candidate}; set {environment} or pass its path"
+        )
+    return candidate.resolve()
+
+
+def _run_bridge_tool(command: Path, source: str) -> str:
+    process = subprocess.run(
+        (str(command), "-"), input=source, text=True, capture_output=True, check=False
+    )
+    if process.returncode:
+        raise FlyDSLBridgeError(f"{command.name} failed:\n{process.stderr}")
+    return process.stdout
+
+
+def _cpp_identifier(value: str) -> str:
+    result = re.sub(r"[^A-Za-z0-9]", "_", value)
+    return f"_{result}" if not result or result[0].isdigit() else result
+
+
+def emit_flydsl_cpp_bundle(
+    artifact: FlyDSLArtifact,
+    output_directory: Path | str,
+    *,
+    device: int = 0,
+    manifest_importer: Path | None = None,
+    host_generator: Path | None = None,
+) -> FlyDSLCppBundle:
+    """Emit a HSACO and C++ builders from a verified FlyDSL artifact.
+
+    The generated source contains both the ExecutionPlan builder and a small ArtifactRegistry
+    loader. Keeping the HSACO as a neighboring file avoids embedding a potentially large binary
+    in generated C++.
+    """
+
+    manifest = flydsl_executable_manifest(artifact, device=device)
+    if artifact.backend != "rocm":
+        raise ValueError(f"unsupported FlyDSL bundle backend: {artifact.backend}")
+    if len(artifact.gpu_objects) != 1:
+        raise ValueError(
+            "FlyDSL C++ bundle emission currently requires exactly one GPU object, "
+            f"got {len(artifact.gpu_objects)}"
+        )
+    device_object = artifact.gpu_objects[0]
+    if not device_object.data.startswith(b"\x7fELF"):
+        raise ValueError("FlyDSL ROCm GPU object is not an ELF HSACO")
+
+    importer = _resolve_tool(
+        manifest_importer, "CKL_IMPORT_MANIFEST", "ckl-import-manifest"
+    )
+    hostgen = _resolve_tool(host_generator, "CKL_HOSTGEN", "ckl-hostgen")
+    manifest_text = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    executable_mlir = _run_bridge_tool(importer, manifest_text)
+    generated_host = _run_bridge_tool(hostgen, executable_mlir)
+
+    directory = Path(output_directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    manifest_path = directory / "plan.json"
+    object_path = directory / "device.hsaco"
+    host_path = directory / "host.cpp.inc"
+    manifest_path.write_text(manifest_text, encoding="utf-8")
+    object_path.write_bytes(device_object.data)
+
+    name = _cpp_identifier(manifest["plan"]["name"])
+    plan_builder = f"build_{name}"
+    artifact_loader = f"load_{name}_artifacts"
+    registry_loader = f'''\n#include <filesystem>
+
+namespace ckl_generated {{
+
+inline mlir::ckl::runtime::ArtifactRegistry {artifact_loader}(
+    const std::filesystem::path &bundle_directory) {{
+  mlir::ckl::runtime::ArtifactRegistry result;
+  result.add(mlir::ckl::runtime::KernelArtifact::readFile(
+      {json.dumps(artifact.identity)}, "rocm.hsaco", {json.dumps(artifact.target)},
+      bundle_directory / "device.hsaco"));
+  return result;
+}}
+
+}} // namespace ckl_generated
+'''
+    host_path.write_text(generated_host + registry_loader, encoding="utf-8")
+    return FlyDSLCppBundle(
+        directory, manifest_path, object_path, host_path, plan_builder, artifact_loader
+    )

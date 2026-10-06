@@ -379,9 +379,11 @@ deferring effect-derived edge removal.
 
 The optional HIP executor resolves these backend-neutral plans from `rocm.hsaco` artifacts and the
 `rocm.bare_ptr` ABI. Like the CUDA path, it supports owned and borrowed buffers/streams, ordinary
-topological submission, explicit command-graph instantiation, and executable caching. ROCm
-host-builder emission and the Python-to-C++ artifact registration bridge remain separate
-integration steps.
+topological submission, explicit command-graph instantiation, and executable caching.
+`ckl-hostgen` now emits `HipRuntime`/`HipBuffer` builders for those plans. The Python
+`emit_flydsl_cpp_bundle()` bridge writes one producer-copied HSACO and emits both the plan builder
+and a small `ArtifactRegistry` loader, while continuing to use the versioned manifest as the
+compiler boundary.
 
 ### Later work
 

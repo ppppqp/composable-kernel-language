@@ -1,3 +1,4 @@
+#include "ckl/Analysis/HostEmitter.h"
 #include "ckl/Analysis/NvidiaHostEmitter.h"
 
 #include "ckl/Dialect/Exec/IR/CKLExecOps.h"
@@ -65,15 +66,34 @@ struct ScalarBinding {
   Type type;
 };
 
+struct BackendConfig {
+  StringRef backend;
+  StringRef abi;
+  StringRef packing;
+  StringRef devicePrefix;
+  StringRef runtimeType;
+  StringRef bufferType;
+};
+
+FailureOr<BackendConfig> backendConfig(exec::PlanOp plan) {
+  if (plan.getBackend() == "cuda")
+    return BackendConfig{"cuda", "cuda.direct", "direct_pointer", "cuda",
+                         "NvidiaRuntime", "NvidiaBuffer"};
+  if (plan.getBackend() == "rocm")
+    return BackendConfig{"rocm", "rocm.bare_ptr", "bare_pointer", "rocm",
+                         "HipRuntime", "HipBuffer"};
+  plan.emitError("host emission supports only cuda and rocm executable plans");
+  return failure();
+}
+
 void emitCString(StringRef value, llvm::raw_ostream &output) {
   output << '"';
   output.write_escaped(value);
   output << '"';
 }
 
-LogicalResult emitPlan(exec::PlanOp plan, llvm::raw_ostream &output) {
-  if (plan.getBackend() != "cuda")
-    return plan.emitError("NVIDIA host emission requires a cuda executable plan");
+LogicalResult emitPlan(exec::PlanOp plan, const BackendConfig &config,
+                       llvm::raw_ostream &output) {
 
   SmallVector<exec::HeapOp> heaps(plan.getBody().front().getOps<exec::HeapOp>());
   llvm::sort(heaps, [](exec::HeapOp lhs, exec::HeapOp rhs) { return lhs.getId() < rhs.getId(); });
@@ -87,45 +107,50 @@ LogicalResult emitPlan(exec::PlanOp plan, llvm::raw_ostream &output) {
              [](exec::KernelOp lhs, exec::KernelOp rhs) { return lhs.getId() < rhs.getId(); });
   std::map<std::string, Type> scalarBindings;
   for (exec::KernelOp kernel : kernels) {
-    if (kernel.getAbi() != "cuda.direct")
-      return kernel.emitError("NVIDIA host emission requires the cuda.direct kernel ABI");
+    if (kernel.getAbi() != config.abi)
+      return kernel.emitError() << config.backend << " host emission requires the "
+                                << config.abi << " kernel ABI";
     for (DictionaryAttr argument : kernel.getArguments().getAsRange<DictionaryAttr>()) {
       StringRef kind = argument.getAs<StringAttr>("kind").getValue();
+      if (kind == "resource" &&
+          argument.getAs<StringAttr>("packing").getValue() != config.packing)
+        return kernel.emitError() << config.abi << " resource arguments require "
+                                  << config.packing << " packing";
       if (kind == "scalar") {
         std::string name = argument.getAs<StringAttr>("name").getValue().str();
         Type type = argument.getAs<TypeAttr>("type").getValue();
         if (failed(cppScalarType(type)))
           return kernel.emitError(
-              "NVIDIA host emission supports only i32, i64, f32, and f64 scalars");
+              "host emission supports only i32, i64, f32, and f64 scalars");
         auto [found, inserted] = scalarBindings.emplace(name, type);
         if (!inserted && found->second != type)
           return kernel.emitError("scalar binding is used with inconsistent physical types");
       } else if (kind == "constant" &&
                  failed(cppScalarType(argument.getAs<TypeAttr>("type").getValue()))) {
-        return kernel.emitError("NVIDIA host emission encountered an unsupported constant type");
+        return kernel.emitError("host emission encountered an unsupported constant type");
       }
     }
   }
 
   std::string planName = identifier(plan.getName());
   output << "struct " << planName << "Plan {\n"
-         << "  std::vector<mlir::ckl::runtime::NvidiaBuffer> heaps;\n"
-         << "  std::vector<mlir::ckl::runtime::NvidiaBuffer> retained;\n"
+         << "  std::vector<mlir::ckl::runtime::" << config.bufferType << "> heaps;\n"
+         << "  std::vector<mlir::ckl::runtime::" << config.bufferType << "> retained;\n"
          << "  mlir::ckl::runtime::ExecutionPlan plan;\n"
          << "};\n\n";
   output << planName << "Plan build_" << planName
-         << "(mlir::ckl::runtime::NvidiaRuntime &runtime";
+         << "(mlir::ckl::runtime::" << config.runtimeType << " &runtime";
 
   SmallVector<exec::ResourceOp> externalResources;
   for (exec::ResourceOp resource : resources)
     if (resource.getKind() == "external") {
       externalResources.push_back(resource);
-      output << ",\n    const mlir::ckl::runtime::NvidiaBuffer &"
+      output << ",\n    const mlir::ckl::runtime::" << config.bufferType << " &"
              << identifier(resource.getName());
     }
   for (const auto &[name, type] : scalarBindings)
     output << ",\n    " << *cppScalarType(type) << ' ' << identifier(name);
-  output << ") {\n  " << planName << "Plan result;\n";
+  output << ") {\n  (void)runtime;\n  " << planName << "Plan result;\n";
 
   for (exec::HeapOp heap : heaps)
     output << "  result.heaps.push_back(runtime.allocate(" << heap.getBytes() << "));\n";
@@ -151,8 +176,10 @@ LogicalResult emitPlan(exec::PlanOp plan, llvm::raw_ostream &output) {
     std::size_t id = kernel.getId();
     auto [backend, ordinal] = kernel.getDevice().split(':');
     int64_t deviceOrdinal = 0;
-    if (backend != "cuda" || ordinal.getAsInteger(10, deviceOrdinal) || deviceOrdinal < 0)
-      return kernel.emitError("NVIDIA host emission requires a cuda:<ordinal> device");
+    if (backend != config.devicePrefix || ordinal.getAsInteger(10, deviceOrdinal) ||
+        deviceOrdinal < 0)
+      return kernel.emitError() << config.backend << " host emission requires a "
+                                << config.devicePrefix << ":<ordinal> device";
     output << "  mlir::ckl::runtime::KernelArguments arguments_" << id << ";\n";
     SmallVector<DictionaryAttr> arguments(kernel.getArguments().getAsRange<DictionaryAttr>());
     llvm::sort(arguments, [](DictionaryAttr lhs, DictionaryAttr rhs) {
@@ -194,19 +221,39 @@ LogicalResult emitPlan(exec::PlanOp plan, llvm::raw_ostream &output) {
 
 } // namespace
 
-LogicalResult mlir::ckl::emitNvidiaHostBuilders(ModuleOp module, llvm::raw_ostream &output) {
-  output << "// Generated by ckl-hostgen. Unresolved direct-pointer execution plan.\n"
-         << "#include \"ckl/Runtime/NvidiaRuntime.h\"\n"
-         << "#include <cstdint>\n#include <utility>\n#include <vector>\n\n"
-         << "namespace ckl_generated {\n\n";
-  bool emitted = false;
+LogicalResult mlir::ckl::emitHostBuilders(ModuleOp module, llvm::raw_ostream &output) {
+  SmallVector<std::pair<exec::PlanOp, BackendConfig>> plans;
+  bool needsCuda = false;
+  bool needsRocm = false;
   for (exec::PlanOp plan : module.getOps<exec::PlanOp>()) {
-    if (failed(emitPlan(plan, output)))
+    FailureOr<BackendConfig> config = backendConfig(plan);
+    if (failed(config))
       return failure();
-    emitted = true;
+    needsCuda |= config->backend == "cuda";
+    needsRocm |= config->backend == "rocm";
+    plans.emplace_back(plan, *config);
   }
-  if (!emitted)
-    return module.emitError("NVIDIA host emission requires at least one ckl_exec.plan");
+  if (plans.empty())
+    return module.emitError("host emission requires at least one ckl_exec.plan");
+
+  output << "// Generated by ckl-hostgen. Unresolved direct-pointer execution plan.\n";
+  if (needsCuda)
+    output << "#include \"ckl/Runtime/NvidiaRuntime.h\"\n";
+  if (needsRocm)
+    output << "#include \"ckl/Runtime/HipRuntime.h\"\n";
+  output << "#include <cstdint>\n#include <utility>\n#include <vector>\n\n"
+         << "namespace ckl_generated {\n\n";
+  for (const auto &[plan, config] : plans) {
+    if (failed(emitPlan(plan, config, output)))
+      return failure();
+  }
   output << "} // namespace ckl_generated\n";
   return success();
+}
+
+LogicalResult mlir::ckl::emitNvidiaHostBuilders(ModuleOp module, llvm::raw_ostream &output) {
+  for (exec::PlanOp plan : module.getOps<exec::PlanOp>())
+    if (plan.getBackend() != "cuda")
+      return plan.emitError("NVIDIA host emission requires a cuda executable plan");
+  return emitHostBuilders(module, output);
 }

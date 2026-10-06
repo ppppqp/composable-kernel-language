@@ -117,7 +117,7 @@ The repository contains the reusable bootstrap and the first five milestones of 
   CKL's compiler libraries;
 - a `ckl-opt` driver that registers CKL alongside upstream MLIR dialects and GPU translations;
 - Python utilities for invoking the optimizer, describing an NVIDIA target, extracting generated
-  GPU objects, and forming compilation cache keys; and
+  GPU objects, forming compilation cache keys, and emitting a FlyDSL HSACO/C++ bundle; and
 - a CUDA Milestone 0 feasibility harness with two candidate workloads and four execution modes.
 
 Milestone 0 selected the underfilled `multi_field` workload after its explicit graph ran 1.56x
@@ -169,8 +169,9 @@ build/tools/ckl-opt/ckl-opt input.mlir \
 build/tools/ckl-hostgen/ckl-hostgen plan.mlir -o generated-plan.cpp
 ```
 
-`ckl-hostgen` deliberately rejects `ckl.graph`; executable verification must happen first. This
-path requires dispatches to advertise the `cuda.direct` capability.
+`ckl-hostgen` deliberately rejects `ckl.graph`; executable verification must happen first. CUDA
+plans use `cuda.direct`/`direct_pointer`, while ROCm plans use
+`rocm.bare_ptr`/`bare_pointer`.
 
 An external compiler can construct the same verified executable IR through the v1 JSON manifest:
 
@@ -288,6 +289,7 @@ compiled = flyc.compile(program, *arguments)
 exported = compiled.artifact.export_for_orchestration()
 artifact = ckl.import_flydsl_artifact(exported)
 manifest = ckl.flydsl_executable_manifest(artifact)
+bundle = ckl.emit_flydsl_cpp_bundle(artifact, "build/flydsl-bundle")
 ```
 
 FlyDSL copies its embedded `gpu.binary` payloads into plain Python objects while its own MLIR
@@ -295,9 +297,14 @@ runtime owns the module. CKL normalizes those bytes and assigns a deterministic 
 without loading a second MLIR Python extension in the same process. FlyDSL currently identifies
 their physical device ABI as `rocm.bare_ptr`. For straight-line launches with static dimensions,
 direct raw global pointers, and basic scalar arguments, FlyDSL also exports a verified plain-data
-launch plan and CKL converts it to executable manifest v1. More complex control flow, computed
-views, and memref ABI expansion are rejected. Execution will require the planned HIP backend rather
-than the existing NVIDIA executor.
+launch plan and CKL converts it to executable manifest v1. `emit_flydsl_cpp_bundle` runs that
+manifest through CKL verification and host generation, writes the HSACO beside it, and emits one
+C++ include containing a typed `HipRuntime` plan builder and an `ArtifactRegistry` loader. The
+generated loader takes the bundle directory, so artifact placement remains explicit and the
+binary is not copied into C++ source. The returned bundle reports the stable generated
+`plan_builder` and `artifact_loader` symbol names, which are derived from FlyDSL's host entry rather
+than the content hash. More complex control flow, computed views, memref ABI
+expansion, and multi-object artifacts are rejected.
 
 ## Milestone 0 feasibility benchmarks
 
@@ -359,9 +366,9 @@ ctest --test-dir build-hip --output-on-failure
 ```
 
 The API is declared in `include/ckl/Runtime/HipRuntime.h`. The validation compiles a small HSACO,
-registers it as a `KernelArtifact`, and checks ordinary launches, HIP Graph execution, graph-cache
-reuse, and borrowed-buffer offset preservation. It is reported as skipped when no HIP device is
-accessible.
+imports a ROCm manifest, compiles the generated host builder, registers the artifact, and checks
+ordinary launches, HIP Graph execution, graph-cache reuse, and borrowed-buffer offset
+preservation. It is reported as skipped when no HIP device is accessible.
 
 ## Acknowledgments
 
