@@ -624,6 +624,15 @@ CKL-analyzed program. Artifact bytes remain owned by the producer and are regist
 The importer is a post-analysis boundary and therefore never guesses effects, topology, or ABI
 packing omitted by the producer.
 
+The FlyDSL checkout now has a public `OrchestrationArtifact` export reachable through
+`CompiledFunction.artifact`. It carries source and final IR, target identity, and an explicit
+`rocm.bare_ptr` device ABI while leaving the native runtime uninitialized. CKL's Python adapter
+imports producer-copied GPU-object bytes and creates a deterministic artifact-registry identity.
+The plain-data handoff avoids loading two MLIR Python extensions in the same process and removes
+the dependency on private `CompiledArtifact`, `_keepalive`, and `CallState` state. It does not yet
+claim executable interoperability: manifest construction for supported launch regions and the HIP
+executor remain required.
+
 ### Milestone 6: justified precision
 
 - Profile false dependencies.

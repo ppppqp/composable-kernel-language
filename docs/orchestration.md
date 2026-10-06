@@ -361,6 +361,15 @@ can use CKL graph construction to derive dependencies or export an already-prove
 importer does not accept effect annotations and does not reconstruct missing dependencies. The
 same host generator and executor consume imported and CKL-lowered plans.
 
+The first concrete FlyDSL patch is implemented. `CompiledFunction.artifact` exposes the retained
+compiler artifact, and `export_for_orchestration()` returns immutable source IR, final IR, copied
+GPU-object bytes, host entry, target, and the `rocm.bare_ptr` device ABI. CKL imports this public
+object through `import_flydsl_artifact`, normalizes its objects, and assigns a stable registry
+identity. Copying objects on the producer side avoids loading FlyDSL's bundled MLIR extension and
+CKL's upstream MLIR extension in one Python process. `CallState` remains private because it
+describes the JIT host wrapper rather than the device-kernel ABI. Automatic plan export and a HIP
+executor are the remaining execution steps.
+
 ### Later work
 
 - Additional CUDA Graph features such as conditional or programmatic dependencies.

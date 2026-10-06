@@ -48,6 +48,11 @@ semantic graph construction before executable lowering or perform those tasks it
 the resulting plan. The importer validates the structural and backend invariants represented by
 `ckl_exec`; it never fills in omitted packing rules or dependencies.
 
-For FlyDSL, a suitable public integration API would export its compiled GPU object, entry point,
-launch dimensions, and ordered physical slots into this format. CKL does not read private
-`CompiledArtifact` or `CallState` fields.
+FlyDSL now exposes `CompiledFunction.artifact.export_for_orchestration()`. CKL's
+`import_flydsl_artifact` consumes that public object, normalizes its copied `gpu.binary` objects,
+and assigns a deterministic artifact identity. Device payloads cross the boundary as plain bytes,
+so CKL does not load another MLIR Python runtime beside FlyDSL's bundled runtime. The adapter
+deliberately does not read private `CompiledArtifact` or `CallState` fields. FlyDSL's exported
+`rocm.bare_ptr` device ABI is distinct
+from the host-wrapper ABI represented by `CallState`; completing executable integration requires
+the HIP executor and automatic conversion of supported launch regions into this manifest.

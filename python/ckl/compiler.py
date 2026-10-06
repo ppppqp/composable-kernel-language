@@ -111,7 +111,7 @@ def extract_gpu_objects(source: str) -> tuple[GPUObject, ...]:
     if "gpu.binary" not in source:
         return ()
     from mlir import ir
-    from mlir.dialects import gpu, nvvm  # noqa: F401 - registers dialect attributes
+    from mlir.dialects import gpu, nvvm, rocdl  # noqa: F401 - registers dialect attributes
 
     context = ir.Context()
     context.allow_unregistered_dialects = True

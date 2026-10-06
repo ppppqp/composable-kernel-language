@@ -277,6 +277,20 @@ options = ckl.CompilerOptions(target=target)
 `compile_module` remains available in `ckl.compiler` for raw MLIR input. It requires a built
 `ckl-opt`; extracting embedded GPU objects additionally requires matching MLIR Python bindings.
 
+FlyDSL's patched public boundary can be imported without intercepting its executor internals:
+
+```python
+compiled = flyc.compile(program, *arguments)
+exported = compiled.artifact.export_for_orchestration()
+artifact = ckl.import_flydsl_artifact(exported)
+```
+
+FlyDSL copies its embedded `gpu.binary` payloads into plain Python objects while its own MLIR
+runtime owns the module. CKL normalizes those bytes and assigns a deterministic artifact identity,
+without loading a second MLIR Python extension in the same process. FlyDSL currently identifies
+their physical device ABI as `rocm.bare_ptr`; execution will require the planned HIP backend rather
+than the existing NVIDIA executor.
+
 ## Milestone 0 feasibility benchmarks
 
 The optional CUDA benchmark compares sequential launches, single-stream capture, manually
