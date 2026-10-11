@@ -93,9 +93,11 @@ StringAttr DispatchOp::getArtifactIdentity() {
 }
 
 StringAttr DispatchOp::getArgumentABI() {
-  for (Attribute capability : getCapabilities())
-    if (cast<StringAttr>(capability).getValue() == "cuda.direct")
-      return StringAttr::get(getContext(), "cuda.direct");
+  for (Attribute capability : getCapabilities()) {
+    StringRef abi = cast<StringAttr>(capability).getValue();
+    if (abi == "cuda.direct" || abi == "rocm.bare_ptr")
+      return StringAttr::get(getContext(), abi);
+  }
   return {};
 }
 

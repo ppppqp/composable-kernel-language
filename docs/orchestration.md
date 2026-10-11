@@ -1,415 +1,102 @@
-# Effect-Derived GPU Orchestration
+# Execution planning inside the CKL DSL
 
-This document describes CKL's target architecture. Milestone 0 feasibility measurement, the
-Milestone 1 semantic foundation, Milestone 2 graph construction, the focused Milestone 3 NVIDIA
-runtime, and Milestone 4 planning are implemented. Static direct-pointer graphs support generated
-C++ host-plan builders; broader producer-specific ABI lowering remains a design target.
-
-The normative project scope and acceptance criteria are maintained in the
-[revised project specification](../specs/mlir-layout-aware-gpu-compiler-spec.md).
-
-## Goal
-
-CKL will turn a program containing GPU kernel dispatches into a sound, inspectable, and measured
-execution plan. Kernel bodies remain the source of truth for memory behavior. CKL derives the
-dependencies between dispatches instead of requiring authors to maintain separate read/write or
-port declarations.
-
-The project is deliberately narrower than an end-to-end tensor compiler. CKL does not need to
-invent kernel schedules, replace an existing GPU DSL, or predict the runtime of a kernel from a
-static hardware model. It operates at the boundary between independently compiled kernels and a
-GPU command runtime.
+CKL owns both kernels and their composition. Execution planning is a compiler stage of the new
+language. The language direction is described in [dsl.md](dsl.md), and the normative requirements
+are in the [project specification](../specs/mlir-layout-aware-gpu-compiler-spec.md).
 
 ## Compilation model
 
 ```text
-producer dialects
-    |
-    | operations implementing standard MLIR and CKL interfaces
-    v
-effect extraction and alias analysis
-    |
-    | per-kernel summaries bound to actual dispatch operands
-    v
-orchestration graph
-    |
-    +--> dependency and region analysis
-    +--> resource lifetime and memory planning
-    +--> graph formation and target profiling
-    v
-backend executable and decision report
+CKL source
+    -> typed CKL kernel/program IR
+    -> kernel effect summaries and base-resource aliases
+    -> dispatch dependency graph with provenance
+    -> resource lifetimes and memory plan
+    -> verified ckl_exec plan + CKL-generated device artifacts
+    -> generated host builder
+    -> CUDA or HIP executor
 ```
 
-Kernel bodies may remain in their producer dialects while CKL constructs a normalized graph of
-dispatches and resources. A producer should not have to lower its computation into CKL's kernel
-dialect to use the orchestration layer.
+Upstream MLIR dialects are internal tools for arithmetic, structured control flow, memory
+semantics, and target lowering. CKL's access-region and dispatch interfaces organize its own
+compiler passes. There is no external DSL adapter, external dispatch registration, or JSON
+launch-plan import path.
 
-## Dialect interoperability contract
+## Effect inference
 
-Supporting a new MLIR-based GPU DSL requires semantic interfaces rather than CKL-specific
-operation names. Interfaces may be implemented by the dialect or attached through MLIR external
-models.
+Kernel bodies are authoritative. Standard MLIR memory effects and CKL region semantics describe
+reads, writes, allocations, frees, atomics, and synchronization. Calls substitute actual arguments
+into interprocedural summaries. Private, nonescaping allocations do not become program resources.
+Compiler-owned summary attributes are recomputed after body changes.
 
-### Memory effects
+Alias analysis traces views and casts to base resources. Compiler allocations have fresh
+identities; caller-supplied buffers may alias. The first correctness baseline is whole-buffer
+analysis. Region precision is added only when measured false dependencies justify it.
 
-Operations use MLIR's memory-effect interface to report reads, writes, allocations, and frees on
-specific SSA resources. Pure operations report no effects. Atomics report both read and write
-effects and preserve their ordering scope.
+Strict mode rejects missing semantics. Conservative mode marks unknown operations as reading and
+writing reachable resources and imposing an ordering barrier. This supports diagnostics and
+analysis; it does not make opaque operations executable.
 
-The interface must describe every implicit effect that is relevant across dispatch boundaries,
-including device globals, communication state, random-number state, and externally observable
-I/O. A DSL that cannot represent such state must conservatively expose it as an unknown resource.
+## Graph and storage planning
 
-### Access regions
+`ckl.dispatch` references a CKL kernel body and returns an SSA completion token. The graph builder
+binds formal effects to actual arguments and adds SSA, memory-conflict, explicit-token, lifetime,
+control, and unknown-effect barrier edges. Each edge retains its reasons and source locations;
+graphs include DOT output. Internal kernel synchronization remains node metadata.
 
-Standard memory effects identify a resource but do not always identify the precise part of that
-resource that is accessed. CKL will define an optional access-region interface capable of
-returning:
+The memory planner uses graph reachability and complete resource user sets. Temporaries share
+storage only when all uses of one lifetime precede all uses of the other and size, alignment,
+address space, and device permit reuse. It never adds ordering to force reuse. External and
+persistent resources are excluded. Reports retain original and planned bytes and reuse reasons.
 
-- a whole-resource access;
-- a static byte or multidimensional interval;
-- an affine region derived from an indexing map and iteration domain; or
-- an unknown region.
+Static identity-layout integer and float memrefs are planned automatically. Dynamic or
+unsupported resources receive an unavailable reason rather than an assumed size.
 
-Region information is an optimization aid. If it is absent or cannot be proven, CKL assumes the
-whole resource is accessed. Disjoint-region concurrency must never be required for correctness.
+## Analysis-to-execution boundary
 
-### Dispatches
+`ckl-lower-graph-to-exec` converts analyzed graphs to verified `ckl_exec.plan` operations with heaps,
+resource slices, launch metadata, CKL backend ABI identities, physical argument slots, and reduced
+dependencies. `ckl-hostgen` consumes only this executable IR and emits owning C++ builders.
 
-A dispatch interface identifies a schedulable kernel invocation and provides:
+The current static subset requires unconditional host-entry-block dispatches. Conditional or
+repeated host nodes are rejected until executable IR can represent predicates and trip counts.
+Base identity-layout pointer arguments are supported; views/subviews require offset-aware packing
+and currently fail executable lowering. Supported scalar bindings/constants are i32, i64, f32,
+and f64. Computed host scalars and dynamic launch/resource metadata remain unsupported.
 
-- the referenced kernel body or symbol;
-- the actual arguments;
-- grid, block, and dynamic shared-memory parameters;
-- target device and required capabilities; and
-- explicit completion or synchronization dependencies that cannot be inferred from memory.
+CKL backend lowering will generate ABI identities and launch metadata automatically. Today the
+low-level MLIR fixtures carry these attributes explicitly. They are compiler plumbing, not the
+intended source-language API.
 
-CKL computes an interprocedural effect summary for the referenced body and substitutes the actual
-arguments at each dispatch site. Nested calls are summarized to a fixed point. Recursion or an
-unavailable callee body produces conservative effects.
+## Runtime
 
-The first external model targets upstream `gpu.launch_func`, the launch operation emitted by
-FlyDSL. It preserves the nested `gpu.module`/`gpu.func` symbol, treats `kernelOperands` as the
-ordered physical argument list, maps GPU async dependencies to explicit completion dependencies,
-and derives effects directly from the referenced `gpu.func` body. Launch geometry and dynamic
-shared-memory size must currently be compile-time constants because the normalized graph stores a
-static launch descriptor. The launch carries only CKL scheduling metadata that cannot be derived
-from the kernel body: required `ckl.device` and stable `ckl.implementation` attributes, plus an
-optional `ckl.capabilities` list. The implementation identity should include the producer's body,
-specialization, ABI, and target in its cache identity; CKL deliberately does not substitute the
-kernel symbol as a potentially stale identity.
+`KernelArtifact`, `ArtifactRegistry`, `KernelInvocation`, and `ExecutionPlan` are internal compiler
+and runtime handoff types. The executor loads CUBIN or HSACO objects, resolves entry points, and
+passes packed arguments to the device driver. Generated host builders allocate declared heaps,
+retain external buffers, and construct the plan without resolving native functions.
 
-Triton requires a later adapter boundary. Its compiled kernel ABI can expand logical arguments and
-add hidden scratch or descriptor arguments, so adapting TTIR alone would lose information needed
-for a correct launch. The intended integration point is Triton's compiled-kernel artifact:
-binary/module identity, exported symbol, target metadata, flattened typed signature, launch
-metadata, and hidden-argument requirements. Those fields should be materialized into executable IR
-rather than reconstructed by CKL.
+The optional CUDA and HIP executors support ordinary launches, explicit command graphs,
+executable caching, and owned or borrowed buffers and streams. CUDA additionally has parameter
+update and topology batching support. Borrowed storage and streams must remain alive during
+execution and belong to the selected device/context.
 
-### Aliases, views, and ownership
-
-Alias analysis traces casts, views, and subviews to an underlying resource and transforms their
-access regions accordingly. A compiler-owned allocation has a fresh identity. External pointer or
-memref arguments may alias unless their type or calling convention provides a stronger guarantee.
-
-Unknown aliasing reduces available parallelism but remains correct. CKL must not require `noalias`
-annotations for correctness.
-
-### Strict and conservative modes
-
-Strict mode rejects a schedulable program if an operation has neither known purity nor complete
-effect semantics. It is intended for compiler testing and reproducible optimization.
-
-Conservative mode permits unknown operations but treats them as reading and writing all reachable
-resources and as ordering barriers. Foreign libraries, inline assembly, and opaque binaries enter
-through this path until an adapter supplies a better summary.
-
-Compiler-derived summaries may be materialized as attributes for diagnostics and caching, but
-they are never authoritative source annotations. Any transformation that changes a body
-invalidates and recomputes its summary.
-
-## Orchestration graph
-
-Graph edges arise from:
-
-- direct SSA dependencies;
-- write-to-read, write-to-write, and read-to-write conflicts on possibly overlapping regions;
-- allocation and lifetime constraints;
-- explicit synchronization, communication, or control dependencies; and
-- conservative barriers for unknown behavior.
-
-Read-to-read accesses do not conflict. Accesses to provably disjoint regions do not conflict.
-Function arguments and SSA results replace manually named logical ports in the target design.
-
-The initial implementation should infer whole-buffer dependencies. Precise affine or symbolic
-regions should be added only after profiles identify false dependencies that matter in a real
-workload.
-
-The implemented `ckl-build-graph` pass emits one `ckl.graph` per host function containing
-dispatches. Dispatches produce SSA `!ckl.token` completion values, and consumers list token
-operands for dependencies that are explicit rather than memory-derived. Graph nodes retain their
-bound accesses, synchronization metadata, and source location; graph edges retain all applicable
-reasons and endpoint locations. Internal kernel synchronization is descriptive metadata, not an
-automatic dependency between separate launches. Unknown effects become cross-node barriers in
-conservative mode.
-
-For static identity-layout integer and floating-point memrefs, the pass also derives resource user
-sets from dispatch accesses and invokes the Core memory planner. The graph receives resource,
-heap, offset, byte-count, and reuse-provenance attributes plus the launch dimensions needed by a
-later executable lowering. Dynamic or unsupported layouts produce an explicit unavailable reason;
-they are never assigned a guessed size.
-
-The current conflict model is deliberately whole-buffer. Distinct CKL allocations are proven
-disjoint, views retain their base identity, and external resources may alias. Nested control flow
-is preserved conservatively with source-order control edges. The pass also emits a DOT rendering
-for inspection; it does not execute the graph.
-
-Conservative graph construction is not evidence that a graph is executable. Every materialized
-node records whether it is unconditionally executed in the single host entry block. Executable
-lowering and host generation reject nodes nested in structured control flow or a multi-block CFG;
-ordering edges cannot encode a branch predicate or loop trip count. Conditional and repeated work
-must first be represented explicitly in executable IR.
-
-Dependency resources and launch arguments are also kept distinct. A subview is normalized to its
-base allocation for alias analysis, while its argument descriptor is marked as requiring view-aware
-packing. The current `cuda.direct` host path accepts only base, identity-layout memrefs and rejects
-views, subviews, and non-identity layouts instead of silently dropping their offsets.
-
-`ckl-lower-graph-to-exec` is the transformation boundary between analysis and execution. It
-consumes `ckl.graph` and emits a verified `ckl_exec.plan` containing heap sizes, resource slices,
-static launch metadata, producer ABI identity, contiguous physical argument slots, and reduced
-kernel dependencies. The transformation requires a successful static memory plan and complete
-launch/ABI metadata. It rejects unresolved ABIs rather than reproducing producer packing rules.
-
-Dependency reduction happens while lowering `ckl.graph` to `ckl_exec.plan`. The C++ host generator
-now consumes only this verified executable dialect; it no longer interprets analysis graphs or
-reconstructs their topology. The generated plan stays unresolved: it names immutable producer
-artifacts, entry points, physical ABI slots, launch geometry, and dependencies. A thin executor
-imports the artifacts and converts the plan to native CUDA or HIP commands.
-
-## Execution planning
-
-The first backend targets a single NVIDIA GPU and can choose among ordinary CUDA launches and an
-explicit CUDA Graph. Planning includes:
-
-- graph boundaries and executable-graph caching;
-- parameter updates for stable topology;
-- temporary-buffer lifetime and reuse;
-- legal concurrency exposed by the dependency graph;
-- iteration batching or graph unrolling; and
-- multiple graph instances and buffer sets for in-flight work.
-
-CUDA retains control of ready-node scheduling inside a graph. CKL optimizes the topology,
-resources, graph configuration, and supplied implementations; it does not claim to replace the
-GPU driver's internal scheduler.
-
-Static resource data is used for legality and diagnostics. Performance choices are based on
-target measurements of complete plans. Search results are cached by kernel identity, shapes,
-target, driver/runtime version, and relevant graph configuration.
-
-Multiple implementations are not required. If a producer supplies compiler-generated launch
-variants or independently authored CKL implementations, their effects are derived from their
-bodies and their observable contracts must be compatible. Selection is empirical and operates on
-end-to-end graph performance rather than a manually assigned execution cost.
-
-## Initial workload
-
-The initial workload should be a repeated scientific simulation or iterative solver with a
-pipeline resembling:
-
-```text
-                         +--> update field A --> boundary A --+
-previous state ----------+                                    +--> residual
-                         +--> update field B --> boundary B --+       |
-                                                                       v
-                                                              convergence/update
-```
-
-Candidates include Hotspot3D, an FDTD solver, TeaLeaf, or a focused multi-field stencil
-mini-application. The chosen program should contain multiple sub-millisecond kernels, temporary
-buffers, at least one independent branch, a reduction, and many repeated iterations. A program
-dominated by a single saturating kernel is not an orchestration benchmark.
-
-An optional reuse evaluation should mix CKL kernels with an upstream MLIR GPU dialect, with FlyDSL
-as the preferred first target. Its graph must be constructed through interfaces with no per-call
-effect annotation. This evaluation measures adapter quality; it is not a correctness or usefulness
-requirement for the CKL-authored workload.
+CKL controls topology, resources, graph boundaries, batching, and instances in flight. The driver
+schedules ready nodes. Performance choices use measurements of complete plans; static resource
+information establishes legality rather than predicted speed.
 
 ## Validation plan
 
-### Correctness
+Correctness checks compare sequential execution with derived graphs and cover aliasing, views,
+in-place updates, allocations, calls, synchronization, and conservative unknown effects. Small
+generated graphs are checked against a dependency oracle. Executable validation rejects unsupported
+control flow or argument packing before host code is emitted.
 
-Randomized differential tests compare a conservative sequential execution with the derived graph.
-They cover:
+Benchmarks compare sequential launches, single-stream capture, manual streams, a hand-written
+explicit graph, an unoptimized CKL graph, and the measured CKL plan. Report steady-state device
+time, end-to-end latency, host overhead, setup/tuning cost, peak temporary memory, overlap,
+throughput, and amortization iterations.
 
-- aliased arguments and overlapping subviews;
-- disjoint subviews;
-- in-place updates;
-- allocation, reuse, and deallocation;
-- atomics and synchronization;
-- nested calls and control flow; and
-- unknown or foreign operations in both strict and conservative modes.
-
-Small generated graphs are also checked against a dependency oracle. A missing edge is a
-correctness failure; an unnecessary edge is a precision limitation.
-
-### Baselines
-
-Each workload is compared with:
-
-1. sequential single-stream CUDA launches;
-2. single-stream CUDA Graph capture;
-3. a manually scheduled multi-stream implementation;
-4. a hand-written explicit CUDA Graph with minimal dependencies;
-5. a CKL-derived graph without profile-guided choices; and
-6. the complete CKL plan.
-
-The explicit graph is the performance ceiling for graph construction. Where the workload can be
-represented without changing its character, IREE's asynchronous resource scheduling is a useful
-system-level comparison.
-
-### Measurements
-
-Report:
-
-- steady-state device time and end-to-end latency;
-- host submission overhead;
-- graph construction, instantiation, and tuning cost;
-- peak temporary memory;
-- achieved concurrency and critical path;
-- throughput with multiple instances in flight; and
-- the number of iterations required to amortize setup.
-
-Dialect integration is measured separately by adapter size, the number of external interface
-models, required source changes, and the number of manual effect declarations.
-
-### Success criteria
-
-The initial system should:
-
-- produce no incorrect executions in randomized alias and effect tests;
-- run straightforward graphs within 3--5% of a hand-written explicit CUDA Graph;
-- demonstrate a material improvement over single-stream capture on at least two workloads where
-  dependency precision, memory reuse, batching, or in-flight execution exposes real opportunity;
-- show a concrete reduction in temporary memory on a workload with reusable lifetimes; and
-- execute a CKL-authored workload through the artifact/ABI handoff without host-side function
-  resolution. A second-dialect adapter is an additional reuse result, not an acceptance gate.
-
-Before building sophisticated analyses, manually implement the sequential, captured, and optimal
-explicit-graph versions of candidate workloads. If the explicit graph provides no meaningful
-advantage over capture, that workload cannot validate effect-aware orchestration and should be
-replaced.
-
-## Scope and roadmap
-
-### Phase 1: sound graph construction
-
-Milestones 1 and 2 are implemented, completing the initial sound whole-buffer graph construction
-phase.
-
-- Define and document the dispatch and optional access-region interfaces.
-- Add memory effects to CKL operations.
-- Infer whole-buffer, interprocedural summaries.
-- Implement strict verification and conservative unknown effects.
-- Add randomized dependency and alias tests.
-- Bind summaries to actual dispatch operands and materialize graph nodes and provenance edges.
-- Check generated dispatch graphs against a fixed-seed dependency oracle.
-
-### Phase 2: executable runtime
-
-The focused Milestone 3 runtime is implemented:
-
-- load and launch compiler-generated NVIDIA CUBINs;
-- execute lowering-supplied plans as ordinary launches or explicit CUDA Graphs;
-- support kernel parameter update, executable caching, and measurement; and
-- validate correctness and overhead against an independent manual graph.
-
-`ckl-hostgen` emits owning C++ plan builders from verified `ckl_exec.plan` operations. The emitted
-builder allocates declared heaps, retains external buffers, packs resource and supported scalar
-arguments, copies the already-reduced dependency topology, and returns a backend-neutral
-`ExecutionPlan`. Artifact bytes live in an `ArtifactRegistry`; the NVIDIA executor resolves entry
-points only when preparing ordinary launches or a CUDA Graph. Analysis IR is rejected at this
-boundary. This first path intentionally
-supports direct device-pointer memref arguments plus
-i32, i64, f32, and f64 constants or host bindings. Computed scalars, dynamic resources, and
-producer-specific lowered memref ABIs are rejected instead of being guessed. A producer must
-advertise the `cuda.direct` dispatch capability before this ABI is selected.
-
-The CUDA executor can borrow externally owned buffers and streams, allowing a framework or DSL to
-retain allocation and stream ownership while CKL owns submission inside an orchestrated region.
-The corresponding handles must belong to the executor's CUDA device/context and remain alive for
-the duration of execution.
-
-### Phase 3: useful optimization
-
-- Buffer lifetime planning and reuse are implemented for whole-buffer resources. Legality is
-  derived from reachability between every resource user; reuse never introduces a dependency.
-- Static resource users and sizes are derived directly while building `ckl.graph`, and the
-  resulting memory plan is retained as an inspectable compiler artifact.
-- The NVIDIA validation searches graph batches of 1, 2, 4, and 8 iterations and 1, 2, or 4
-  independent instances in flight, retaining timing and setup provenance for every candidate.
-- Add only the region precision needed by measured false dependencies.
-- Keep the CKL-authored path primary. FlyDSL's compiled object exposes an embedded GPU binary but
-  still packages per-kernel ABI and launch preparation inside its whole-host JIT path. Integrate it
-  only through an explicit artifact/physical-ABI manifest targeting `ckl_exec`, not through private
-  `CompiledArtifact` or `CallState` fields.
-
-The versioned JSON executable manifest provides that producer-facing boundary.
-`ckl-import-manifest` converts explicit heaps, resources, launch metadata, dependencies, and
-physical argument slots into a verified `ckl_exec.plan`. It is intentionally post-analysis: a DSL
-can use CKL graph construction to derive dependencies or export an already-proven plan, but the
-importer does not accept effect annotations and does not reconstruct missing dependencies. The
-same host generator and executor consume imported and CKL-lowered plans.
-
-The first concrete FlyDSL patch is implemented. `CompiledFunction.artifact` exposes the retained
-compiler artifact, and `export_for_orchestration()` returns immutable source IR, final IR, copied
-GPU-object bytes, host entry, target, and the `rocm.bare_ptr` device ABI. CKL imports this public
-object through `import_flydsl_artifact`, normalizes its objects, and assigns a stable registry
-identity. Copying objects on the producer side avoids loading FlyDSL's bundled MLIR extension and
-CKL's upstream MLIR extension in one Python process. `CallState` remains private because it
-describes the JIT host wrapper rather than the device-kernel ABI.
-
-FlyDSL also exports a verified launch plan for a deliberately narrow subset: top-level
-straight-line `gpu.launch_func` operations, static grid/block/shared-memory values, direct raw
-global-pointer or memref arguments, basic scalars, and scalar constants. For the initial contiguous
-memref subset, CKL requires specialization-time packed layout bytes and expands each operand into
-its pointer and by-value descriptor physical slots. It rejects nested control flow, computed or
-view-derived arguments, missing or implicit descriptor data, clustered launches, and cooperative
-launches. `flydsl_executable_manifest()` translates the accepted plain-data plan into
-manifest v1. Launches initially form a source-order dependency chain, preserving behavior while
-deferring effect-derived edge removal.
-
-The optional HIP executor resolves these backend-neutral plans from `rocm.hsaco` artifacts and the
-`rocm.bare_ptr` ABI. Like the CUDA path, it supports owned and borrowed buffers/streams, ordinary
-topological submission, explicit command-graph instantiation, and executable caching.
-`ckl-hostgen` now emits `HipRuntime`/`HipBuffer` builders for those plans. The Python
-`emit_flydsl_cpp_bundle()` bridge writes one producer-copied HSACO and emits both the plan builder
-and a small `ArtifactRegistry` loader, while continuing to use the versioned manifest as the
-compiler boundary.
-
-### Later work
-
-- Additional CUDA Graph features such as conditional or programmatic dependencies.
-- Additional HIP Graph features and profiling.
-- Multi-GPU placement and P2P/NCCL nodes.
-- Communication/computation overlap and topology-aware planning.
-
-Generating communication kernels, implementing a general distributed tensor compiler, and
-building a static model of intra-kernel performance are not initial goals.
-
-## Migration from the current prototype
-
-Reusable pieces include Python tracing, GPU binary generation, task-graph discovery, callable
-implementations, resource lifetimes, and decision provenance. The layout and proof libraries may
-remain useful to CKL-authored kernels, but they are not prerequisites for the orchestration layer.
-
-The following concepts should be removed from the future public orchestration API or made
-optional:
-
-- manually named input and output ports;
-- manually maintained per-kernel memory-effect lists;
-- target-independent estimated execution costs; and
-- layout-conversion search as the primary reason for composing tasks.
-
-This separation allows the current layout work to remain available without requiring every
-producer dialect to adopt it.
+The retained Milestone 0--4 benchmarks establish orchestration feasibility and runtime behavior.
+Their hand-written device kernels do not establish language completeness. The next acceptance
+gate is an end-to-end CKL-authored program whose analyzed bodies also generate the executed binary,
+followed by the scientific multi-field workload. See [the language implementation sequence](dsl.md#implementation-sequence).

@@ -10,7 +10,6 @@ add_mlir_dialect_library(CKLDialect
 
   LINK_LIBS PUBLIC
   MLIRFuncDialect
-  MLIRGPUDialect
   MLIRInferTypeOpInterface
   MLIRIR
   MLIRSideEffectInterfaces

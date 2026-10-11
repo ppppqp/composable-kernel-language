@@ -1,6 +1,6 @@
-# HIP runtime-overhead benchmark (Stage 0)
+# HIP runtime-overhead benchmark
 
-This benchmark isolates CKL's steady-state cost from compilation and integration work. It launches
+This benchmark isolates CKL's steady-state cost from compilation and setup work. It launches
 the same `add_bias` HSACO on one imported HIP stream and buffer as linear chains of 2, 4, 8, and 16
 nodes through four modes:
 
@@ -45,7 +45,7 @@ python3 benchmarks/hip-runtime-overhead/analyze.py \
 ```
 
 `--iterations` controls launches per raw sample; it does not alter graph topology. Setup cost is
-reported separately so a future integration can calculate the break-even replay count without
+reported separately so a CKL program can calculate the break-even replay count without
 mistaking file loading or graph construction for steady-state overhead.
 
 ## Recorded RX 9060 XT result
@@ -61,9 +61,9 @@ median divided by its corresponding native median; values near 1.0 indicate pari
 | 8 | 1.007x | 1.003x | 1.000x | 1.025x |
 | 16 | 1.000x | 1.001x | 1.000x | 1.009x |
 
-The retained CKL graph meets the Stage 0 5% parity criterion at every topology. Its absolute CPU
+The retained CKL graph meets the 5% parity criterion at every topology. Its absolute CPU
 submission difference from manual HIP Graph is 0.02–0.05 microseconds per replay. Pre-resolved CKL
 ordinary execution also meets the 5% criterion; by 16 nodes its median CPU and GPU costs are within
 0.2% and 0.01% of direct HIP respectively. This supports the narrow claim that CKL's retained C++
 execution objects do not add material steady-state overhead. It does not yet measure a Python FFI
-boundary or prove an end-to-end FlyDSL speedup.
+boundary or a complete CKL source-to-device program.

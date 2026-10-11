@@ -158,7 +158,7 @@ public:
   NvidiaModule loadCubin(const void *data, std::size_t bytes) const;
   NvidiaModule loadCubinFile(const std::filesystem::path &path) const;
 
-  /// Resolve a producer-neutral plan by importing its artifacts into this CUDA context.
+  /// Resolve a CKL execution plan by importing its artifacts into this CUDA context.
   NvidiaPlan resolve(const ExecutionPlan &plan, const ArtifactRegistry &artifacts) const;
   void launchOrdinary(const ExecutionPlan &plan, const ArtifactRegistry &artifacts,
                       const NvidiaStream &stream) const;

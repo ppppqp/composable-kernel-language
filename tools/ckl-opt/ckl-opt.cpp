@@ -17,10 +17,9 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
   mlir::registerAllExtensions(registry);
-  mlir::ckl::registerProducerInterfaceExternalModels(registry);
   mlir::registerAllGPUToLLVMIRTranslations(registry);
   registry.insert<mlir::ckl::CKLDialect>();
   registry.insert<mlir::ckl::exec::CKLExecDialect>();
   return mlir::asMainReturnCode(
-      mlir::MlirOptMain(argc, argv, "CKL orchestration optimizer bootstrap\n", registry));
+      mlir::MlirOptMain(argc, argv, "CKL DSL optimizer\n", registry));
 }

@@ -147,13 +147,14 @@ if(CKL_ENABLE_HIP_RUNTIME)
   add_executable(ckl-hip-runtime-validation HipRuntimeValidation.cpp)
   add_dependencies(ckl-hip-runtime-validation ckl-runtime-test-hsaco)
   if(CKL_ENABLE_MLIR)
-    set(hip_host_plan_mlir "${CMAKE_CURRENT_BINARY_DIR}/hip-host-plan.mlir")
+    set(hip_host_plan_mlir "${CMAKE_CURRENT_BINARY_DIR}/hip-host-plan.exec.mlir")
     set(hip_host_plan_cpp "${CMAKE_CURRENT_BINARY_DIR}/generated-hip-host-plan.inc")
     add_custom_command(
       OUTPUT "${hip_host_plan_mlir}"
-      COMMAND $<TARGET_FILE:ckl-import-manifest>
-        "${CMAKE_CURRENT_SOURCE_DIR}/hip-host-plan.json" -o "${hip_host_plan_mlir}"
-      DEPENDS ckl-import-manifest hip-host-plan.json
+      COMMAND $<TARGET_FILE:ckl-opt>
+        "${CMAKE_CURRENT_SOURCE_DIR}/hip-host-plan.mlir"
+        --ckl-build-graph --ckl-lower-graph-to-exec -o "${hip_host_plan_mlir}"
+      DEPENDS ckl-opt hip-host-plan.mlir
       VERBATIM
     )
     add_custom_command(

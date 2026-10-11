@@ -15,8 +15,6 @@ option(CKL_BUILD_HIP_BENCHMARKS "Build the HIP runtime-overhead benchmarks" OFF)
 
 if(CKL_BUILD_HIP_BENCHMARKS)
   set(CKL_ENABLE_HIP_RUNTIME ON)
-  # The Stage 1 in-process bridge links the thin runtime into a shared library.
-  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
 if(CKL_BUILD_CUDA_BENCHMARKS)
@@ -38,7 +36,6 @@ endif()
 
 if(CKL_BUILD_HIP_BENCHMARKS)
   add_subdirectory(benchmarks/hip-runtime-overhead)
-  add_subdirectory(benchmarks/flydsl-stage1)
 endif()
 
 if(CKL_ENABLE_MLIR)

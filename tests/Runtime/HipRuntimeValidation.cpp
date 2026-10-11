@@ -73,16 +73,16 @@ int main(int argc, char **argv) try {
     throw std::runtime_error("borrowed HIP buffer slice lost its byte offset");
 
   ArtifactRegistry artifacts;
-  artifacts.add(KernelArtifact::readFile("flydsl.test", "rocm.hsaco", "test", argv[1]));
+  artifacts.add(KernelArtifact::readFile("kernels.hsaco", "rocm.hsaco", "test", argv[1]));
 #ifdef CKL_HAS_GENERATED_HIP_PLAN
-  auto generated = ckl_generated::build_flydsl_test_plan(runtime, borrowed, elements);
+  auto generated = ckl_generated::build_launch_graph_exec(runtime, borrowed, elements);
   ExecutionPlan &plan = generated.plan;
   if (plan.nodes().size() != 2 || generated.retained.size() != 1)
     throw std::runtime_error("generated HIP plan has an unexpected shape");
 #else
   ExecutionPlan plan;
-  auto first = plan.addKernel(addBiasInvocation("flydsl.test", borrowed.address(), elements, 1.0f));
-  plan.addKernel(addBiasInvocation("flydsl.test", borrowed.address(), elements, 2.0f), {first});
+  auto first = plan.addKernel(addBiasInvocation("kernels.hsaco", borrowed.address(), elements, 1.0f));
+  plan.addKernel(addBiasInvocation("kernels.hsaco", borrowed.address(), elements, 2.0f), {first});
 #endif
 
   owned.copyFromHost(initial.data(), bytes);
@@ -91,8 +91,8 @@ int main(int argc, char **argv) try {
   requireResult(owned, initial, 3.0f);
 
   owned.copyFromHost(initial.data(), bytes);
-  auto graph = runtime.getOrCreateGraph("flydsl.test.plan", plan, artifacts);
-  auto graphAgain = runtime.getOrCreateGraph("flydsl.test.plan", plan, artifacts);
+  auto graph = runtime.getOrCreateGraph("ckl.hip.plan", plan, artifacts);
+  auto graphAgain = runtime.getOrCreateGraph("ckl.hip.plan", plan, artifacts);
   if (graph != graphAgain || graph->nodeCount() != 2 || runtime.cachedGraphCount() != 1)
     throw std::runtime_error("HIP graph cache did not reuse the executable plan");
   graph->launch(stream);

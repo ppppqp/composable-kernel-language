@@ -7,7 +7,7 @@ def AccessRegionOpInterface : OpInterface<"AccessRegionOpInterface"> {
   let cppNamespace = "::mlir::ckl";
   let description = [{
     Optionally refines a memory effect to a region of its resource. Milestone 1
-    supports the conservative `whole` region; producers may override the method
+    supports the conservative `whole` region; CKL operations may override the method
     as more precise region representations are introduced.
   }];
   let methods = [
@@ -23,8 +23,8 @@ def AccessRegionOpInterface : OpInterface<"AccessRegionOpInterface"> {
 def DispatchOpInterface : OpInterface<"DispatchOpInterface"> {
   let cppNamespace = "::mlir::ckl";
   let description = [{
-    Identifies a schedulable kernel invocation independently of its producer
-    dialect. Implementations expose a kernel symbol, ordered arguments, and
+    Identifies a schedulable CKL kernel invocation for internal analysis and
+    executable lowering. Implementations expose a kernel symbol, ordered arguments, and
     explicit completion dependencies.
   }];
   let methods = [
@@ -46,7 +46,7 @@ def DispatchOpInterface : OpInterface<"DispatchOpInterface"> {
       "::mlir::StringAttr", "getImplementationIdentity">,
     InterfaceMethod<"Returns the compiled artifact identity consumed by the executor.",
       "::mlir::StringAttr", "getArtifactIdentity">,
-    InterfaceMethod<"Returns the producer-owned physical argument ABI, or null if unresolved.",
+    InterfaceMethod<"Returns the CKL backend physical argument ABI, or null if unresolved.",
       "::mlir::StringAttr", "getArgumentABI">,
     InterfaceMethod<"Returns explicit SSA completion dependencies.",
       "::mlir::OperandRange", "getExplicitDependencies">

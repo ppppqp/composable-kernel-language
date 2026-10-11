@@ -70,7 +70,7 @@ LogicalResult mlir::ckl::verifyStaticExecutionSubset(GraphOp graph, StringRef co
         return node.emitError()
                << consumer
                << " does not support view/subview resource arguments in the direct-pointer ABI; "
-                  "the producer must preserve the view offset in physical argument packing";
+                  "CKL backend lowering must preserve the view offset in physical argument packing";
       if (packing.getValue() == "unsupported_layout")
         return node.emitError()
                << consumer

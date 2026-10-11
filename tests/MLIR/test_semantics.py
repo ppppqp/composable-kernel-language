@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import random
 import re
 import subprocess
@@ -200,10 +199,6 @@ def main() -> int:
     require('ckl.launch_grid = array<i64: 1, 1, 1>' in graph.stdout, "missing launch metadata")
     hostgen = executable.parent.parent / "ckl-hostgen" / "ckl-hostgen"
     require(hostgen.is_file(), f"missing host generator at {hostgen}")
-    manifest_importer = (
-        executable.parent.parent / "ckl-import-manifest" / "ckl-import-manifest"
-    )
-    require(manifest_importer.is_file(), f"missing manifest importer at {manifest_importer}")
     analysis_host = run_text(hostgen, graph.stdout)
     require(analysis_host.returncode != 0, "host generator accepted analysis IR")
     require("requires at least one ckl_exec.plan" in analysis_host.stderr, analysis_host.stderr)
@@ -228,92 +223,43 @@ def main() -> int:
         "dynamic temporary did not produce an explicit planning diagnostic",
     )
 
-    gpu_interface = run(executable, inputs / "gpu-interface.mlir", "--ckl-build-graph")
-    require(gpu_interface.returncode == 0, gpu_interface.stderr)
-    require(
-        "gpu.func @write" in gpu_interface.stdout
-        and 'effects = ["write"]' in gpu_interface.stdout,
-        "effects were not derived from the upstream GPU kernel body",
-    )
-    require(
-        "kernel = @flydsl_kernels::@write" in gpu_interface.stdout,
-        "nested upstream kernel identity was not preserved",
-    )
-    require(
-        gpu_interface.stdout.count('kind = "dispatch"') == 2,
-        "mixed CKL/GPU dispatches were not normalized through the interface",
-    )
-    gpu_edges = parse_graph_edges(gpu_interface.stdout)
-    require(
-        "memory" in gpu_edges.get((0, 1), set()),
-        "cross-dialect write/read dependency was not derived",
-    )
-    require(
-        'ckl.launch_implementation = "flydsl.write.v1"' in gpu_interface.stdout,
-        "upstream executable identity was not materialized",
-    )
-    require(
-        'ckl.launch_artifact = "flydsl.module.v1"' in gpu_interface.stdout,
-        "upstream artifact identity was not materialized",
-    )
-    gpu_executable = run(
-        executable,
-        inputs / "gpu-interface.mlir",
-        "--ckl-build-graph",
-        "--ckl-lower-graph-to-exec",
-    )
-    require(gpu_executable.returncode == 0, gpu_executable.stderr)
-    require('"ckl.graph"' not in gpu_executable.stdout, "lowered analysis graph was retained")
-    require(
-        gpu_executable.stdout.count('"ckl_exec.kernel"') == 2,
-        "mixed dispatches did not become executable kernels",
-    )
-    require(
-        'kernel = @flydsl_kernels::@write' in gpu_executable.stdout,
-        "executable plan lost the upstream nested symbol",
-    )
-    require(
-        'artifact = "flydsl.module.v1"' in gpu_executable.stdout,
-        "executable plan lost the upstream artifact identity",
-    )
-    require(
-        'abi = "cuda.direct"' in gpu_executable.stdout
-        and "logical_index = 0" in gpu_executable.stdout
-        and "slot = 0" in gpu_executable.stdout,
-        "executable plan did not materialize physical ABI slots",
-    )
-    require(
-        "dependencies = array<i64: 0>" in gpu_executable.stdout,
-        "executable plan lost the cross-dialect dependency",
-    )
-    generated_host = run_text(hostgen, gpu_executable.stdout)
-    require(generated_host.returncode == 0, generated_host.stderr)
-    require(
-        "ExecutionPlan plan" in generated_host.stdout
-        and 'result.plan.addKernel({"flydsl.module.v1", "write"' in generated_host.stdout,
-        "host generator did not consume the executable artifact manifest",
-    )
+    # Exercise CKL's own analysis-to-host path, including inferred dependencies and ABI slots.
+    for backend, source, kernels, artifact in (
+        ("cuda", inputs.parent / "Runtime" / "host-plan.mlir", 5, "kernels.cubin"),
+        ("rocm", inputs.parent / "Runtime" / "hip-host-plan.mlir", 2, "kernels.hsaco"),
+    ):
+        executable_plan = run(
+            executable, source, "--ckl-build-graph", "--ckl-lower-graph-to-exec"
+        )
+        require(executable_plan.returncode == 0, executable_plan.stderr)
+        require('"ckl.graph"' not in executable_plan.stdout, "analysis graph was retained")
+        require(
+            executable_plan.stdout.count('"ckl_exec.kernel"') == kernels,
+            "CKL dispatches did not become executable kernels",
+        )
+        require(
+            "logical_index = 0" in executable_plan.stdout and "slot = 0" in executable_plan.stdout,
+            "physical ABI slots were not materialized",
+        )
+        require(
+            "dependencies = array<i64:" in executable_plan.stdout,
+            "inferred dependencies did not reach the executable plan",
+        )
+        if backend == "rocm":
+            require(
+                "dependencies = array<i64: 0>" in executable_plan.stdout
+                and 'packing = "bare_pointer"' in executable_plan.stdout,
+                "CKL HIP lowering lost the inferred write conflict or pointer ABI",
+            )
+        generated_host = run_text(hostgen, executable_plan.stdout)
+        require(generated_host.returncode == 0, generated_host.stderr)
+        runtime = "NvidiaRuntime" if backend == "cuda" else "HipRuntime"
+        require(
+            runtime + " &runtime" in generated_host.stdout,
+            "host generation selected the wrong runtime",
+        )
+        require(artifact in generated_host.stdout, "host generation lost artifact identity")
 
-    external_manifest = run(manifest_importer, inputs / "external-plan.json")
-    require(external_manifest.returncode == 0, external_manifest.stderr)
-    require(
-        'name = "flydsl.external"' in external_manifest.stdout
-        and 'kernel = @flydsl_kernels::@stage' in external_manifest.stdout
-        and 'packing = "direct_pointer"' in external_manifest.stdout,
-        "external manifest did not preserve producer identities and physical ABI",
-    )
-    external_host = run_text(hostgen, external_manifest.stdout)
-    require(external_host.returncode == 0, external_host.stderr)
-    require(
-        "build_flydsl_external" in external_host.stdout
-        and 'result.plan.addKernel({"flydsl.module.v1", "stage"' in external_host.stdout,
-        "imported manifest did not reach host generation",
-    )
-    invalid_manifest = json.loads((inputs / "external-plan.json").read_text())
-    del invalid_manifest["plan"]["kernels"][0]["arguments"][0]["packing"]
-    rejected_manifest = run_text(manifest_importer, json.dumps(invalid_manifest))
-    require(rejected_manifest.returncode != 0, "manifest importer guessed resource packing")
-    require("arguments[0].packing" in rejected_manifest.stderr, rejected_manifest.stderr)
     unresolved_abi = run(
         executable,
         inputs / "graph.mlir",
@@ -367,30 +313,6 @@ def main() -> int:
     invalid_exec = run(executable, inputs / "invalid-exec.mlir")
     require(invalid_exec.returncode != 0, "invalid executable resource placement passed")
     require("placement exceeds its heap" in invalid_exec.stderr, invalid_exec.stderr)
-    dynamic_gpu = run_text(
-        executable,
-        """module attributes {gpu.container_module} {
-  gpu.module @kernels {
-    gpu.func @kernel(%resource: memref<4xf32>) kernel { gpu.return }
-  }
-  func.func @step(%resource: memref<4xf32>, %n: index) {
-    %one = arith.constant 1 : index
-    gpu.launch_func @kernels::@kernel
-      blocks in (%n, %one, %one) threads in (%one, %one, %one)
-      args(%resource : memref<4xf32>)
-      {ckl.device = "cuda:0", ckl.implementation = "dynamic.v1"}
-    func.return
-  }
-}
-""",
-        "--ckl-build-graph",
-    )
-    require(dynamic_gpu.returncode != 0, "dynamic GPU launch geometry was silently guessed")
-    require(
-        "did not provide static launch metadata" in dynamic_gpu.stderr,
-        dynamic_gpu.stderr,
-    )
-
     unknown_graph = run(
         executable,
         inputs / "unknown-graph.mlir",

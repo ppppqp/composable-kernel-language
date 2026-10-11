@@ -27,7 +27,7 @@ FailureOr<StringRef> getBackend(ArrayRef<GraphNodeOp> dispatches) {
   return backend.empty() ? FailureOr<StringRef>(failure()) : backend;
 }
 
-ArrayAttr materializePhysicalArguments(GraphNodeOp node, Builder &builder) {
+ArrayAttr materializePhysicalArguments(GraphNodeOp node, StringAttr abi, Builder &builder) {
   auto arguments = node->getAttrOfType<ArrayAttr>("ckl.arguments");
   if (!arguments)
     return {};
@@ -37,6 +37,12 @@ ArrayAttr materializePhysicalArguments(GraphNodeOp node, Builder &builder) {
     if (!argument)
       return {};
     SmallVector<NamedAttribute> fields(argument.begin(), argument.end());
+    // Analysis describes a base resource pointer. Backend lowering selects its ABI spelling.
+    if (abi && abi.getValue() == "rocm.bare_ptr")
+      for (NamedAttribute &field : fields)
+        if (field.getName() == "packing" &&
+            field.getValue() == builder.getStringAttr("direct_pointer"))
+          field = builder.getNamedAttr("packing", builder.getStringAttr("bare_pointer"));
     auto logicalIndex = argument.getAs<IntegerAttr>("index");
     if (!logicalIndex || !argument.getAs<StringAttr>("kind"))
       return {};
@@ -127,7 +133,7 @@ LogicalResult lowerGraph(GraphOp graph) {
     auto grid = node->getAttrOfType<DenseI64ArrayAttr>("ckl.launch_grid");
     auto block = node->getAttrOfType<DenseI64ArrayAttr>("ckl.launch_block");
     auto sharedMemory = node->getAttrOfType<IntegerAttr>("ckl.launch_shared_memory");
-    ArrayAttr arguments = materializePhysicalArguments(node, builder);
+    ArrayAttr arguments = materializePhysicalArguments(node, abi, builder);
     if (!kernel || !implementation || !artifact || !abi || !device || !grid || !block ||
         !sharedMemory || !arguments)
       return node.emitError("executable lowering requires complete launch and ABI metadata");

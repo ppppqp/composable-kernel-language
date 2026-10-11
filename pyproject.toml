@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ckl"
 version = "0.0.1"
-description = "Effect-derived GPU orchestration compiler"
+description = "Self-contained GPU DSL with effect-derived execution planning"
 requires-python = ">=3.12,<3.13"
 
 [tool.setuptools]

@@ -20,8 +20,8 @@ struct Dim3 {
   unsigned z = 1;
 };
 
-/// An immutable compiler-produced object. The producer owns the meaning of its ABI; CKL only
-/// requires a backend executor that understands `format` and the invocation's ABI identity.
+/// An immutable CKL compiler-produced object. Backend lowering defines its ABI, and the
+/// selected executor understands its format and invocation ABI identity.
 class KernelArtifact {
 public:
   KernelArtifact(std::string identity, std::string format, std::string target,
@@ -43,8 +43,8 @@ private:
   std::shared_ptr<const std::vector<std::byte>> data_;
 };
 
-/// Artifact identities are stable plan inputs, not paths chosen by an executor. This lets a DSL
-/// adapter hand CKL an in-memory CUBIN/HSACO without surrendering its compiler or disk cache.
+/// Artifact identities are stable plan inputs, not paths chosen by an executor. CKL compilation
+/// and its cache provide the CUBIN/HSACO objects loaded by the selected runtime.
 class ArtifactRegistry {
 public:
   void add(KernelArtifact artifact);
@@ -57,7 +57,7 @@ private:
 };
 
 /// Owns byte-exact values for the physical kernel ABI. Logical-to-physical expansion belongs to
-/// the producer adapter; the backend executor only passes these slots to the device driver.
+/// CKL backend lowering; the executor passes these slots to the device driver.
 class KernelArguments {
 public:
   KernelArguments() = default;
@@ -85,7 +85,7 @@ private:
 };
 
 /// A backend-neutral, fully physical kernel invocation. It deliberately contains no tensor IR,
-/// allocation policy, or producer operation: those concerns have been resolved before execution.
+/// allocation policy, or source operation: those concerns have been resolved before execution.
 struct KernelInvocation {
   std::string artifact;
   std::string entryPoint;
