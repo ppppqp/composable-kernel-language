@@ -23,9 +23,10 @@ The repository implements the compiler/runtime foundation:
   optional CUDA and HIP runtimes; and
 - feasibility and runtime benchmarks with correctness checks and recorded measurements.
 
-The user-facing kernel/program frontend and complete CKL kernel-to-device lowering are still to
-be implemented. Python currently exposes raw-MLIR compilation and GPU-object utilities; it does
-not yet provide kernel decorators or a tracing frontend. Runtime fixtures use hand-written
+The initial Python frontend provides `@ckl.kernel`, `@ckl.program`, typed shape specialization,
+indexed computation, guarded stores, temporaries, and explicit launches. It compiles source ASTs
+to MLIR without executing bodies or requiring a GPU. Complete CKL kernel-to-device lowering
+and Python runtime invocation remain to be implemented. Runtime fixtures use hand-written
 CUDA/HIP kernels, and one NVIDIA test validates upstream GPU-to-CUBIN lowering. These validate
 infrastructure, not a completed CKL source-to-device pipeline.
 
@@ -94,6 +95,18 @@ uv pip install -e .
 uv run python -m unittest discover -s tests/Python -p "test_*.py"
 ```
 
+Lower the [two-kernel Python example](examples/vector_pipeline.py) without GPU dependencies:
+
+```bash
+PYTHONPATH=python python3 examples/vector_pipeline.py > /tmp/vector-pipeline.mlir
+build-mlir/tools/ckl-opt/ckl-opt /tmp/vector-pipeline.mlir --ckl-build-graph
+```
+
+`step.lower(signature=...)` returns a `LoweredProgram`. Use `.verify(ckl_opt=...)` or
+`.analyze("--ckl-build-graph", ckl_opt=...)` to run the native verifier/analyses. The frontend
+emits a logical device with no ABI capability, so executable lowering fails until backend
+compilation supplies real device artifacts and packing metadata.
+
 `ckl.compiler.compile_module` accepts raw MLIR through a built `ckl-opt`. `NVIDIATarget` configures
 upstream GPU-to-NVVM compilation; embedded object extraction requires compatible MLIR Python
 bindings.
@@ -120,7 +133,7 @@ host plan from CKL kernel effects. Device execution is skipped when no HIP devic
 include/ckl/      dialect, analysis, core, and runtime headers
 lib/             compiler analyses, transforms, and runtime implementations
 tools/           ckl-opt and ckl-hostgen
-python/ckl/      raw-MLIR compilation and GPU-artifact utilities
+python/ckl/      typed Python frontend, MLIR compilation, and GPU-artifact utilities
 tests/          core, Python, MLIR semantics, and optional GPU validation
 benchmarks/      feasibility, planning, and runtime measurements
 docs/            language and compiler architecture

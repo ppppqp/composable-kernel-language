@@ -1,6 +1,6 @@
 # CKL language direction
 
-**Status:** frontend design target; syntax is provisional.
+**Status:** kernel IR and initial Python AST lowering implemented.
 
 CKL is a self-contained GPU DSL. A program authors both device computation and the sequence of
 kernel invocations that forms a repeated GPU workload. The compiler owns kernel semantics,
@@ -9,25 +9,29 @@ analysis, and execution planning.
 
 ## Source model
 
-The initial frontend should be a small Python-embedded language with explicit kernel and program
-entry points. Python is the authoring surface; typed MLIR is the semantic source of truth. The
-current Python package contains compilation utilities only. The former prototype tracer is not
-present, so the frontend must be built rather than assumed to exist.
+The [Python frontend proposal](python-frontend.md) uses AST compilation of a restricted Python
+subset with explicit kernel and program entry points. Python is the authoring surface; typed MLIR
+is the semantic source of truth. The Python package contains the initial frontend and compilation
+utilities. Richer control flow and runtime execution remain later work.
 
-The following sketches the intended authoring model; none of these decorators is implemented:
+The following authoring example is supported by the initial frontend:
 
 ```python
+N = ckl.dim("N")
+Vector = ckl.Buffer[ckl.f32, (N,)]
+
 @ckl.kernel
-def update(source, destination, count):
+def update(source: Vector, destination: Vector) -> None:
     i = ckl.global_id(0)
-    if i < count:
+    if i < source.shape[0]:
         destination[i] = source[i] + 1.0
 
 @ckl.program
-def step(a, b, count):
+def step(a: Vector, b: Vector) -> None:
     temporary = ckl.empty_like(a)
-    update(a, temporary, count)
-    update(temporary, b, count)
+    grid = (ckl.cdiv(a.shape[0], 256),)
+    ckl.launch(update, a, temporary, grid=grid, block=(256,))
+    ckl.launch(update, temporary, b, grid=grid, block=(256,))
 ```
 
 Program order defines the observable reference behavior. The compiler derives memory effects and
@@ -74,7 +78,8 @@ program.
 
 1. **Implemented at the IR level:** indexed kernel operations, buffer/scalar types, and the initial
    launch model. See [the verified contract](kernel-ir.md).
-2. Implement the frontend for a vector update and a two-kernel program.
+2. **Implemented for the initial subset:** AST frontend for a guarded vector update and a
+   two-kernel program, including typed buffers, specialization, temporaries, and explicit launches.
 3. Lower the same CKL kernel bodies to device binaries; connect their identities and ABI to
    `ckl_exec` and host generation.
 4. Execute the two-kernel program and compare sequential and graph results element by element.

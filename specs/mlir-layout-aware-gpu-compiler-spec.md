@@ -85,9 +85,13 @@ regions, control-flow limitations, explicit ordering, and unknown effects.
 
 ## 4. Language and frontend
 
-The initial direction is a Python-embedded frontend with explicit kernel and program entry points.
-Syntax is provisional; [the language design](../docs/dsl.md) describes the proposed subset. No
-kernel decorators or tracing frontend exist in the current Python package.
+The proposed frontend compiles a restricted Python AST with explicit kernel and program entry
+points, typed buffer/scalar annotations, shape specialization, and call-site `ckl.launch` geometry.
+See [the Python frontend design](../docs/python-frontend.md) for the draft syntax and staging rules.
+The first API produces verified MLIR without executing source bodies or requiring a GPU. Syntax
+remains experimental. The initial decorators and `.lower(signature=..., constants=...)` API are
+implemented for guarded kernels and straight-line programs. Runtime branch results and loops
+remain deferred; unsupported constructs produce source-associated diagnostics.
 
 Kernel IR must express typed scalars and buffers, indexed loads/stores, thread/block/global
 indices, arithmetic, comparisons, and structured conditionals/loops. Launch configuration must be
@@ -289,7 +293,9 @@ The new sequence is:
 1. **Kernel semantics (initial IR implemented):** indexed loads/stores, device coordinates,
    numeric buffer/scalar types, a kernel marker, and host launch rules are verified. Effects
    propagate through structured kernel control flow; device lowering remains subsequent work.
-2. **Frontend:** implement the initial source subset and a straight-line CKL program entry point.
+2. **Frontend (initial subset implemented):** typed AST compilation, shape specialization,
+   guarded indexed kernels, temporaries, explicit launches, and constexpr binding produce
+   target-independent MLIR for verification and effect/graph analysis.
 3. **CUDA device lowering:** compile the analyzed CKL bodies to CUBINs and generate consistent
    ABI/artifact/launch metadata.
 4. **End-to-end execution:** connect compilation to verified plans and host/runtime invocation;

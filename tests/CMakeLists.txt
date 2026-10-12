@@ -12,10 +12,15 @@ target_compile_features(ckl-execution-plan-test PRIVATE cxx_std_17)
 target_compile_options(ckl-execution-plan-test PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME ckl-execution-plan COMMAND ckl-execution-plan-test)
 
+set(ckl_python_test_environment "PYTHONPATH=${PROJECT_SOURCE_DIR}/python")
+if(CKL_ENABLE_MLIR)
+  list(APPEND ckl_python_test_environment "CKL_OPT=$<TARGET_FILE:ckl-opt>")
+endif()
+
 add_test(
   NAME ckl-python-compiler-utils
   COMMAND ${CMAKE_COMMAND} -E env
-    PYTHONPATH=${PROJECT_SOURCE_DIR}/python
+    ${ckl_python_test_environment}
     ${Python3_EXECUTABLE} -m unittest discover
       -s ${CMAKE_CURRENT_SOURCE_DIR}/Python -p "test_*.py"
 )
