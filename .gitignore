@@ -1,6 +1,7 @@
 docs/*
 !docs/orchestration.md
 !docs/dsl.md
+!docs/kernel-ir.md
 specs/*
 !specs/mlir-layout-aware-gpu-compiler-spec.md
 build/

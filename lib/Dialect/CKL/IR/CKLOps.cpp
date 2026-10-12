@@ -1,6 +1,7 @@
 #include "ckl/Dialect/CKL/IR/CKLOps.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseSet.h"
 
@@ -19,6 +20,43 @@ LogicalResult verifyScope(Operation *operation, StringRef scope) {
   return operation->emitOpError() << "has unsupported ordering scope '" << scope << "'";
 }
 
+LogicalResult verifyKernelContext(Operation *operation) {
+  auto function = operation->getParentOfType<func::FuncOp>();
+  if (!function || !function->hasAttrOfType<UnitAttr>("ckl.kernel"))
+    return operation->emitOpError("requires an enclosing func.func marked ckl.kernel");
+  return success();
+}
+
+LogicalResult verifyElementAccess(Operation *operation, Value resource, ValueRange indices,
+                                 Type valueType) {
+  if (failed(verifyKernelContext(operation)))
+    return failure();
+  auto buffer = cast<MemRefType>(resource.getType());
+  if (indices.size() != static_cast<size_t>(buffer.getRank()))
+    return operation->emitOpError("requires one index per buffer dimension");
+  if (valueType != buffer.getElementType())
+    return operation->emitOpError("value type must match the buffer element type");
+  if (!isa<IntegerType, FloatType, IndexType>(valueType))
+    return operation->emitOpError("requires a numeric buffer element type");
+  for (auto [axis, index] : llvm::enumerate(indices)) {
+    APInt constant;
+    if (!matchPattern(index, m_ConstantInt(&constant)))
+      continue;
+    int64_t value = constant.getSExtValue();
+    if (value < 0 || (!buffer.isDynamicDim(axis) && value >= buffer.getDimSize(axis)))
+      return operation->emitOpError() << "constant index is out of bounds for dimension " << axis;
+  }
+  return success();
+}
+
+LogicalResult verifyDeviceIndex(Operation *operation, int64_t axis) {
+  if (failed(verifyKernelContext(operation)))
+    return failure();
+  if (axis < 0 || axis > 2)
+    return operation->emitOpError("requires axis 0, 1, or 2");
+  return success();
+}
+
 } // namespace
 
 LogicalResult LoadOp::verify() {
@@ -32,6 +70,20 @@ LogicalResult StoreOp::verify() {
     return emitOpError("value type must match the resource element type");
   return success();
 }
+
+LogicalResult LoadElementOp::verify() {
+  return verifyElementAccess(*this, getResource(), getIndices(), getValue().getType());
+}
+
+LogicalResult StoreElementOp::verify() {
+  return verifyElementAccess(*this, getResource(), getIndices(), getValue().getType());
+}
+
+LogicalResult ThreadIdOp::verify() { return verifyDeviceIndex(*this, getAxis()); }
+LogicalResult BlockIdOp::verify() { return verifyDeviceIndex(*this, getAxis()); }
+LogicalResult BlockDimOp::verify() { return verifyDeviceIndex(*this, getAxis()); }
+LogicalResult GridDimOp::verify() { return verifyDeviceIndex(*this, getAxis()); }
+LogicalResult GlobalIdOp::verify() { return verifyDeviceIndex(*this, getAxis()); }
 
 LogicalResult AtomicRMWOp::verify() {
   Type elementType = getElementType(getResource());
@@ -104,6 +156,9 @@ StringAttr DispatchOp::getArgumentABI() {
 OperandRange DispatchOp::getExplicitDependencies() { return getDependencies(); }
 
 LogicalResult DispatchOp::verify() {
+  auto enclosingFunction = (*this)->getParentOfType<func::FuncOp>();
+  if (enclosingFunction && enclosingFunction->hasAttr("ckl.kernel"))
+    return emitOpError("cannot launch a kernel from a ckl.kernel body");
   auto checkDimensions = [&](ArrayRef<int64_t> dimensions, StringRef name) -> LogicalResult {
     if (dimensions.size() != 3)
       return emitOpError() << "requires exactly three " << name << " dimensions";
@@ -123,6 +178,8 @@ LogicalResult DispatchOp::verify() {
       SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getKernelAttr());
   if (!function)
     return emitOpError() << "references unknown kernel " << getKernelAttr();
+  if (function.getNumResults() != 0)
+    return emitOpError("referenced kernel must have no results");
   if (function.getNumArguments() != getArguments().size())
     return emitOpError() << "passes " << getArguments().size() << " arguments to a kernel with "
                          << function.getNumArguments() << " parameters";

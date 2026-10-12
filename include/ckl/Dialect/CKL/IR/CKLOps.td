@@ -32,6 +32,53 @@ def CKL_StoreOp : CKL_Op<"store", [AccessRegionOpInterface]> {
   let hasVerifier = 1;
 }
 
+def CKL_LoadElementOp : CKL_Op<"load_element", [AccessRegionOpInterface]> {
+  let summary = "loads one indexed buffer element inside a CKL kernel";
+  let description = [{
+    Indices are zero-based and must be in bounds at execution. There is one
+    index operand per ranked memref dimension. Dynamic bounds checks are the
+    kernel's responsibility; effects conservatively cover the whole buffer.
+  }];
+  let arguments = (ins Arg<AnyMemRef, "", [MemReadAt<0, FullEffect>]>:$resource,
+                       Variadic<Index>:$indices);
+  let results = (outs AnyType:$value);
+  let hasVerifier = 1;
+}
+
+def CKL_StoreElementOp : CKL_Op<"store_element", [AccessRegionOpInterface]> {
+  let summary = "stores one indexed buffer element inside a CKL kernel";
+  let description = [{
+    Uses the same indexing and bounds contract as load_element. Effects
+    conservatively cover the whole buffer.
+  }];
+  let arguments = (ins AnyType:$value,
+                       Arg<AnyMemRef, "", [MemWriteAt<0, FullEffect>]>:$resource,
+                       Variadic<Index>:$indices);
+  let hasVerifier = 1;
+}
+
+class CKL_DeviceIndexOp<string mnemonic> : CKL_Op<mnemonic, [Pure]> {
+  let arguments = (ins I32Attr:$axis);
+  let results = (outs Index:$value);
+  let hasVerifier = 1;
+}
+
+def CKL_ThreadIdOp : CKL_DeviceIndexOp<"thread_id"> {
+  let summary = "zero-based thread coordinate within a block on axis 0, 1, or 2";
+}
+def CKL_BlockIdOp : CKL_DeviceIndexOp<"block_id"> {
+  let summary = "zero-based block coordinate within a grid on axis 0, 1, or 2";
+}
+def CKL_BlockDimOp : CKL_DeviceIndexOp<"block_dim"> {
+  let summary = "number of threads per block on axis 0, 1, or 2";
+}
+def CKL_GridDimOp : CKL_DeviceIndexOp<"grid_dim"> {
+  let summary = "number of blocks per grid on axis 0, 1, or 2";
+}
+def CKL_GlobalIdOp : CKL_DeviceIndexOp<"global_id"> {
+  let summary = "block_id * block_dim + thread_id on axis 0, 1, or 2";
+}
+
 def CKL_AtomicRMWOp : CKL_Op<"atomic_rmw", [AccessRegionOpInterface]> {
   let summary = "atomically reads and writes a whole device resource";
   let arguments = (ins AnyType:$value,

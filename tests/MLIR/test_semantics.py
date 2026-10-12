@@ -125,9 +125,103 @@ def check_random_graphs(executable: Path) -> None:
         )
 
 
+def check_indexed_kernels(executable: Path, inputs: Path) -> None:
+    summary = run(executable, inputs / "indexed-kernel.mlir", "--ckl-summarize-effects")
+    require(summary.returncode == 0, summary.stderr)
+    update = summary.stdout.split("func.func @update", 1)[1].split("func.func @step", 1)[0]
+    require('effects = ["read"]' in update and 'effects = ["write"]' in update,
+            "guarded indexed accesses did not produce kernel effects")
+    require('region = "whole"' in update and "unknown = false" in update,
+            "device indices or kernel control flow lost complete effect semantics")
+    coordinates = summary.stdout.split("func.func @coordinates", 1)[1]
+    require('effects = ["read", "write"]' in coordinates,
+            "multidimensional loop accesses lost their effects")
+    graph = run(executable, inputs / "indexed-kernel.mlir", "--ckl-build-graph")
+    require(graph.returncode == 0, graph.stderr)
+    require("memory" in parse_graph_edges(graph.stdout).get((1, 2), set()),
+            "indexed kernel composition lost the temporary write/read dependency")
+    plan = run(executable, inputs / "indexed-kernel.mlir",
+               "--ckl-build-graph", "--ckl-lower-graph-to-exec")
+    require(plan.returncode == 0, plan.stderr)
+    require(plan.stdout.count('"ckl_exec.kernel"') == 2,
+            "indexed kernels did not reach executable plan lowering")
+
+    def kernel(body: str, buffer: str = "memref<4xf32>", marker: str = "ckl.kernel") -> str:
+        return f'''module {{
+  func.func @test(%buffer: {buffer}) attributes {{{marker}}} {{
+    %zero = arith.constant 0 : index
+    {body}
+    func.return
+  }}
+}}'''
+
+    invalid_cases = [
+        (kernel('%i = "ckl.global_id"() {axis = 3 : i32} : () -> index'),
+         "requires axis 0, 1, or 2"),
+        (kernel('%i = "ckl.thread_id"() {axis = -1 : i32} : () -> index'),
+         "requires axis 0, 1, or 2"),
+        (kernel('%i = "ckl.global_id"() {axis = 0 : i32} : () -> index', marker=""),
+         "requires an enclosing func.func marked ckl.kernel"),
+        (kernel('%v = "ckl.load_element"(%buffer) : (memref<4xf32>) -> f32'),
+         "requires one index per buffer dimension"),
+        (kernel('%v = "ckl.load_element"(%buffer, %zero) : (memref<4xf32>, index) -> i32'),
+         "value type must match the buffer element type"),
+        (kernel('''%v = arith.constant 1 : i32
+    "ckl.store_element"(%v, %buffer, %zero) : (i32, memref<4xf32>, index) -> ()'''),
+         "value type must match the buffer element type"),
+        (kernel('''%past = arith.constant 4 : index
+    %v = "ckl.load_element"(%buffer, %past) : (memref<4xf32>, index) -> f32'''),
+         "constant index is out of bounds for dimension 0"),
+        (kernel('''%past = arith.constant 3 : index
+    %v = "ckl.load_element"(%buffer, %zero, %past)
+      : (memref<2x3xf32>, index, index) -> f32''', buffer="memref<2x3xf32>"),
+         "constant index is out of bounds for dimension 1"),
+        (kernel('''%negative = arith.constant -1 : index
+    %v = arith.constant 1.0 : f32
+    "ckl.store_element"(%v, %buffer, %negative) : (f32, memref<?xf32>, index) -> ()''',
+                buffer="memref<?xf32>"),
+         "constant index is out of bounds for dimension 0"),
+        (kernel("", buffer="memref<*xf32>"),
+         "ckl.kernel arguments must be numeric scalars or ranked numeric memrefs"),
+        (kernel("", marker="ckl.kernel = true"),
+         "ckl.kernel requires a unit attribute on func.func"),
+        ('module { func.func private @test() attributes {ckl.kernel} }',
+         "ckl.kernel requires a defined function with no results"),
+        ('''module { func.func @test() -> i32 attributes {ckl.kernel} {
+            %v = arith.constant 0 : i32
+            func.return %v : i32
+        } }''', "ckl.kernel requires a defined function with no results"),
+        ('''module {
+          func.func @leaf() attributes {ckl.kernel} { func.return }
+          func.func @parent() attributes {ckl.kernel} {
+            %done = "ckl.dispatch"() {
+              kernel = @leaf, grid = array<i64: 1, 1, 1>, block = array<i64: 1, 1, 1>,
+              shared_memory = 0 : i64, device = "cuda:0", capabilities = [],
+              implementation = "leaf", operandSegmentSizes = array<i32: 0, 0>
+            } : () -> !ckl.token
+            func.return
+          }
+        }''', "cannot launch a kernel from a ckl.kernel body"),
+    ]
+    for source, diagnostic in invalid_cases:
+        result = run_text(executable, source)
+        require(result.returncode != 0, f"invalid kernel was accepted:\n{source}")
+        require(diagnostic in result.stderr, result.stderr)
+
+    # Rank-zero buffers have no indices; dynamic sizes are valid kernel analysis inputs.
+    for source in (
+        kernel('%v = "ckl.load_element"(%buffer) : (memref<f32>) -> f32', buffer="memref<f32>"),
+        kernel('%v = "ckl.load_element"(%buffer, %zero) : (memref<?xf32>, index) -> f32',
+               buffer="memref<?xf32>"),
+    ):
+        result = run_text(executable, source, "--ckl-summarize-effects")
+        require(result.returncode == 0, result.stderr)
+
+
 def main() -> int:
     executable = Path(sys.argv[1])
     inputs = Path(sys.argv[2])
+    check_indexed_kernels(executable, inputs)
 
     effects = run(executable, inputs / "effects.mlir", "--ckl-summarize-effects")
     require(effects.returncode == 0, effects.stderr)

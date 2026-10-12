@@ -6,8 +6,9 @@ include "mlir/IR/OpBase.td"
 def CKL_Dialect : Dialect {
   let name = "ckl";
   let cppNamespace = "::mlir::ckl";
-  let summary = "Effect-derived GPU kernel orchestration";
+  let summary = "CKL GPU kernels and effect-derived programs";
   let useDefaultTypePrinterParser = 1;
+  let hasOperationAttrVerify = 1;
   let extraClassDeclaration = [{
     void registerTypes();
   }];

@@ -13,6 +13,7 @@ arithmetic, control-flow, memory, and GPU lowering remain compiler infrastructur
 
 The repository implements the compiler/runtime foundation:
 
+- verified indexed kernel loads/stores and thread/block/global coordinates with typed buffers;
 - CKL memory, allocation, view, atomic, synchronization, and dispatch operations;
 - interprocedural effect and alias analysis with strict and conservative modes;
 - dependency graphs with provenance and DOT output;

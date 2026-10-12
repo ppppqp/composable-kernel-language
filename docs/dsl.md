@@ -52,9 +52,10 @@ and direct pointer/scalar arguments. Views and dynamic shapes may remain analyza
 executable lowering rejects unsupported packing. Atomics, synchronization, reductions, shared
 memory, and richer layouts are staged additions with explicit semantics and numerical tests.
 
-The current `ckl.load` and `ckl.store` operations model whole-buffer effects for analysis tests.
-They do not yet express indexed device computation. Extending kernel IR with indexing and device
-execution semantics is required before those bodies can be compiled as real kernels.
+The initial [kernel IR](kernel-ir.md) now provides `ckl.load_element`, `ckl.store_element`,
+thread/block/global coordinates, and a verified `ckl.kernel` function marker. Ranked memrefs and
+builtin numeric scalars supply the type model. The legacy `ckl.load` and `ckl.store` operations
+remain analysis fixtures. Device lowering of the new indexed bodies is still to be implemented.
 
 ## Compiler ownership
 
@@ -71,7 +72,8 @@ program.
 
 ## Implementation sequence
 
-1. Define indexed kernel operations, buffer/scalar types, and the initial launch model.
+1. **Implemented at the IR level:** indexed kernel operations, buffer/scalar types, and the initial
+   launch model. See [the verified contract](kernel-ir.md).
 2. Implement the frontend for a vector update and a two-kernel program.
 3. Lower the same CKL kernel bodies to device binaries; connect their identities and ABI to
    `ckl_exec` and host generation.

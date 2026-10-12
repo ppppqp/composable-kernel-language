@@ -99,9 +99,12 @@ completion ordering. Authors do not supply manual per-kernel read/write declarat
 executable subset uses one device, static geometry and resource sizes, base identity-layout
 buffers, and direct pointer/scalar arguments. Unsupported dynamic programs must fail visibly.
 
-The existing whole-buffer `ckl.load` and `ckl.store` operations support effect-analysis fixtures;
-they are not sufficient indexed kernel IR. Extending them or introducing suitable indexed
-operations is a prerequisite to real CKL device compilation.
+The indexed IR foundation is implemented: `ckl.load_element`/`ckl.store_element` verify ranked
+buffer accesses, and device coordinate operations verify their axes and marked kernel context.
+`func.func` with the unit marker `ckl.kernel` defines a result-free numeric kernel signature.
+See [the kernel IR contract](../docs/kernel-ir.md) for types, bounds, and launch semantics.
+Legacy whole-buffer `ckl.load`/`ckl.store` remain analysis fixtures; real device lowering must use
+the indexed operations and compile the same analyzed body.
 
 ## 5. Architecture
 
@@ -283,8 +286,9 @@ the standalone language is complete.
 
 The new sequence is:
 
-1. **Kernel semantics:** define indexed memory operations, device indices, typed buffers/scalars,
-   structured kernel control flow, and launch rules.
+1. **Kernel semantics (initial IR implemented):** indexed loads/stores, device coordinates,
+   numeric buffer/scalar types, a kernel marker, and host launch rules are verified. Effects
+   propagate through structured kernel control flow; device lowering remains subsequent work.
 2. **Frontend:** implement the initial source subset and a straight-line CKL program entry point.
 3. **CUDA device lowering:** compile the analyzed CKL bodies to CUBINs and generate consistent
    ABI/artifact/launch metadata.
