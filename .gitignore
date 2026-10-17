@@ -4,6 +4,7 @@ docs/*
 !docs/kernel-ir.md
 !docs/python-frontend.md
 !docs/cuda-backend.md
+!docs/iree-stream-notes.md
 specs/*
 !specs/mlir-layout-aware-gpu-compiler-spec.md
 build/
