@@ -44,6 +44,8 @@ and lazily loaded CUDA module. Creating `Device` initializes CUDA device 0. A `D
 its allocation, or borrows an address with `device.import_buffer(address, spec, owner=owner)`.
 The owner is retained; the caller must supply a valid device-0 allocation of sufficient size.
 Host copies accept contiguous Python buffer objects, including `array` and NumPy arrays.
+Host-to-device copies wait for device transfer completion before returning, including pageable
+host buffers; subsequent nonblocking execution streams can safely consume those buffers.
 
 A bound `Invocation` retains the compiled program, device, external buffers and their owners,
 temporary heaps, stream, and optional graph executable. Execution is synchronous. This makes
@@ -100,3 +102,9 @@ and unchanged input are checked. It also checks argument rejection and that a bo
 keeps its program and buffer owners alive after other Python references are deleted.
 Additional numerical checks cover negative i64 constants and runtime f64 scalars.
 Compilation is checked even without an accessible GPU; numerical execution then returns skip code 77.
+
+The [standalone benchmark suite](../benchmarks/standalone/README.md) exercises pointwise chains,
+fork/join composition, and neighbor-dependent stencils. `Invocation.benchmark(iterations=..., graph=...)`
+measures a native submission burst with one final synchronization, returning CUDA stream and host
+wall microseconds per program plus graph-instantiation time. This is measurement instrumentation;
+the application-facing `.run()` remains synchronous. Stream timing includes host submission gaps.

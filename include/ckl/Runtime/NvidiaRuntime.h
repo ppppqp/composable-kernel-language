@@ -40,6 +40,7 @@ class NvidiaStream {
 public:
   NvidiaStream() = default;
   void synchronize() const;
+  std::uintptr_t nativeHandle() const;
   explicit operator bool() const { return state_ != nullptr; }
 
 private:

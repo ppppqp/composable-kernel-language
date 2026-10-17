@@ -127,6 +127,10 @@ void NvidiaBuffer::copyFromHost(const void *source, std::size_t bytes, std::size
     throw std::out_of_range("host-to-device copy exceeds NVIDIA buffer");
   state_->context->makeCurrent();
   check(cuMemcpyHtoD(state_->pointer + offset_ + offset, source, bytes), "cuMemcpyHtoD");
+  // Pageable host copies may return after staging, before the default-stream
+  // device transfer finishes. Our execution streams are nonblocking, so they
+  // do not implicitly wait for that transfer. Keep this API truly synchronous.
+  check(cuStreamSynchronize(nullptr), "cuStreamSynchronize(host-to-device copy)");
 }
 
 void NvidiaBuffer::copyToHost(void *destination, std::size_t bytes, std::size_t offset) const {
@@ -141,12 +145,20 @@ void NvidiaBuffer::fillZero() const {
     throw std::invalid_argument("cannot clear an empty NVIDIA buffer");
   state_->context->makeCurrent();
   check(cuMemsetD8(state_->pointer + offset_, 0, bytes_), "cuMemsetD8");
+  check(cuStreamSynchronize(nullptr), "cuStreamSynchronize(buffer clear)");
 }
 
 NvidiaBuffer NvidiaBuffer::slice(std::size_t offset, std::size_t bytes) const {
   if (!state_ || !bytes || offset > bytes_ || bytes > bytes_ - offset)
     throw std::out_of_range("NVIDIA buffer slice exceeds its parent view");
   return NvidiaBuffer(state_, offset_ + offset, bytes);
+}
+
+std::uintptr_t NvidiaStream::nativeHandle() const {
+  if (!state_)
+    throw std::invalid_argument("empty NVIDIA stream");
+  state_->context->makeCurrent();
+  return reinterpret_cast<std::uintptr_t>(state_->stream);
 }
 
 NvidiaFunction NvidiaModule::function(const std::string &name) const {

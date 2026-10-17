@@ -131,6 +131,10 @@ plans and their inferred dependencies. Device execution is skipped when no HIP d
 `CKL_BUILD_CUDA_BENCHMARKS` enables the [feasibility harness](benchmarks/milestone0/README.md).
 `CKL_BUILD_HIP_BENCHMARKS` enables the [HIP overhead benchmark](benchmarks/hip-runtime-overhead/README.md).
 
+The [standalone workload suite](benchmarks/standalone/README.md) benchmarks five CKL-authored
+examples through the Python/JIT path. It retains correctness checks, raw samples, setup costs,
+temporary-memory measurements, and recommendations for the next compiler optimization.
+
 ## Repository layout
 
 ```text

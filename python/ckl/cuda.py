@@ -53,6 +53,7 @@ def _native():
     if lib.ckl_has_cuda_runtime():
         declare("ckl_device_create", pointer)
         declare("ckl_device_free", None, pointer)
+        declare("ckl_device_name", ct.c_char_p, pointer)
         declare("ckl_buffer_create", pointer, pointer, size)
         declare("ckl_buffer_import", pointer, pointer, size, size)
         declare("ckl_buffer_free", None, pointer)
@@ -62,6 +63,7 @@ def _native():
         declare("ckl_bind", pointer, pointer, pointer, pointer, size)
         declare("ckl_invoke", ct.c_int, pointer, ct.c_int)
         declare("ckl_invocation_free", None, pointer)
+        declare("ckl_benchmark", ct.c_int, pointer, ct.c_int, size, ct.POINTER(ct.c_double))
     _library = lib
     return lib
 
@@ -90,6 +92,10 @@ class Device(_Owned):
         if not self._lib.ckl_has_cuda_runtime():
             raise RuntimeError("rebuild CKL with CKL_ENABLE_CUDA_RUNTIME=ON to execute programs")
         self._handle = _checked(self._lib, self._lib.ckl_device_create())
+
+    @property
+    def name(self):
+        return _checked(self._lib, self._lib.ckl_device_name(self._handle)).decode()
 
     def empty(self, spec: BufferSpec) -> DeviceBuffer:
         size = _byte_count(spec)
@@ -220,3 +226,11 @@ class Invocation(_Owned):
         # through completion. Reusing an invocation reuses its graph and heaps.
         _checked(self._lib, self._lib.ckl_invoke(self._handle, bool(graph)))
         return self
+
+    def benchmark(self, *, iterations=200, graph=False):
+        """Measure a native submission burst; CUDA stream time includes submission gaps."""
+        if type(iterations) is not int or not 0 < iterations < (1 << 64):
+            raise ValueError("iterations must be a positive 64-bit count")
+        result = (ct.c_double * 3)()
+        _checked(self._lib, self._lib.ckl_benchmark(self._handle, bool(graph), iterations, result))
+        return dict(stream_us=result[0], wall_us=result[1], graph_setup_ms=result[2])

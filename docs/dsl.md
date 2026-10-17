@@ -88,6 +88,12 @@ program.
    batching, and instances in flight.
 6. Extend language features only when workloads and measured limitations justify them.
 
+The [initial standalone measurements](../benchmarks/standalone/README.md) now cover five source
+workloads and four sizes. They support prioritizing conservative pointwise-chain fusion: the
+manually fused control saves substantially more time than graph execution alone. Graph selection
+remains explicit because native burst throughput and synchronous Python latency favor different
+choices for small programs. No automatic fusion pass is implemented yet.
+
 CUDA is the first complete source-to-device target. The retained HIP executor is a second backend
 foundation; a complete CKL-to-ROCDL pipeline is separate work. Existing runtime fixtures with
 hand-written device binaries remain infrastructure checks until CKL-generated bodies replace them.

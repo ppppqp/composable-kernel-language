@@ -23,6 +23,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/TargetSelect.h"
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <stdexcept>
@@ -31,6 +32,7 @@
 
 #ifdef CKL_HAS_CUDA_RUNTIME
 #include "ckl/Runtime/NvidiaRuntime.h"
+#include <cuda.h>
 #endif
 
 using namespace mlir;
@@ -387,6 +389,13 @@ int ckl_has_cuda_runtime() {
 #ifdef CKL_HAS_CUDA_RUNTIME
 void *ckl_device_create() { return protect([]() -> void * { return new Device; }); }
 void ckl_device_free(void *device) { delete static_cast<Device *>(device); }
+const char *ckl_device_name(void *device) {
+  return protect([&]() -> const char * {
+    static thread_local std::string name;
+    name = static_cast<Device *>(device)->runtime.deviceName();
+    return name.c_str();
+  });
+}
 void *ckl_buffer_create(void *device, uint64_t bytes) {
   return protect([&]() -> void * {
     auto *d = static_cast<Device *>(device);
@@ -444,5 +453,47 @@ int ckl_invoke(void *invocation, int graph) {
   });
 }
 void ckl_invocation_free(void *invocation) { delete static_cast<Invocation *>(invocation); }
+// Benchmark a burst without Python dispatch or per-iteration synchronization.
+// CUDA stream elapsed time includes any gaps caused by native host submission.
+int ckl_benchmark(void *invocation, int graph, uint64_t iterations, double *result) {
+  return protect([&] {
+    if (!iterations) throw std::invalid_argument("benchmark iterations must be positive");
+    auto &f = *static_cast<Invocation *>(invocation);
+    std::lock_guard<std::mutex> lock(f.runMutex);
+    using Clock = std::chrono::steady_clock;
+    f.stream.synchronize();
+    auto setupStart = Clock::now();
+    if (graph && !f.graph) f.graph = f.device->runtime.instantiate(f.plan);
+    result[2] = std::chrono::duration<double, std::milli>(Clock::now() - setupStart).count();
+    auto check = [](CUresult error) {
+      if (error != CUDA_SUCCESS) {
+        const char *message = nullptr;
+        cuGetErrorString(error, &message);
+        throw std::runtime_error(message ? message : "CUDA event measurement failed");
+      }
+    };
+    struct Event {
+      CUevent value = nullptr;
+      ~Event() { if (value) cuEventDestroy(value); }
+    } start, stop;
+    check(cuEventCreate(&start.value, CU_EVENT_DEFAULT));
+    check(cuEventCreate(&stop.value, CU_EVENT_DEFAULT));
+    auto stream = reinterpret_cast<CUstream>(f.stream.nativeHandle());
+    check(cuEventRecord(start.value, stream));
+    auto wallStart = Clock::now();
+    for (uint64_t i = 0; i < iterations; ++i) {
+      if (graph) f.graph.launch(f.stream);
+      else f.device->runtime.launchOrdinary(f.plan, f.stream);
+    }
+    check(cuEventRecord(stop.value, stream));
+    check(cuEventSynchronize(stop.value));
+    auto wallStop = Clock::now();
+    float elapsed;
+    check(cuEventElapsedTime(&elapsed, start.value, stop.value));
+    result[0] = elapsed * 1000.0 / iterations;
+    result[1] = std::chrono::duration<double, std::micro>(wallStop - wallStart).count() / iterations;
+    return 1;
+  });
+}
 #endif
 }
