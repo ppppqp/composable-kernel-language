@@ -134,6 +134,8 @@ plans and their inferred dependencies. Device execution is skipped when no HIP d
 The [standalone workload suite](benchmarks/standalone/README.md) benchmarks five CKL-authored
 examples through the Python/JIT path. It retains correctness checks, raw samples, setup costs,
 temporary-memory measurements, and recommendations for the next compiler optimization.
+The initial automatic pointwise-chain fusion pass is enabled by default, with an unfused fallback
+for overlapping buffers. See the [fusion measurements](benchmarks/standalone/results/rtx5060ti-fusion.md).
 
 ## Repository layout
 

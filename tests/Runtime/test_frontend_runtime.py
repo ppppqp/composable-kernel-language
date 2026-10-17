@@ -62,7 +62,8 @@ args = parser.parse_args()
 
 # Calling Python subprocess tools would regress the in-process API.
 with patch("subprocess.run", side_effect=AssertionError("compiler spawned a subprocess")):
-    compiled = lower().compile(target=ckl.NVIDIATarget(args.chip, "+ptx87", args.toolkit))
+    compiled = lower().compile(target=ckl.NVIDIATarget(args.chip, "+ptx87", args.toolkit),
+                               fuse_pointwise=False)
 assert "@ckl_entry" in compiled.host_ir
 assert "@ckl.binary" in compiled.host_ir
 assert 'dependencies = array<i64: 1>' in compiled.executable_ir

@@ -6,6 +6,7 @@
 #include "ckl/Dialect/Exec/IR/CKLExecDialect.h"
 #include "ckl/Transforms/CudaKernels.h"
 #include "ckl/Transforms/ExecutablePlan.h"
+#include "ckl/Transforms/PointwiseFusion.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
@@ -53,6 +54,7 @@ void initialize() {
     ckl::registerCKLPasses();
     ckl::registerCKLExecutablePlanPasses();
     ckl::registerCKLCudaKernelPasses();
+    ckl::registerCKLPointwiseFusionPass();
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
   });
@@ -97,6 +99,7 @@ struct Program {
   Entry entry = nullptr;
   unsigned argumentCount = 0;
   std::vector<uint64_t> bufferBytes;
+  std::shared_ptr<Program> aliasFallback;
 #ifdef CKL_HAS_CUDA_RUNTIME
   std::mutex moduleMutex;
   std::map<uint64_t, ckl::runtime::NvidiaModule> loadedModules;
@@ -284,7 +287,7 @@ std::unique_ptr<llvm::Module> buildHost(Program &program, ckl::exec::PlanOp plan
 }
 
 std::shared_ptr<Program> compile(const char *source, const char *chip,
-                               const char *features, const char *toolkit) {
+                               const char *features, const char *toolkit, bool fusion) {
   initialize();
   auto program = std::make_shared<Program>();
   DialectRegistry registry;
@@ -302,6 +305,10 @@ std::shared_ptr<Program> compile(const char *source, const char *chip,
   try {
     program->source = parseSourceString<ModuleOp>(source, &program->context);
     if (!program->source) throw std::runtime_error("invalid CKL source module");
+    if ((*program->source)->hasAttr("ckl.fusion.requires_disjoint"))
+      throw std::runtime_error("compile original source, not pre-fused guarded IR");
+    if (fusion) pipeline(*program->source, "ckl-fuse-pointwise");
+    bool needsFallback = (*program->source)->hasAttr("ckl.fusion.requires_disjoint");
     pipeline(*program->source, "ckl-prepare-cuda{chip=" + std::string(chip) +
                               " features=" + features + "}");
     program->preparedIR = print(*program->source);
@@ -356,6 +363,7 @@ std::shared_ptr<Program> compile(const char *source, const char *chip,
     if (!entry) throw std::runtime_error(llvm::toString(entry.takeError()));
     program->entry = reinterpret_cast<Program::Entry>(*entry);
 #endif
+    if (needsFallback) program->aliasFallback = compile(source, chip, features, toolkit, false);
     return program;
   } catch (const std::exception &error) {
     throw std::runtime_error(std::string(error.what()) + "\n" + program->diagnostics);
@@ -366,8 +374,9 @@ using Handle = std::shared_ptr<Program>;
 
 extern "C" {
 const char *ckl_error() { return lastError.c_str(); }
-void *ckl_compile(const char *source, const char *chip, const char *features, const char *toolkit) {
-  return protect([&]() -> void * { return new Handle(compile(source, chip, features, toolkit)); });
+void *ckl_compile(const char *source, const char *chip, const char *features, const char *toolkit,
+                  int fusion) {
+  return protect([&]() -> void * { return new Handle(compile(source, chip, features, toolkit, fusion)); });
 }
 void ckl_program_free(void *program) { delete static_cast<Handle *>(program); }
 const char *ckl_program_ir(void *program, unsigned stage) {
@@ -434,6 +443,20 @@ void *ckl_bind(void *program, void *device, void **arguments, uint64_t count) {
         packed[i] = &addresses[i];
       } else packed[i] = arguments[i];
     }
+    // Scalarized intermediates change ordering between threads when external
+    // ranges overlap (including shifted views). Keep the original whole-kernel
+    // boundaries for those bindings. Compare differences to avoid overflow.
+    if (p->aliasFallback) {
+      bool overlap = false;
+      for (uint64_t i = 0; i < count; ++i)
+        for (uint64_t j = i + 1; j < count; ++j) {
+          if (!p->bufferBytes[i] || !p->bufferBytes[j]) continue;
+          overlap |= addresses[i] <= addresses[j]
+              ? addresses[j] - addresses[i] < p->bufferBytes[i]
+              : addresses[i] - addresses[j] < p->bufferBytes[j];
+        }
+      if (overlap) p = p->aliasFallback;
+    }
     auto invocation = std::make_unique<Invocation>(p, d);
     p->entry(invocation.get(), packed.data());
     if (!invocation->error.empty()) throw std::runtime_error(invocation->error);
@@ -453,6 +476,9 @@ int ckl_invoke(void *invocation, int graph) {
   });
 }
 void ckl_invocation_free(void *invocation) { delete static_cast<Invocation *>(invocation); }
+uint64_t ckl_invocation_nodes(void *invocation) {
+  return static_cast<Invocation *>(invocation)->plan.nodes().size();
+}
 // Benchmark a burst without Python dispatch or per-iteration synchronization.
 // CUDA stream elapsed time includes any gaps caused by native host submission.
 int ckl_benchmark(void *invocation, int graph, uint64_t iterations, double *result) {

@@ -233,6 +233,10 @@ invocation = executable.bind(src, dst, bias)
 invocation.run(graph=True)
 ```
 
+Pointwise-chain fusion is enabled by default during native compilation. Set
+`fuse_pointwise=False` to compare the original topology. Overlapping external buffers select
+the retained original program at binding; `invocation.node_count` reports the selected topology.
+
 This initial runtime API is implemented through the native compiler and MLIR ExecutionEngine.
 See [the CUDA backend contract](cuda-backend.md) for ownership and supported buffer types.
 

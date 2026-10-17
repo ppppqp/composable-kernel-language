@@ -19,6 +19,7 @@ def main():
     lines = ["# Standalone CKL measurements", "",
              f"GPU: {data['device']}. Python {data['python']}. "
              f"Native build: {data['native_build'].get('CMAKE_BUILD_TYPE', 'unknown')}.", "",
+             f"Automatic pointwise fusion: {data['configuration'].get('fusion', 'off')}.", "",
              "Times below are medians in microseconds per complete program. CUDA-event stream "
              "time includes native host submission gaps. These are warm repeated-buffer measurements, "
              "not isolated kernel execution or cold-memory bandwidth measurements.", "",

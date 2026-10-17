@@ -46,7 +46,7 @@ def _native():
         fn.restype, fn.argtypes = result, arguments
 
     declare("ckl_error", ct.c_char_p)
-    declare("ckl_compile", pointer, ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p)
+    declare("ckl_compile", pointer, ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_int)
     declare("ckl_program_free", None, pointer)
     declare("ckl_program_ir", ct.c_char_p, pointer, ct.c_uint)
     declare("ckl_has_cuda_runtime", ct.c_int)
@@ -63,6 +63,7 @@ def _native():
         declare("ckl_bind", pointer, pointer, pointer, pointer, size)
         declare("ckl_invoke", ct.c_int, pointer, ct.c_int)
         declare("ckl_invocation_free", None, pointer)
+        declare("ckl_invocation_nodes", size, pointer)
         declare("ckl_benchmark", ct.c_int, pointer, ct.c_int, size, ct.POINTER(ct.c_double))
     _library = lib
     return lib
@@ -145,7 +146,9 @@ class CompiledProgram(_Owned):
     """Own specialized device code and its JIT-compiled host entry point."""
     _release = "ckl_program_free"
 
-    def __init__(self, program, target: NVIDIATarget):
+    def __init__(self, program, target: NVIDIATarget, *, fuse_pointwise=True):
+        if type(fuse_pointwise) is not bool:
+            raise TypeError("fuse_pointwise must be bool")
         if target.binary_format != "bin":
             raise ValueError("CKL CUDA compilation requires a binary target")
         if not re.fullmatch(r"sm_[0-9]+[a-z]?", target.chip) or not re.fullmatch(
@@ -156,7 +159,8 @@ class CompiledProgram(_Owned):
         self._lib = _native()
         toolkit = str(Path(target.toolkit_root).resolve()) if target.toolkit_root else ""
         self._handle = _checked(self._lib, self._lib.ckl_compile(
-            program.mlir.encode(), target.chip.encode(), target.features.encode(), toolkit.encode()))
+            program.mlir.encode(), target.chip.encode(), target.features.encode(), toolkit.encode(),
+            fuse_pointwise))
 
     @property
     def prepared_ir(self):
@@ -226,6 +230,11 @@ class Invocation(_Owned):
         # through completion. Reusing an invocation reuses its graph and heaps.
         _checked(self._lib, self._lib.ckl_invoke(self._handle, bool(graph)))
         return self
+
+    @property
+    def node_count(self):
+        """Actual bound topology, including any overlap-triggered fallback."""
+        return self._lib.ckl_invocation_nodes(self._handle)
 
     def benchmark(self, *, iterations=200, graph=False):
         """Measure a native submission burst; CUDA stream time includes submission gaps."""

@@ -92,7 +92,9 @@ The [initial standalone measurements](../benchmarks/standalone/README.md) now co
 workloads and four sizes. They support prioritizing conservative pointwise-chain fusion: the
 manually fused control saves substantially more time than graph execution alone. Graph selection
 remains explicit because native burst throughput and synchronous Python latency favor different
-choices for small programs. No automatic fusion pass is implemented yet.
+choices for small programs. The initial automatic pointwise-chain pass is now implemented and
+enabled in native CUDA compilation, with an original-program fallback for overlapping bindings.
+See [the supported fusion contract](cuda-backend.md#pointwise-chain-fusion).
 
 CUDA is the first complete source-to-device target. The retained HIP executor is a second backend
 foundation; a complete CKL-to-ROCDL pipeline is separate work. Existing runtime fixtures with

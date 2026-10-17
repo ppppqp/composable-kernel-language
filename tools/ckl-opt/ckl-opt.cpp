@@ -4,6 +4,7 @@
 #include "ckl/Dialect/Exec/IR/CKLExecDialect.h"
 #include "ckl/Transforms/ExecutablePlan.h"
 #include "ckl/Transforms/CudaKernels.h"
+#include "ckl/Transforms/PointwiseFusion.h"
 #include "mlir/InitAllPasses.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllExtensions.h"
@@ -15,6 +16,7 @@ int main(int argc, char **argv) {
   mlir::ckl::registerCKLPasses();
   mlir::ckl::registerCKLExecutablePlanPasses();
   mlir::ckl::registerCKLCudaKernelPasses();
+  mlir::ckl::registerCKLPointwiseFusionPass();
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);

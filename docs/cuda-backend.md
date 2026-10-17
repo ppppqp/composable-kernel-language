@@ -53,6 +53,41 @@ temporary heaps, stream, and optional graph executable. Execution is synchronous
 without reallocating heaps or recreating the graph. Scalar arguments are captured at binding;
 rebind to change them. Automatic tensor/framework conversion and borrowed streams are deferred.
 
+## Pointwise-chain fusion
+
+`.compile(target=...)` enables conservative pointwise fusion by default. Use
+`.compile(target=..., fuse_pointwise=False)` to retain original launches for comparison.
+The `ckl-fuse-pointwise` pass runs before CUDA preparation and artifact hashing. It combines
+adjacent unary kernels connected by a single-use compiler-owned temporary, substitutes the
+producer's scalar result for consumer loads, and removes the intermediate allocation and free.
+Effects, dependencies, storage, and binary identity are then derived from the transformed bodies.
+
+The initial recognizer requires two same-type, static, contiguous rank-one buffers; `global_id(0)`;
+an exact `i < N` guard; same-index loads; and one final output store. Bodies contain pure `arith`
+operations, with no relaxed floating-point flags. Both launches must have matching one-dimensional
+geometry/device, zero shared memory, no explicit token edges, and no intervening effects.
+Views, escaping or multiply consumed temporaries, nested control flow, stencils, and binary
+joins remain unchanged. Operations are cloned without reassociation or added fast-math flags.
+
+External buffers can overlap even when they have different argument names. When fusion succeeds,
+the native compiler retains a separately compiled original program. At binding, it compares the
+logical byte ranges of all external buffers; any overlap selects the original topology. Adjacent
+disjoint slices can use fusion. Exact aliases conservatively use the original program too.
+`invocation.node_count` reports the actual selected topology; the compiled object's IR properties
+describe the optimized candidate. This guard preserves shifted-overlap semantics without requiring
+a new no-alias promise from source authors. Both paths retain their usual ordinary/graph support.
+
+The fallback roughly doubles compilation time for eligible programs in the initial implementation.
+It is compiled once per compiled object, with device loading deferred until that path is bound.
+Guarded pass output carries `ckl.fusion.requires_disjoint`; it is inspection IR with a runtime
+contract, not a standalone replacement for original source. Native compilation rejects pre-fused
+marked input because it needs original source to construct the fallback.
+
+The [measured fusion comparison](../benchmarks/standalone/results/rtx5060ti-fusion.md) includes
+automatic fusion, disabled fusion, and the manually fused control. CUDA regression tests cover
+partial blocks, million-element buffers, shifted overlaps, adjacent slices, and rounding-sensitive
+multiply/add operations.
+
 ## Compiler stages
 
 The native library runs CKL's pass managers directly. CUDA preparation checks the supported

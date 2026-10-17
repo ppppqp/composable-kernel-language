@@ -1,6 +1,7 @@
 add_mlir_library(CKLTransforms
   ExecutablePlan.cpp
   CudaKernels.cpp
+  PointwiseFusion.cpp
 
   LINK_LIBS PUBLIC
   CKLAnalysis

@@ -44,6 +44,11 @@ class InProcessTest(unittest.TestCase):
             with self.subTest(target=target), self.assertRaises(ValueError):
                 self.lowered.compile(target=target)
 
+    def test_guarded_ir_requires_original_source(self):
+        fused = self.lowered.analyze("--ckl-fuse-pointwise")
+        with self.assertRaisesRegex(RuntimeError, "not pre-fused guarded IR"):
+            replace(self.lowered, mlir=fused.mlir).compile(target=self.target)
+
     def test_embedded_binary_and_host_entry_point(self):
         toolkit = os.environ.get("CKL_CUDA_TOOLKIT")
         if not toolkit:
@@ -53,7 +58,7 @@ class InProcessTest(unittest.TestCase):
             before = set(Path(directory).iterdir())
             environment = {key: os.environ.get(key) for key in ("CUDA_HOME", "PATH")}
             with patch("subprocess.run", side_effect=AssertionError("external CKL tool")):
-                compiled = self.lowered.compile(target=target)
+                compiled = self.lowered.compile(target=target, fuse_pointwise=False)
             self.assertEqual(before, set(Path(directory).iterdir()))
             self.assertEqual(environment, {key: os.environ.get(key) for key in environment})
         self.assertIn("@ckl_entry", compiled.host_ir)

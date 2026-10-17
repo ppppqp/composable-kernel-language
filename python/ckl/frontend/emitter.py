@@ -45,10 +45,10 @@ class LoweredProgram:
         self.analyze(ckl_opt=ckl_opt)
         return self
 
-    def compile(self, *, target: NVIDIATarget):
+    def compile(self, *, target: NVIDIATarget, fuse_pointwise=True):
         """Compile device code and JIT its host entry point in this process."""
         from ..cuda import CompiledProgram
-        return CompiledProgram(self, target)
+        return CompiledProgram(self, target, fuse_pointwise=fuse_pointwise)
 
 
 def identity(definition: Definition, signature: BoundSignature) -> str:

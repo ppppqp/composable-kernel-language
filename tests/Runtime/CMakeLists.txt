@@ -51,6 +51,13 @@ if(CKL_ENABLE_MLIR)
       ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_frontend_runtime.py"
       --toolkit "${CUDAToolkit_BIN_DIR}/.." --chip "sm_${CKL_RUNTIME_TEST_ARCH}")
   set_tests_properties(ckl-cuda-frontend-runtime PROPERTIES SKIP_RETURN_CODE 77)
+  add_test(NAME ckl-cuda-pointwise-fusion
+    COMMAND ${CMAKE_COMMAND} -E env
+      "PYTHONPATH=${PROJECT_SOURCE_DIR}/python"
+      "CKL_NATIVE_LIBRARY=$<TARGET_FILE:CKLCompiler>"
+      ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_pointwise_fusion.py"
+      --toolkit "${CUDAToolkit_BIN_DIR}/.." --chip "sm_${CKL_RUNTIME_TEST_ARCH}")
+  set_tests_properties(ckl-cuda-pointwise-fusion PROPERTIES SKIP_RETURN_CODE 77)
 
 endif() # CKL_ENABLE_MLIR
 endif() # CKL_ENABLE_CUDA_RUNTIME

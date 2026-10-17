@@ -14,7 +14,11 @@ compiled kernels, arguments, dependencies, and planned temporary storage.
 
 All kernels and programs are in [workloads.py](workloads.py). There are no hand-written CUDA
 kernels and no frontend extensions for these cases. `fused_chain_six` is a separate CKL source
-implementation; CKL does **not** perform automatic kernel fusion yet.
+implementation used as a control. CKL now also performs conservative automatic pointwise-chain
+fusion. The benchmark defaults to `--fusion off` to preserve the original workload topologies;
+pass `--fusion on` to measure the compiler optimization. Native `.compile()` enables it by default.
+See [automatic fusion results](results/rtx5060ti-fusion.md) and
+[the alias/fallback contract](../../docs/cuda-backend.md#pointwise-chain-fusion).
 
 ## Reproduce
 
@@ -90,13 +94,14 @@ For 257 elements, median native stream times were:
 | Fork/join | 7.87 | 6.18 |
 | Two-step stencil | 2.54 | 4.09 |
 
-**Prioritize a conservative pointwise-chain fusion pass.** Across the four sizes, the manually
+**The initial result motivated pointwise-chain fusion, now implemented.** Across the four sizes, the manually
 fused control is 5.76–6.17x faster than the unfused chain with ordinary launches and 3.01–4.98x
 faster when both use graphs. It removes all five logical temporaries and five launches while
 retaining the six arithmetic stages. This establishes headroom, not an automatic-fusion result.
 Start with single-use, static, contiguous pointwise intermediates and matching index/bounds
 semantics. Preserve floating-point operations and reject neighbor-dependent stencil fusion,
-side effects, and uncertain aliasing. Use these cases as acceptance tests for the pass.
+side effects, and uncertain aliasing. These cases now serve as acceptance tests for the pass;
+the measured automatic-fusion comparison is linked above. Overlap uses a retained original program.
 
 **Keep graph selection explicit.** Graphs improve native burst throughput by 1.27–1.29x for the
 small six-node cases, but are slower for one/two-node cases and do not improve the million-element

@@ -308,6 +308,13 @@ The new sequence is:
 6. **HIP source path and justified features:** add CKL-to-ROCDL generation, needed language features,
    region precision, and explicit program control flow.
 
+The initial unary pointwise-chain fusion pass is implemented before CUDA preparation. It removes
+single-use temporary store/load boundaries only for matching guarded same-index computation and
+launches, preserving arithmetic flags and operation order. Native compilation retains original
+code and selects it when bound external byte ranges overlap. Stencils, branches/joins, escaping
+temporaries, and unsupported control flow remain unchanged. Benchmark and numerical acceptance
+results are retained under `benchmarks/standalone/results/rtx5060ti-fusion*`.
+
 ## 12. Risks and decisions
 
 The principal risk is expanding language scope faster than a complete path can be validated. Start

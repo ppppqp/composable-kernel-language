@@ -87,6 +87,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--toolkit", type=Path, required=True)
     parser.add_argument("--chip", default="sm_120")
+    parser.add_argument("--fusion", choices=("off", "on"), default="off")
     parser.add_argument("--sizes", type=int, nargs="+", default=[257, 4096, 65536, 1048576])
     parser.add_argument("--cases", nargs="+", choices=CASES, default=list(CASES))
     parser.add_argument("--iterations", type=int, default=200)
@@ -124,9 +125,10 @@ def main():
             if name == "fork_join":
                 signature["other"] = spec
             lowered, lower_ms = timed(lambda: CASES[name].lower(signature=signature))
-            program, compile_ms = timed(lambda: lowered.compile(target=target))
+            program, compile_ms = timed(lambda: lowered.compile(
+                target=target, fuse_pointwise=args.fusion == "on"))
             stats = plan_stats(program.executable_ir)
-            assert stats["nodes"] == {"single_affine": 1, "chain_six": 6,
+            assert stats["nodes"] == {"single_affine": 1, "chain_six": 1 if args.fusion == "on" else 6,
                    "fused_chain_six": 1, "fork_join": 6, "stencil_two": 2}[name]
             if name == "fork_join":
                 assert stats["roots"] == 2, "independent roots were serialized"
