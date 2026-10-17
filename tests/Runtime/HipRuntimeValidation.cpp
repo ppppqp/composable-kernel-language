@@ -1,9 +1,5 @@
 #include "ckl/Runtime/HipRuntime.h"
 
-#ifdef CKL_HAS_GENERATED_HIP_PLAN
-#include "generated-hip-host-plan.inc"
-#endif
-
 #include <hip/hip_runtime_api.h>
 
 #include <cmath>
@@ -18,7 +14,6 @@ using namespace mlir::ckl::runtime;
 
 namespace {
 
-#ifndef CKL_HAS_GENERATED_HIP_PLAN
 KernelInvocation addBiasInvocation(const std::string &artifact, std::uint64_t values,
                                    int elements, float bias) {
   KernelArguments arguments;
@@ -32,7 +27,6 @@ KernelInvocation addBiasInvocation(const std::string &artifact, std::uint64_t va
           0,
           std::move(arguments)};
 }
-#endif
 
 void requireResult(const HipBuffer &buffer, const std::vector<float> &initial, float expectedBias) {
   std::vector<float> result(initial.size());
@@ -74,16 +68,9 @@ int main(int argc, char **argv) try {
 
   ArtifactRegistry artifacts;
   artifacts.add(KernelArtifact::readFile("kernels.hsaco", "rocm.hsaco", "test", argv[1]));
-#ifdef CKL_HAS_GENERATED_HIP_PLAN
-  auto generated = ckl_generated::build_launch_graph_exec(runtime, borrowed, elements);
-  ExecutionPlan &plan = generated.plan;
-  if (plan.nodes().size() != 2 || generated.retained.size() != 1)
-    throw std::runtime_error("generated HIP plan has an unexpected shape");
-#else
   ExecutionPlan plan;
   auto first = plan.addKernel(addBiasInvocation("kernels.hsaco", borrowed.address(), elements, 1.0f));
   plan.addKernel(addBiasInvocation("kernels.hsaco", borrowed.address(), elements, 2.0f), {first});
-#endif
 
   owned.copyFromHost(initial.data(), bytes);
   runtime.launchOrdinary(plan, artifacts, stream);

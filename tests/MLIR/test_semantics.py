@@ -291,12 +291,6 @@ def main() -> int:
     require("from_location" in graph.stdout and "to_location" in graph.stdout, "missing provenance")
     require('ckl.memory_plan = {assignments =' in graph.stdout, "missing compiler memory plan")
     require('ckl.launch_grid = array<i64: 1, 1, 1>' in graph.stdout, "missing launch metadata")
-    hostgen = executable.parent.parent / "ckl-hostgen" / "ckl-hostgen"
-    require(hostgen.is_file(), f"missing host generator at {hostgen}")
-    analysis_host = run_text(hostgen, graph.stdout)
-    require(analysis_host.returncode != 0, "host generator accepted analysis IR")
-    require("requires at least one ckl_exec.plan" in analysis_host.stderr, analysis_host.stderr)
-
     memory_plan = run(executable, inputs / "memory-plan.mlir", "--ckl-build-graph")
     require(memory_plan.returncode == 0, memory_plan.stderr)
     require('baseline_bytes = 512 : i64' in memory_plan.stdout, "unexpected memory baseline")
@@ -317,7 +311,7 @@ def main() -> int:
         "dynamic temporary did not produce an explicit planning diagnostic",
     )
 
-    # Exercise CKL's own analysis-to-host path, including inferred dependencies and ABI slots.
+    # Exercise CKL's analysis-to-executable path, including inferred dependencies and ABI slots.
     for backend, source, kernels, artifact in (
         ("cuda", inputs.parent / "Runtime" / "host-plan.mlir", 5, "kernels.cubin"),
         ("rocm", inputs.parent / "Runtime" / "hip-host-plan.mlir", 2, "kernels.hsaco"),
@@ -345,14 +339,7 @@ def main() -> int:
                 and 'packing = "bare_pointer"' in executable_plan.stdout,
                 "CKL HIP lowering lost the inferred write conflict or pointer ABI",
             )
-        generated_host = run_text(hostgen, executable_plan.stdout)
-        require(generated_host.returncode == 0, generated_host.stderr)
-        runtime = "NvidiaRuntime" if backend == "cuda" else "HipRuntime"
-        require(
-            runtime + " &runtime" in generated_host.stdout,
-            "host generation selected the wrong runtime",
-        )
-        require(artifact in generated_host.stdout, "host generation lost artifact identity")
+        require(artifact in executable_plan.stdout, "executable lowering lost artifact identity")
 
     unresolved_abi = run(
         executable,

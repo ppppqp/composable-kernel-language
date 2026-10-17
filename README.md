@@ -18,17 +18,17 @@ The repository implements the compiler/runtime foundation:
 - interprocedural effect and alias analysis with strict and conservative modes;
 - dependency graphs with provenance and DOT output;
 - static memory planning with safe temporary-buffer reuse;
-- verified `ckl_exec` plans and generated C++ host builders;
+- verified `ckl_exec` plans and an in-process LLVM host JIT;
 - artifact loading, ordinary launches, command graphs, caching, and borrowed buffers/streams in
   optional CUDA and HIP runtimes; and
 - feasibility and runtime benchmarks with correctness checks and recorded measurements.
 
 The initial Python frontend provides `@ckl.kernel`, `@ckl.program`, typed shape specialization,
 indexed computation, guarded stores, temporaries, and explicit launches. It compiles source ASTs
-to MLIR without executing bodies or requiring a GPU. Complete CKL kernel-to-device lowering
-and Python runtime invocation remain to be implemented. Runtime fixtures use hand-written
-CUDA/HIP kernels, and one NVIDIA test validates upstream GPU-to-CUBIN lowering. These validate
-infrastructure, not a completed CKL source-to-device pipeline.
+to MLIR without executing bodies or requiring a GPU. The initial CUDA backend compiles these
+bodies to embedded CUBINs and JIT-compiles host entry points in process. A two-kernel CKL program
+passes sequential and CUDA graph numerical checks through Python. Broader language features remain
+subsequent work; the older hand-written CUDA/HIP fixtures continue to validate infrastructure.
 
 See [the language design](docs/dsl.md), [compiler architecture](docs/orchestration.md), and
 [normative specification](specs/mlir-layout-aware-gpu-compiler-spec.md).
@@ -41,7 +41,7 @@ CKL source: kernels + repeated programs
     -> inferred effects, aliases, and dependency graph
     -> memory planning and verified executable plan
     -> CKL device lowering + compiled CUBIN/HSACO artifacts
-    -> generated host builder + CUDA/HIP executor
+    -> LLVM host JIT + CUDA executor (HIP runtime retained separately)
 ```
 
 Effect analysis runs while kernel bodies remain available. CKL owns argument packing, launch
@@ -73,16 +73,15 @@ cmake --build build-mlir
 ctest --test-dir build-mlir --output-on-failure
 ```
 
-Inspect an inferred graph or generate a host builder from CKL IR:
+Inspect an inferred graph or executable plan from CKL IR:
 
 ```bash
 build-mlir/tools/ckl-opt/ckl-opt tests/MLIR/graph.mlir --ckl-build-graph
 build-mlir/tools/ckl-opt/ckl-opt tests/Runtime/host-plan.mlir \
   --ckl-build-graph --ckl-lower-graph-to-exec -o /tmp/host-plan.exec.mlir
-build-mlir/tools/ckl-hostgen/ckl-hostgen /tmp/host-plan.exec.mlir -o /tmp/host-plan.cpp
 ```
 
-Host generation requires verified `ckl_exec.plan` IR. The current executable subset requires
+The host JIT consumes verified `ckl_exec.plan` IR. The current executable subset requires
 static launch dimensions and base identity-layout resources. Conditional dispatches, dynamic
 resources, view-derived pointer arguments, and unsupported ABI packing fail with diagnostics.
 Compiler-owned effect summaries are always recomputed from kernel bodies.
@@ -107,22 +106,27 @@ build-mlir/tools/ckl-opt/ckl-opt /tmp/vector-pipeline.mlir --ckl-build-graph
 emits a logical device with no ABI capability, so executable lowering fails until backend
 compilation supplies real device artifacts and packing metadata.
 
+Use `lowered.compile(target=ckl.NVIDIATarget(...))` to compile device code and its host launcher
+in process. The result supports `.run(...)` and `.bind(...).run(graph=True)`, with no generated
+files or MLIR Python bindings. See [CUDA compilation and execution](docs/cuda-backend.md).
+
 `ckl.compiler.compile_module` accepts raw MLIR through a built `ckl-opt`. `NVIDIATarget` configures
 upstream GPU-to-NVVM compilation; embedded object extraction requires compatible MLIR Python
 bindings.
 
 ## Optional runtimes and benchmarks
 
-Enable CUDA validation with `-DCKL_ENABLE_CUDA_RUNTIME=ON`. Combining it with MLIR enables generated
-CUBIN and CKL host-plan tests. `CKL_RUNTIME_TEST_ARCH` selects the SM architecture and
+Enable CUDA validation with `-DCKL_ENABLE_CUDA_RUNTIME=ON`. Combining it with MLIR enables
+the in-process `ckl-cuda-frontend-runtime` test, compiled directly from the Python example.
+`CKL_RUNTIME_TEST_ARCH` selects the SM architecture and
 `CKL_CUDA_HOST_COMPILER` selects the nvcc host compiler. See the
 [Milestone 3](benchmarks/milestone3/README.md) and
 [Milestone 4](benchmarks/milestone4/README.md) benchmarks.
 
 Enable HIP validation with `-DCKL_ENABLE_HIP_RUNTIME=ON`. The host runtime requires
 `hip_runtime_api.h` and `libamdhip64`; validation additionally needs `hipcc` and the offload bundler.
-`CKL_HIP_RUNTIME_TEST_ARCH` selects the GFX architecture. With MLIR enabled, the test derives a HIP
-host plan from CKL kernel effects. Device execution is skipped when no HIP device is accessible.
+`CKL_HIP_RUNTIME_TEST_ARCH` selects the GFX architecture. MLIR analysis tests separately verify HIP
+plans and their inferred dependencies. Device execution is skipped when no HIP device is accessible.
 
 `CKL_BUILD_CUDA_BENCHMARKS` enables the [feasibility harness](benchmarks/milestone0/README.md).
 `CKL_BUILD_HIP_BENCHMARKS` enables the [HIP overhead benchmark](benchmarks/hip-runtime-overhead/README.md).
@@ -132,7 +136,7 @@ host plan from CKL kernel effects. Device execution is skipped when no HIP devic
 ```text
 include/ckl/      dialect, analysis, core, and runtime headers
 lib/             compiler analyses, transforms, and runtime implementations
-tools/           ckl-opt and ckl-hostgen
+tools/           ckl-opt for optional verification and inspection
 python/ckl/      typed Python frontend, MLIR compilation, and GPU-artifact utilities
 tests/          core, Python, MLIR semantics, and optional GPU validation
 benchmarks/      feasibility, planning, and runtime measurements

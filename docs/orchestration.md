@@ -13,8 +13,8 @@ CKL source
     -> dispatch dependency graph with provenance
     -> resource lifetimes and memory plan
     -> verified ckl_exec plan + CKL-generated device artifacts
-    -> generated host builder
-    -> CUDA or HIP executor
+    -> in-process LLVM host JIT with embedded device code
+    -> CUDA executor (HIP runtime retained separately)
 ```
 
 Upstream MLIR dialects are internal tools for arithmetic, structured control flow, memory
@@ -56,7 +56,8 @@ unsupported resources receive an unavailable reason rather than an assumed size.
 
 `ckl-lower-graph-to-exec` converts analyzed graphs to verified `ckl_exec.plan` operations with heaps,
 resource slices, launch metadata, CKL backend ABI identities, physical argument slots, and reduced
-dependencies. `ckl-hostgen` consumes only this executable IR and emits owning C++ builders.
+dependencies. The native compiler consumes this executable IR and JIT-compiles an LLVM host
+entry point with the device binary embedded.
 
 The current static subset requires unconditional host-entry-block dispatches. Conditional or
 repeated host nodes are rejected until executable IR can represent predicates and trip counts.
@@ -64,7 +65,7 @@ Base identity-layout pointer arguments are supported; views/subviews require off
 and currently fail executable lowering. Supported scalar bindings/constants are i32, i64, f32,
 and f64. Computed host scalars and dynamic launch/resource metadata remain unsupported.
 
-CKL backend lowering will generate ABI identities and launch metadata automatically. Today the
+CKL CUDA preparation generates ABI identities and artifact metadata automatically. Some
 low-level MLIR fixtures carry these attributes explicitly. They are compiler plumbing, not the
 intended source-language API.
 
@@ -72,8 +73,9 @@ intended source-language API.
 
 `KernelArtifact`, `ArtifactRegistry`, `KernelInvocation`, and `ExecutionPlan` are internal compiler
 and runtime handoff types. The executor loads CUBIN or HSACO objects, resolves entry points, and
-passes packed arguments to the device driver. Generated host builders allocate declared heaps,
-retain external buffers, and construct the plan without resolving native functions.
+passes packed arguments to the device driver. The JIT host entry point allocates declared heaps,
+binds external buffers, and constructs native launches. Python invocation objects retain code,
+buffers, heap allocations, streams, and graphs through completion.
 
 The optional CUDA and HIP executors support ordinary launches, explicit command graphs,
 executable caching, and owned or borrowed buffers and streams. CUDA additionally has parameter
@@ -97,6 +99,7 @@ time, end-to-end latency, host overhead, setup/tuning cost, peak temporary memor
 throughput, and amortization iterations.
 
 The retained Milestone 0--4 benchmarks establish orchestration feasibility and runtime behavior.
-Their hand-written device kernels do not establish language completeness. The next acceptance
-gate is an end-to-end CKL-authored program whose analyzed bodies also generate the executed binary,
-followed by the scientific multi-field workload. See [the language implementation sequence](dsl.md#implementation-sequence).
+Their hand-written device kernels do not establish language completeness. The initial
+[CUDA acceptance test](cuda-backend.md#acceptance-test) now executes a CKL-authored two-kernel
+program whose analyzed bodies generate the binary. The scientific multi-field workload is next.
+See [the language implementation sequence](dsl.md#implementation-sequence).

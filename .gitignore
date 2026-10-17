@@ -3,6 +3,7 @@ docs/*
 !docs/dsl.md
 !docs/kernel-ir.md
 !docs/python-frontend.md
+!docs/cuda-backend.md
 specs/*
 !specs/mlir-layout-aware-gpu-compiler-spec.md
 build/

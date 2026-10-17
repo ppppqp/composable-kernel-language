@@ -15,6 +15,11 @@ add_test(NAME ckl-execution-plan COMMAND ckl-execution-plan-test)
 set(ckl_python_test_environment "PYTHONPATH=${PROJECT_SOURCE_DIR}/python")
 if(CKL_ENABLE_MLIR)
   list(APPEND ckl_python_test_environment "CKL_OPT=$<TARGET_FILE:ckl-opt>")
+  list(APPEND ckl_python_test_environment "CKL_NATIVE_LIBRARY=$<TARGET_FILE:CKLCompiler>")
+  if(CKL_ENABLE_CUDA_RUNTIME)
+    list(APPEND ckl_python_test_environment
+      "CKL_CUDA_TOOLKIT=${CUDAToolkit_BIN_DIR}/..")
+  endif()
 endif()
 
 add_test(

@@ -1,7 +1,7 @@
 # Python frontend proposal
 
-**Status:** initial AST lowering implemented, 2026-10-11. The broader control-flow and runtime
-APIs remain subsequent design stages.
+**Status:** initial AST lowering and in-process CUDA compilation/execution implemented.
+Broader control-flow and asynchronous runtime APIs remain subsequent design stages.
 
 ## Implemented subset
 
@@ -15,9 +15,12 @@ constexpr bindings, indexed accesses, device coordinates, arithmetic/comparisons
 compile-time conditionals, runtime kernel guards, temporary allocations, and explicit launches.
 Runtime branch locals are scoped to their branch; updating an outer local or using a branch value
 outside its branch is rejected until SSA branch results are implemented. Kernel `for` loops and
-program unrolling are also rejected for now. `.compile` and runtime invocation are not available.
+program unrolling are also rejected for now. `LoweredProgram.compile(target=...)` and
+Python CUDA invocation are available for the straight-line subset.
 
 The runnable lowering example is [examples/vector_pipeline.py](../examples/vector_pipeline.py).
+`.compile(target=...)` embeds device code and JIT-compiles a host entry point in process.
+See [CUDA compilation and Python execution](cuda-backend.md).
 The remaining sections define the approved direction, including staged features; they do not
 promise that deferred control-flow or execution APIs exist.
 
@@ -221,25 +224,22 @@ parameter and dimension descriptors; ordinary runtime parameter values are never
 raw-MLIR `CompiledModule`. Frontend lowering does not need a GPU, binary extraction, or a target
 compiler. It can invoke `ckl-opt` for verification and analysis when available.
 
-A subsequent backend API will accept this result and a target:
+The backend API accepts this result and a target:
 
 ```python
-executable = step.compile(signature=signature, constants={}, target=target)
-execution = executable.run(src_buffer, dst_buffer, bias, mode="graph")
-execution.wait()
+executable = step.lower(signature=signature, constants={}).compile(target=target)
+executable.run(src, dst, bias)
+invocation = executable.bind(src, dst, bias)
+invocation.run(graph=True)
 ```
 
-This execution API is a direction for later work, not part of the first frontend implementation.
-It needs complete kernel device lowering and a Python/runtime invocation bridge, neither of which
-exists yet. `run` uses CKL buffers and optionally borrowed buffer/stream bindings, validates its
-specialized signature, retains resources through completion, and leaves repeated execution and
-synchronization explicit. Automatic compilation from arbitrary framework tensors is outside the
-initial design.
+This initial runtime API is implemented through the native compiler and MLIR ExecutionEngine.
+See [the CUDA backend contract](cuda-backend.md) for ownership and supported buffer types.
 
 `lower` creates an analyzed kernel specialization identity but does not invent a compiled artifact
 or claim an ABI. Backend compilation attaches device, ABI, binary/artifact identity, and final
 launch metadata before executable lowering. Only the complete backend pipeline may emit a
-runnable program. Until then, frontend output supports verification/effect/graph analysis; an
+runnable program. Target-free frontend output supports verification/effect/graph analysis; an
 unresolved executable plan correctly fails closed.
 
 The existing dispatch operation requires a device string and implementation identity even for
@@ -296,8 +296,8 @@ full proposal is a design boundary, not a requirement to implement every feature
 Required checks include deterministic output, shape/type mismatches, source-located unsupported
 syntax, literal conversions, invalid launch geometry, branch/loop definite assignment, bounds
 checks remaining inside control flow, and emitted IR verification. Existing analysis tests must
-confirm read/write effects and dependency topology. Numerical source-to-device execution becomes
-an acceptance gate after backend lowering and the runtime bridge are implemented.
+confirm read/write effects and dependency topology. The CUDA acceptance test now validates
+numerical source-to-device execution through Python and an in-process LLVM host JIT.
 
 The key proposed decisions are AST compilation, explicit typed signatures, shape specialization,
 call-site launches, separate kernel/program contexts, and a lowering-first implementation. These

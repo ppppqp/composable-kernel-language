@@ -1,8 +1,8 @@
 # Initial CKL kernel IR
 
 The first standalone-language step is implemented at the IR level. These operations describe
-indexed computation and have verified types and effect semantics. They do not yet lower to device
-binaries. The Python kernel/program frontend is the next implementation step.
+indexed computation and have verified types and effect semantics. The Python frontend emits
+these bodies, and the initial [CUDA backend](cuda-backend.md) compiles them to device binaries.
 
 ## Kernel bodies and types
 
@@ -52,7 +52,7 @@ does not remove a required dependency. More precise regions remain future work.
 
 The legacy `ckl.load`/`ckl.store` operations remain analysis-only whole-buffer fixtures. New device
 kernel bodies use `load_element`/`store_element`; a later device lowering must reject legacy
-operations rather than invent an index for them.
+operations rather than invent an index for them. The CUDA backend now enforces this rejection.
 
 ## Example and launch model
 
@@ -82,8 +82,8 @@ geometry. Kernel-local `scf.if` and `scf.for` are analyzed recursively; they do 
 launch conditional. Host-level conditional/repeated launches still fail executable lowering.
 
 Legacy analysis fixtures may dispatch unmarked functions. The new frontend will mark every device
-kernel and generate launch, ABI, implementation, and artifact metadata. Handwritten IR currently
-supplies that metadata to exercise plan construction.
+kernel; CUDA preparation generates ABI, implementation, and artifact metadata. Handwritten IR
+can still supply that metadata to exercise plan construction independently.
 
 [The complete fixture](../tests/MLIR/indexed-kernel.mlir) composes two calls through a temporary
 buffer and includes a multidimensional kernel loop. Inspect its effects and graph with:

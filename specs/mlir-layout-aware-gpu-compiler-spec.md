@@ -133,7 +133,7 @@ CKL kernel + program source
 CKL device lowering       verified ckl_exec plan
 GPU -> NVVM/ROCDL                 |
 CUBIN/HSACO artifacts             v
-       |                   generated host builder
+       |                   JIT-compiled host entry point
        +------------+-------------+
                     v
           CUDA/HIP executor
@@ -220,8 +220,10 @@ an acceptable completed language pipeline.
 types. An invocation names an artifact, entry point, ABI, device, geometry, physical arguments,
 and predecessors. The executor imports artifacts and resolves native functions.
 
-`ckl-hostgen` consumes verified executable IR, allocates declared heaps, retains caller-owned
-resources, packs supported arguments, and emits an owning C++ plan builder. It rejects analysis IR.
+The in-process compiler lowers verified executable IR to a host LLVM entry point with the device
+binary embedded. MLIR ExecutionEngine JIT-compiles it; binding allocates declared heaps, binds
+external buffers, packs supported arguments, and constructs the native plan. Python invocation
+objects retain resources and code through synchronous ordinary or graph execution.
 
 The CUDA executor supports ordinary topological launches, explicit graphs, caching, parameter
 updates, bounded allocation views, and topology batching. HIP supports ordinary launches, explicit
@@ -280,7 +282,7 @@ The former orchestration Milestones 0--4 provide useful infrastructure:
   its independently constructed Driver API graph.
 - Planning: temporary storage fell from 16,384 to 8,192 bytes per instance in the recorded fixture;
   batching and in-flight candidates were checked numerically and measured.
-- Runtime handoff: physical execution plans, generated host builders, artifact registration,
+- Runtime handoff: physical execution plans, JIT-compiled host entry points, artifact registration,
   borrowed buffers/streams, and the optional HIP executor remain implemented.
 
 Those results remain in `benchmarks/milestone0`, `benchmarks/milestone3`,
@@ -292,14 +294,15 @@ The new sequence is:
 
 1. **Kernel semantics (initial IR implemented):** indexed loads/stores, device coordinates,
    numeric buffer/scalar types, a kernel marker, and host launch rules are verified. Effects
-   propagate through structured kernel control flow; device lowering remains subsequent work.
+   propagate through structured kernel control flow.
 2. **Frontend (initial subset implemented):** typed AST compilation, shape specialization,
    guarded indexed kernels, temporaries, explicit launches, and constexpr binding produce
    target-independent MLIR for verification and effect/graph analysis.
-3. **CUDA device lowering:** compile the analyzed CKL bodies to CUBINs and generate consistent
+3. **CUDA device lowering (initial subset implemented):** compile the analyzed CKL bodies to CUBINs and generate consistent
    ABI/artifact/launch metadata.
-4. **End-to-end execution:** connect compilation to verified plans and host/runtime invocation;
-   validate vector update and a two-kernel program.
+4. **End-to-end execution (validated through Python):** in-process compilation connects the bodies
+   to verified plans and JIT-compiled host entry points. A 257-element two-kernel program passes
+   sequential and graph execution checks through the Python runtime API.
 5. **CKL workload:** replace hand-written kernels with CKL source for the branched scientific
    workload, then re-evaluate memory reuse, batching, and instances in flight.
 6. **HIP source path and justified features:** add CKL-to-ROCDL generation, needed language features,
@@ -332,5 +335,5 @@ Decision record:
 6. Whole-buffer soundness and a static single-device executable subset come first.
 7. Complete-plan measurements rank optimization candidates.
 8. CUDA is the first complete language backend; HIP runtime infrastructure is retained.
-9. A CKL-authored source-to-device program is the next acceptance gate.
+9. The initial CKL-authored source-to-CUDA program passes the numerical acceptance gate.
 10. Multi-GPU and more elaborate language/graph features follow validated single-device results.

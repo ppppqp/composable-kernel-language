@@ -1,6 +1,6 @@
 # CKL language direction
 
-**Status:** kernel IR and initial Python AST lowering implemented.
+**Status:** kernel IR, initial Python AST lowering, and CUDA source-to-device execution implemented.
 
 CKL is a self-contained GPU DSL. A program authors both device computation and the sequence of
 kernel invocations that forms a repeated GPU workload. The compiler owns kernel semantics,
@@ -12,7 +12,8 @@ analysis, and execution planning.
 The [Python frontend proposal](python-frontend.md) uses AST compilation of a restricted Python
 subset with explicit kernel and program entry points. Python is the authoring surface; typed MLIR
 is the semantic source of truth. The Python package contains the initial frontend and compilation
-utilities. Richer control flow and runtime execution remain later work.
+utilities. CUDA compilation and host invocation run in process through Python and an LLVM host
+JIT. Richer control flow remains later work.
 
 The following authoring example is supported by the initial frontend:
 
@@ -59,7 +60,7 @@ memory, and richer layouts are staged additions with explicit semantics and nume
 The initial [kernel IR](kernel-ir.md) now provides `ckl.load_element`, `ckl.store_element`,
 thread/block/global coordinates, and a verified `ckl.kernel` function marker. Ranked memrefs and
 builtin numeric scalars supply the type model. The legacy `ckl.load` and `ckl.store` operations
-remain analysis fixtures. Device lowering of the new indexed bodies is still to be implemented.
+remain analysis fixtures. The [CUDA backend](cuda-backend.md) lowers the new indexed bodies.
 
 ## Compiler ownership
 
@@ -80,9 +81,9 @@ program.
    launch model. See [the verified contract](kernel-ir.md).
 2. **Implemented for the initial subset:** AST frontend for a guarded vector update and a
    two-kernel program, including typed buffers, specialization, temporaries, and explicit launches.
-3. Lower the same CKL kernel bodies to device binaries; connect their identities and ABI to
-   `ckl_exec` and host generation.
-4. Execute the two-kernel program and compare sequential and graph results element by element.
+3. **Implemented for CUDA:** lower the same CKL kernel bodies to device binaries; connect their identities and ABI to
+   `ckl_exec` and the host JIT.
+4. **Validated through Python and native execution:** execute the two-kernel program and compare sequential and graph results element by element.
 5. Port the branched multi-field workload entirely to CKL source, then measure temporary reuse,
    batching, and instances in flight.
 6. Extend language features only when workloads and measured limitations justify them.

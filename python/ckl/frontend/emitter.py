@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..compiler import CompilerOptions, compile_module
+from ..compiler import CompilerOptions, NVIDIATarget, compile_module
 from ..types import BufferSpec, Dimension, ScalarType, bool_, f32, f64, i32, i64, index
 from .checker import BoundSignature, bind, constant, resolve
 from .source import Definition, Intrinsic, Namespace, UnsupportedBinding, fingerprint
@@ -44,6 +44,11 @@ class LoweredProgram:
     def verify(self, *, ckl_opt: Path | None = None) -> LoweredProgram:
         self.analyze(ckl_opt=ckl_opt)
         return self
+
+    def compile(self, *, target: NVIDIATarget):
+        """Compile device code and JIT its host entry point in this process."""
+        from ..cuda import CompiledProgram
+        return CompiledProgram(self, target)
 
 
 def identity(definition: Definition, signature: BoundSignature) -> str:

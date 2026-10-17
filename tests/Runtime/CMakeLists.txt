@@ -44,71 +44,14 @@ add_test(
 )
 
 if(CKL_ENABLE_MLIR)
-  set(generated_mlir "${CMAKE_CURRENT_BINARY_DIR}/generated-kernel.mlir")
-  set(generated_cubin "${CMAKE_CURRENT_BINARY_DIR}/generated-kernel.cubin")
-  add_custom_command(
-    OUTPUT "${generated_mlir}"
-    COMMAND $<TARGET_FILE:ckl-opt> "${CMAKE_CURRENT_SOURCE_DIR}/generated-kernel.mlir"
-      "--gpu-lower-to-nvvm-pipeline=cubin-chip=sm_${CKL_RUNTIME_TEST_ARCH} cubin-features=+ptx87 cubin-format=bin"
-      -o "${generated_mlir}"
-    DEPENDS ckl-opt generated-kernel.mlir
-    VERBATIM
-  )
-  add_custom_command(
-    OUTPUT "${generated_cubin}"
+  add_test(NAME ckl-cuda-frontend-runtime
     COMMAND ${CMAKE_COMMAND} -E env
-      "PYTHONPATH=${PROJECT_SOURCE_DIR}/python:$ENV{PYTHONPATH}"
-      ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/extract_gpu_object.py"
-      "${generated_mlir}" "${generated_cubin}"
-    DEPENDS "${generated_mlir}" extract_gpu_object.py
-    VERBATIM
-  )
-  add_custom_target(ckl-generated-test-cubin DEPENDS "${generated_cubin}")
+      "PYTHONPATH=${PROJECT_SOURCE_DIR}/python"
+      "CKL_NATIVE_LIBRARY=$<TARGET_FILE:CKLCompiler>"
+      ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_frontend_runtime.py"
+      --toolkit "${CUDAToolkit_BIN_DIR}/.." --chip "sm_${CKL_RUNTIME_TEST_ARCH}")
+  set_tests_properties(ckl-cuda-frontend-runtime PROPERTIES SKIP_RETURN_CODE 77)
 
-  add_executable(ckl-generated-cubin-validation GeneratedCubinValidation.cpp)
-  add_dependencies(ckl-generated-cubin-validation ckl-generated-test-cubin)
-  target_link_libraries(ckl-generated-cubin-validation PRIVATE CKLNvidiaRuntime)
-  target_compile_features(ckl-generated-cubin-validation PRIVATE cxx_std_17)
-  target_compile_options(ckl-generated-cubin-validation PRIVATE -Wall -Wextra -Wpedantic)
-
-  add_test(
-    NAME ckl-generated-cubin-runtime
-    COMMAND ckl-generated-cubin-validation "${generated_cubin}"
-  )
-
-  set(host_plan_mlir "${CMAKE_CURRENT_BINARY_DIR}/host-plan.exec.mlir")
-  set(host_plan_cpp "${CMAKE_CURRENT_BINARY_DIR}/generated-host-plan.inc")
-  add_custom_command(
-    OUTPUT "${host_plan_mlir}"
-    COMMAND $<TARGET_FILE:ckl-opt> "${CMAKE_CURRENT_SOURCE_DIR}/host-plan.mlir"
-      --ckl-build-graph --ckl-lower-graph-to-exec -o "${host_plan_mlir}"
-    DEPENDS ckl-opt host-plan.mlir
-    VERBATIM
-  )
-  add_custom_command(
-    OUTPUT "${host_plan_cpp}"
-    COMMAND $<TARGET_FILE:ckl-hostgen> "${host_plan_mlir}" -o "${host_plan_cpp}"
-    DEPENDS ckl-hostgen "${host_plan_mlir}"
-    VERBATIM
-  )
-  add_custom_target(ckl-generated-host-plan DEPENDS "${host_plan_cpp}")
-
-  add_executable(ckl-generated-host-plan-validation GeneratedHostPlanValidation.cpp)
-  add_dependencies(ckl-generated-host-plan-validation
-    ckl-generated-host-plan
-    ckl-runtime-test-cubin
-  )
-  target_include_directories(ckl-generated-host-plan-validation PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}"
-  )
-  target_link_libraries(ckl-generated-host-plan-validation PRIVATE CKLNvidiaRuntime)
-  target_compile_features(ckl-generated-host-plan-validation PRIVATE cxx_std_17)
-  target_compile_options(ckl-generated-host-plan-validation PRIVATE -Wall -Wextra -Wpedantic)
-
-  add_test(
-    NAME ckl-generated-host-plan-runtime
-    COMMAND ckl-generated-host-plan-validation "${runtime_cubin}"
-  )
 endif() # CKL_ENABLE_MLIR
 endif() # CKL_ENABLE_CUDA_RUNTIME
 
@@ -146,28 +89,6 @@ if(CKL_ENABLE_HIP_RUNTIME)
 
   add_executable(ckl-hip-runtime-validation HipRuntimeValidation.cpp)
   add_dependencies(ckl-hip-runtime-validation ckl-runtime-test-hsaco)
-  if(CKL_ENABLE_MLIR)
-    set(hip_host_plan_mlir "${CMAKE_CURRENT_BINARY_DIR}/hip-host-plan.exec.mlir")
-    set(hip_host_plan_cpp "${CMAKE_CURRENT_BINARY_DIR}/generated-hip-host-plan.inc")
-    add_custom_command(
-      OUTPUT "${hip_host_plan_mlir}"
-      COMMAND $<TARGET_FILE:ckl-opt>
-        "${CMAKE_CURRENT_SOURCE_DIR}/hip-host-plan.mlir"
-        --ckl-build-graph --ckl-lower-graph-to-exec -o "${hip_host_plan_mlir}"
-      DEPENDS ckl-opt hip-host-plan.mlir
-      VERBATIM
-    )
-    add_custom_command(
-      OUTPUT "${hip_host_plan_cpp}"
-      COMMAND $<TARGET_FILE:ckl-hostgen> "${hip_host_plan_mlir}" -o "${hip_host_plan_cpp}"
-      DEPENDS ckl-hostgen "${hip_host_plan_mlir}"
-      VERBATIM
-    )
-    add_custom_target(ckl-generated-hip-host-plan DEPENDS "${hip_host_plan_cpp}")
-    add_dependencies(ckl-hip-runtime-validation ckl-generated-hip-host-plan)
-    target_include_directories(ckl-hip-runtime-validation PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_definitions(ckl-hip-runtime-validation PRIVATE CKL_HAS_GENERATED_HIP_PLAN=1)
-  endif()
   target_link_libraries(ckl-hip-runtime-validation PRIVATE CKLHipRuntime)
   target_compile_features(ckl-hip-runtime-validation PRIVATE cxx_std_17)
   target_compile_options(ckl-hip-runtime-validation PRIVATE -Wall -Wextra -Wpedantic)
