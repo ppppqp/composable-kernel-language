@@ -11,6 +11,7 @@ add_mlir_library(CKLTransforms
   MLIRFuncDialect
   MLIRGPUDialect
   MLIRMemRefDialect
+  MLIRMathDialect
   MLIRSCFDialect
   MLIRIR
   MLIRPass

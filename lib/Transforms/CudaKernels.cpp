@@ -4,6 +4,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
@@ -48,7 +49,8 @@ LogicalResult validateKernels(ModuleOp module) {
       bool supported = isa<LoadElementOp, StoreElementOp, ThreadIdOp, BlockIdOp,
                            BlockDimOp, GridDimOp, GlobalIdOp, func::ReturnOp,
                            scf::IfOp, scf::ForOp, scf::YieldOp>(operation) ||
-                       operation->getName().getDialectNamespace() == "arith";
+                       operation->getName().getDialectNamespace() == "arith" ||
+                       isa<math::ExpOp, math::RsqrtOp>(operation);
       if (!supported) {
         operation->emitError("unsupported operation in CKL CUDA kernel; legacy "
                              "whole-buffer operations have no device semantics");
@@ -158,7 +160,8 @@ struct LowerKernelsToGPUPass : PassWrapper<LowerKernelsToGPUPass, OperationPass<
     return "Extract prepared CKL bodies and lower their computation to a GPU module";
   }
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<gpu::GPUDialect, memref::MemRefDialect, arith::ArithDialect>();
+    registry.insert<gpu::GPUDialect, memref::MemRefDialect, arith::ArithDialect,
+                    math::MathDialect>();
   }
   void runOnOperation() override {
     ModuleOp module = getOperation();

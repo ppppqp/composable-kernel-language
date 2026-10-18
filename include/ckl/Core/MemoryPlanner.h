@@ -81,11 +81,14 @@ struct MemoryPlanResult {
 /// its complete use set is strictly ordered before or after every existing resident's use set.
 class MemoryPlanner {
 public:
+  explicit MemoryPlanner(bool reuseStorage = true) : reuseStorage_(reuseStorage) {}
   MemoryPlan plan(std::size_t nodeCount, const std::vector<GraphEdge> &edges,
                   const std::vector<Resource> &resources) const;
   /// Non-throwing entry point for compiler pipelines built with exception handling disabled.
   MemoryPlanResult tryPlan(std::size_t nodeCount, const std::vector<GraphEdge> &edges,
                            const std::vector<Resource> &resources) const noexcept;
+private:
+  bool reuseStorage_;
 };
 
 } // namespace mlir::ckl::planning

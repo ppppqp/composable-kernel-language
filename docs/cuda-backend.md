@@ -53,6 +53,36 @@ temporary heaps, stream, and optional graph executable. Execution is synchronous
 without reallocating heaps or recreating the graph. Scalar arguments are captured at binding;
 rebind to change them. Automatic tensor/framework conversion and borrowed streams are deferred.
 
+## Execution modes, repetition, and storage ablations
+
+Bound invocations support explicit `mode="ordinary"`, `mode="capture"`, and `mode="graph"`.
+Ordinary mode submits kernels in topological order to one stream. Capture records those same
+launches with CUDA stream capture. Graph mode builds an explicit graph using inferred dependencies.
+`graph=True` remains a shorthand for graph mode. Specify either `mode` or `graph=True`.
+
+```python
+invocation.run(mode="capture")
+invocation.run(mode="graph", batch_size=16)
+timing = invocation.benchmark(iterations=1, mode="graph", batch_size=16)
+```
+
+`batch_size` repeats the complete bound program, not its tensor batch dimension. Captured and
+inferred graphs are cached by mode/repeat count within the invocation. Every next iteration's
+roots depend on all previous leaves, preserving mutable state and temporary lifetimes. A grouped
+plan is limited to one million kernel nodes. Benchmark times are per original program execution;
+the example executes 16 programs and divides stream/wall elapsed time by 16. Graph setup is
+reported separately. Scalar bindings remain fixed; evolving state must live in buffers, as in
+the [decoder benchmark](../benchmarks/decoder/README.md).
+
+All calls still synchronize before returning. Grouping delays host observation until the group
+finishes; it does not provide an asynchronous completion/ownership API. The caller must ensure
+the program's input bounds/capacity contract remains valid across every repetition. Capture has
+unspecified native node indices and does not support indexed kernel-parameter updates.
+
+`.compile(target=..., reuse_storage=False)` assigns dedicated temporary slots instead of recycling
+ordered lifetimes. It preserves device bodies and dependency inference, enabling a storage-only
+ablation. The graph pass exposes the same choice as `--ckl-build-graph=reuse-storage=false`.
+
 ## Pointwise-chain fusion
 
 `.compile(target=...)` enables conservative pointwise fusion by default. Use
@@ -115,7 +145,8 @@ binary-extraction executables and their C++ source emitter have been removed.
 
 The initial ABI accepts static identity-layout default-space memrefs and f32/f64/i32/i64 scalars
 and elements. Each buffer occupies one pointer slot; shape and stride are compile-time values.
-Kernel IR supports structured conditionals and loops, although Python loops remain deferred.
+Kernel IR and the Python frontend support structured kernel loops with scalar loop-carried values.
+Constant program loops unroll during specialization; runtime host/program control flow remains deferred.
 Dynamic shapes, views, nontrivial layouts, device calls, atomics, synchronization, and legacy
 whole-buffer operations are unsupported. Host composition is straight-line with static launches.
 Kernel authors guard partial blocks; the compiler does not insert bounds checks automatically.

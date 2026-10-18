@@ -14,8 +14,9 @@ The initial implementation includes numeric scalar/buffer signatures, dimension 
 constexpr bindings, indexed accesses, device coordinates, arithmetic/comparisons/casts,
 compile-time conditionals, runtime kernel guards, temporary allocations, and explicit launches.
 Runtime branch locals are scoped to their branch; updating an outer local or using a branch value
-outside its branch is rejected until SSA branch results are implemented. Kernel `for` loops and
-program unrolling are also rejected for now. `LoweredProgram.compile(target=...)` and
+outside its branch is rejected until SSA branch results are implemented. Kernel `for range`
+loops now lower to `scf.for` with scalar loop-carried values; constant program loops unroll
+during specialization. `LoweredProgram.compile(target=...)` and
 Python CUDA invocation are available for the straight-line subset.
 
 The runnable lowering example is [examples/vector_pipeline.py](../examples/vector_pipeline.py).
@@ -139,9 +140,13 @@ Index arithmetic and integer arithmetic are distinct; narrowing index values req
 cast. Unsigned integer types and implicit promotion ladders are deferred.
 
 Initially support `+`, `-`, `*`, unary `-`, and comparisons on compatible types; `/` is floating
-division. General integer division/modulo, bitwise operations, overflow policy changes, math
+division. General integer division/modulo, bitwise operations, overflow policy changes, general math
 libraries, and vector values are staged additions. `ckl.cdiv(a, b)` is a compile-time intrinsic for
 nonnegative extents and a positive divisor, primarily for launch geometry.
+
+`ckl.exp(x)` and `ckl.rsqrt(x)` accept typed f32/f64 scalars in kernels and emit the corresponding
+MLIR math operations. `ckl.select(predicate, true_value, false_value)` selects between compatible
+typed scalars. Both alternatives are evaluated; it does not guard memory accesses like `if`.
 
 Integer runtime addition/subtraction/multiplication use fixed-width wraparound semantics without
 signed-overflow assumptions. Index expressions must remain representable in the target index
@@ -164,6 +169,12 @@ usual defaults. Loop-carried locals become `iter_args` with invariant types. A v
 created inside a possibly empty loop cannot be used after it. The loop induction variable is
 local to the loop; other loop-carried bindings retain their final values. `break`, `continue`,
 `while`, and early returns are deferred. A final bare `return` or implicit fallthrough is allowed.
+
+Untyped literal loop initializers default to f32 for floats and i32 for integers. A typed
+initializer retains its scalar type; for example, use `src[0] * 0.0` to initialize an f64 sum
+from an f64 buffer. Loop induction variables cannot be reassigned, and newly created body locals
+do not escape a possibly empty loop. Updating an enclosing runtime branch's outer locals remains
+unsupported, including through a loop.
 
 Device-coordinate intrinsics use constant axes 0 through 2 and map to the existing CKL index ops.
 Indexed reads/writes map to `ckl.load_element`/`ckl.store_element`. Kernel bodies cannot allocate
@@ -199,8 +210,8 @@ and lifetime dependencies without a source-order token chain that would hide ind
 Caller-owned buffers may alias; no implicit `noalias` promise follows from different names.
 Explicit completion ordering can be added when a concrete workload needs it.
 
-Compile-time program conditionals and loops can specialize or unroll to straight-line IR with a
-configurable expansion limit. Runtime program control flow is rejected. Ordinary program scalar
+Compile-time program conditionals and loops specialize or unroll to straight-line IR. Program
+`range` loops have a limit of 1024 iterations per loop. Runtime program control flow is rejected. Ordinary program scalar
 arguments can be forwarded unchanged to kernels; computed runtime host scalars are rejected
 because current executable lowering cannot pack them. Kernel-local arithmetic is unaffected.
 
@@ -293,9 +304,9 @@ a device index, a guarded indexed update, one temporary, and two explicit launch
 produces the same analysis semantics as the existing indexed-kernel fixture and infer the temporary
 write/read edge without manual effect metadata.
 
-Then add runtime kernel `if` results and `range` loops with loop-carried locals. Compile-time program
-branching/unrolling and constexpr parameters follow once the straight-line path is verified. The
-full proposal is a design boundary, not a requirement to implement every feature in one patch.
+Kernel `range` loops with scalar loop-carried locals, constant program unrolling, and constexpr
+parameters are implemented. Runtime kernel `if` results and runtime program loops remain deferred.
+The full proposal is a design boundary, not a requirement to implement every feature in one patch.
 
 Required checks include deterministic output, shape/type mismatches, source-located unsupported
 syntax, literal conversions, invalid launch geometry, branch/loop definite assignment, bounds

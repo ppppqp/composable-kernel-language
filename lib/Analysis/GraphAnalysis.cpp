@@ -143,7 +143,7 @@ DictionaryAttr makeUnavailablePlan(Builder &builder, StringRef reason) {
 void attachMemoryPlan(GraphOp graph, ArrayRef<NodeInfo> nodes,
                       const std::map<std::pair<unsigned, unsigned>, SmallVector<Attribute>> &edges,
                       func::FuncOp host, DenseMap<Operation *, unsigned> &allocationIds,
-                      Builder &builder) {
+                      Builder &builder, bool reuseStorage) {
   constexpr std::size_t allocationAlignment = 256;
 
   // value -> index in resources
@@ -232,7 +232,7 @@ void attachMemoryPlan(GraphOp graph, ArrayRef<NodeInfo> nodes,
   }
 
   planning::MemoryPlanResult planned =
-      planning::MemoryPlanner().tryPlan(nodes.size(), plannerEdges, plannerResources);
+      planning::MemoryPlanner(reuseStorage).tryPlan(nodes.size(), plannerEdges, plannerResources);
   if (!planned) {
     graph->setAttr("ckl.memory_plan", makeUnavailablePlan(builder, planned.error));
     return;
@@ -396,7 +396,7 @@ LogicalResult appendLifetimeNode(Operation *operation, func::FuncOp host,
   return success();
 }
 
-LogicalResult buildGraph(ModuleOp module, func::FuncOp function) {
+LogicalResult buildGraph(ModuleOp module, func::FuncOp function, bool reuseStorage) {
   Builder builder(module.getContext());
   DenseMap<Operation *, unsigned> allocationIds;
   SmallVector<NodeInfo> nodes;
@@ -516,7 +516,7 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function) {
                                builder.getStringAttr((function.getSymName() + ".graph").str()),
                                builder.getStringAttr(dotStorage));
   graph.getBody().push_back(new Block());
-  attachMemoryPlan(graph, nodes, edges, function, allocationIds, builder);
+  attachMemoryPlan(graph, nodes, edges, function, allocationIds, builder, reuseStorage);
   OpBuilder graphBuilder = OpBuilder::atBlockBegin(&graph.getBody().front());
   for (auto [id, node] : llvm::enumerate(nodes)) {
     GraphNodeOp graphNode = GraphNodeOp::create(
@@ -599,6 +599,8 @@ struct BuildGraphPass : public PassWrapper<BuildGraphPass, OperationPass<ModuleO
 
   Option<bool> strict{*this, "strict", llvm::cl::desc("Reject missing effect semantics"),
                       llvm::cl::init(true)};
+  Option<bool> reuseStorage{*this, "reuse-storage", llvm::cl::desc("Recycle ordered temporary storage"),
+                            llvm::cl::init(true)};
 
   StringRef getArgument() const final { return "ckl-build-graph"; }
   StringRef getDescription() const final {
@@ -616,7 +618,7 @@ struct BuildGraphPass : public PassWrapper<BuildGraphPass, OperationPass<ModuleO
     }
     SmallVector<func::FuncOp> functions(module.getOps<func::FuncOp>());
     for (func::FuncOp function : functions) {
-      if (failed(buildGraph(module, function))) {
+      if (failed(buildGraph(module, function, reuseStorage))) {
         signalPassFailure();
         return;
       }

@@ -41,6 +41,11 @@ int main() try {
   require(plan.plannedBytes == 1792, "unexpected planned byte count");
   require(plan.decisions[2].sharesWith.size() == 1 && plan.decisions[2].sharesWith[0] == 0,
           "reuse provenance must identify the prior resident");
+  MemoryPlan dedicated = MemoryPlanner(false).plan(7, edges, resources);
+  require(dedicated.plannedBytes == dedicated.baselineBytes,
+          "disabled reuse must allocate dedicated storage");
+  require(dedicated.find(0)->slot != dedicated.find(2)->slot,
+          "disabled reuse must keep even ordered temporary lifetimes separate");
 
   MemoryPlan persistentFirst = MemoryPlanner().plan(
       2, {{0, 1}}, {{"persistent-first", 64, 64, "global", 0, ResourceKind::Persistent, {0}},

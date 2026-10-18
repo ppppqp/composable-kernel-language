@@ -126,6 +126,7 @@ struct Invocation {
   std::vector<std::size_t> dependencies;
   std::map<uint64_t, std::size_t> nodes;
   NvidiaGraphExecutable graph;
+  std::map<std::pair<int, uint64_t>, NvidiaGraphExecutable> executionGraphs;
   std::mutex runMutex;
   std::string error;
   Invocation(std::shared_ptr<Program> program, Device *device)
@@ -183,6 +184,27 @@ void commit(void *frame, uint64_t id) {
   callback(frame, [&](Invocation &f) {
     f.nodes[id] = f.plan.addKernel(std::move(f.pending), std::move(f.dependencies));
   });
+}
+
+void validateExecution(Invocation &f, int mode, uint64_t batch) {
+  if (mode < 0 || mode > 2 || !batch || f.plan.empty() || batch > 1000000 / f.plan.nodes().size())
+    throw std::invalid_argument("invalid execution mode or batch exceeds one million kernel nodes");
+}
+
+NvidiaGraphExecutable &executionGraph(Invocation &f, int mode, uint64_t batch) {
+  auto &graph = f.executionGraphs[{mode, batch}];
+  if (!graph) {
+    NvidiaPlan plan = batch == 1 ? f.plan : f.plan.repeat(batch);
+    graph = mode == 2 ? f.device->runtime.capture(plan, f.stream)
+                      : f.device->runtime.instantiate(plan);
+  }
+  return graph;
+}
+
+void execute(Invocation &f, int mode, uint64_t batch) {
+  if (mode) executionGraph(f, mode, batch).launch(f.stream);
+  else for (uint64_t i = 0; i < batch; ++i)
+    f.device->runtime.launchOrdinary(f.plan, f.stream);
 }
 #endif
 
@@ -287,7 +309,8 @@ std::unique_ptr<llvm::Module> buildHost(Program &program, ckl::exec::PlanOp plan
 }
 
 std::shared_ptr<Program> compile(const char *source, const char *chip,
-                               const char *features, const char *toolkit, bool fusion) {
+                               const char *features, const char *toolkit, bool fusion,
+                               bool reuseStorage = true) {
   initialize();
   auto program = std::make_shared<Program>();
   DialectRegistry registry;
@@ -313,7 +336,8 @@ std::shared_ptr<Program> compile(const char *source, const char *chip,
                               " features=" + features + "}");
     program->preparedIR = print(*program->source);
     program->executable = cast<ModuleOp>((*program->source)->clone());
-    pipeline(*program->executable, "ckl-build-graph,ckl-lower-graph-to-exec");
+    pipeline(*program->executable, std::string("ckl-build-graph{reuse-storage=") +
+             (reuseStorage ? "true" : "false") + "},ckl-lower-graph-to-exec");
     program->executableIR = print(*program->executable);
     SmallVector<ckl::exec::PlanOp> plans(program->executable->getOps<ckl::exec::PlanOp>());
     if (plans.size() != 1) throw std::runtime_error("compilation requires exactly one host program");
@@ -363,7 +387,7 @@ std::shared_ptr<Program> compile(const char *source, const char *chip,
     if (!entry) throw std::runtime_error(llvm::toString(entry.takeError()));
     program->entry = reinterpret_cast<Program::Entry>(*entry);
 #endif
-    if (needsFallback) program->aliasFallback = compile(source, chip, features, toolkit, false);
+    if (needsFallback) program->aliasFallback = compile(source, chip, features, toolkit, false, reuseStorage);
     return program;
   } catch (const std::exception &error) {
     throw std::runtime_error(std::string(error.what()) + "\n" + program->diagnostics);
@@ -377,6 +401,12 @@ const char *ckl_error() { return lastError.c_str(); }
 void *ckl_compile(const char *source, const char *chip, const char *features, const char *toolkit,
                   int fusion) {
   return protect([&]() -> void * { return new Handle(compile(source, chip, features, toolkit, fusion)); });
+}
+void *ckl_compile_with_options(const char *source, const char *chip, const char *features,
+                               const char *toolkit, int fusion, int reuseStorage) {
+  return protect([&]() -> void * {
+    return new Handle(compile(source, chip, features, toolkit, fusion, reuseStorage));
+  });
 }
 void ckl_program_free(void *program) { delete static_cast<Handle *>(program); }
 const char *ckl_program_ir(void *program, unsigned stage) {
@@ -475,21 +505,33 @@ int ckl_invoke(void *invocation, int graph) {
     return 1;
   });
 }
+int ckl_invoke_plan(void *invocation, int mode, uint64_t batch) {
+  return protect([&] {
+    auto &f = *static_cast<Invocation *>(invocation);
+    std::lock_guard<std::mutex> lock(f.runMutex);
+    validateExecution(f, mode, batch);
+    execute(f, mode, batch);
+    f.stream.synchronize();
+    return 1;
+  });
+}
 void ckl_invocation_free(void *invocation) { delete static_cast<Invocation *>(invocation); }
 uint64_t ckl_invocation_nodes(void *invocation) {
   return static_cast<Invocation *>(invocation)->plan.nodes().size();
 }
 // Benchmark a burst without Python dispatch or per-iteration synchronization.
 // CUDA stream elapsed time includes any gaps caused by native host submission.
-int ckl_benchmark(void *invocation, int graph, uint64_t iterations, double *result) {
+int ckl_benchmark_plan(void *invocation, int mode, uint64_t iterations, uint64_t batch,
+                        double *result) {
   return protect([&] {
     if (!iterations) throw std::invalid_argument("benchmark iterations must be positive");
     auto &f = *static_cast<Invocation *>(invocation);
     std::lock_guard<std::mutex> lock(f.runMutex);
+    validateExecution(f, mode, batch);
     using Clock = std::chrono::steady_clock;
     f.stream.synchronize();
     auto setupStart = Clock::now();
-    if (graph && !f.graph) f.graph = f.device->runtime.instantiate(f.plan);
+    if (mode) executionGraph(f, mode, batch);
     result[2] = std::chrono::duration<double, std::milli>(Clock::now() - setupStart).count();
     auto check = [](CUresult error) {
       if (error != CUDA_SUCCESS) {
@@ -508,18 +550,20 @@ int ckl_benchmark(void *invocation, int graph, uint64_t iterations, double *resu
     check(cuEventRecord(start.value, stream));
     auto wallStart = Clock::now();
     for (uint64_t i = 0; i < iterations; ++i) {
-      if (graph) f.graph.launch(f.stream);
-      else f.device->runtime.launchOrdinary(f.plan, f.stream);
+      execute(f, mode, batch);
     }
     check(cuEventRecord(stop.value, stream));
     check(cuEventSynchronize(stop.value));
     auto wallStop = Clock::now();
     float elapsed;
     check(cuEventElapsedTime(&elapsed, start.value, stop.value));
-    result[0] = elapsed * 1000.0 / iterations;
-    result[1] = std::chrono::duration<double, std::micro>(wallStop - wallStart).count() / iterations;
+    result[0] = elapsed * 1000.0 / iterations / batch;
+    result[1] = std::chrono::duration<double, std::micro>(wallStop - wallStart).count() / iterations / batch;
     return 1;
   });
+}
+int ckl_benchmark(void *invocation, int graph, uint64_t iterations, double *result) {
+  return ckl_benchmark_plan(invocation, graph ? 1 : 0, iterations, 1, result);
 }
 #endif
 }

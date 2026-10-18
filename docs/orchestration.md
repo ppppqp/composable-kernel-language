@@ -101,5 +101,8 @@ throughput, and amortization iterations.
 The retained Milestone 0--4 benchmarks establish orchestration feasibility and runtime behavior.
 Their hand-written device kernels do not establish language completeness. The initial
 [CUDA acceptance test](cuda-backend.md#acceptance-test) now executes a CKL-authored two-kernel
-program whose analyzed bodies generate the binary. The scientific multi-field workload is next.
+program whose analyzed bodies generate the binary. The
+[autoregressive decoder](../benchmarks/decoder/README.md) now measures repeated device-resident
+execution across sequential launches, capture, inferred graphs, storage reuse, and batched plans.
+A scientific multi-field workload remains an additional application target.
 See [the language implementation sequence](dsl.md#implementation-sequence).

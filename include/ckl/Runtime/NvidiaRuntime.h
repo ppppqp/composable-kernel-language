@@ -172,6 +172,9 @@ public:
   /// Submit every node in topological order to one stream. This is intentionally serialized.
   void launchOrdinary(const NvidiaPlan &plan, const NvidiaStream &stream) const;
   NvidiaGraphExecutable instantiate(const NvidiaPlan &plan) const;
+  /// Capture ordinary topological launches on one stream. Captured node indices
+  /// are unspecified; updateKernel is only supported for explicitly built graphs.
+  NvidiaGraphExecutable capture(const NvidiaPlan &plan, const NvidiaStream &stream) const;
   /// Reuse an executable when the caller's key covers topology, binary, ABI, and target identity.
   std::shared_ptr<NvidiaGraphExecutable> getOrCreateGraph(const std::string &key,
                                                           const NvidiaPlan &plan);

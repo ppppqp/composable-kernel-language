@@ -128,7 +128,7 @@ MemoryPlan MemoryPlanner::plan(std::size_t nodeCount, const std::vector<GraphEdg
     result.baselineBytes += baselineAllocation;
     std::size_t selected = std::numeric_limits<std::size_t>::max();
     std::size_t leastGrowth = std::numeric_limits<std::size_t>::max();
-    if (resource.kind == ResourceKind::Temporary) {
+    if (reuseStorage_ && resource.kind == ResourceKind::Temporary) {
       for (std::size_t index = 0; index < slots.size(); ++index) {
         const Slot &slot = slots[index];
         if (!compatible(resource, slot, resources, reachability))
@@ -164,7 +164,8 @@ MemoryPlan MemoryPlanner::plan(std::size_t nodeCount, const std::vector<GraphEdg
                                 reused ? "all resource uses are ordered by existing graph edges"
                                        : (resource.kind == ResourceKind::Persistent
                                               ? "persistent resource gets dedicated storage"
-                                              : "no compatible ordered lifetime")});
+                                              : (reuseStorage_ ? "no compatible ordered lifetime"
+                                                               : "storage reuse disabled"))});
   }
 
   // after reuse decisions are complete, slots are packed into heaps

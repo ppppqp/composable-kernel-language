@@ -39,6 +39,8 @@ def _native():
         raise RuntimeError("CKL native compiler is not built; enable CKL_ENABLE_MLIR "
                            "or set CKL_NATIVE_LIBRARY to libCKLCompiler.so")
     lib = ct.CDLL(str(path.resolve()))
+    if not hasattr(lib, "ckl_compile_with_options"):
+        raise RuntimeError("CKL native library is outdated; rebuild CKLCompiler")
     pointer, size = ct.c_void_p, ct.c_uint64
 
     def declare(name, result, *arguments):
@@ -47,6 +49,7 @@ def _native():
 
     declare("ckl_error", ct.c_char_p)
     declare("ckl_compile", pointer, ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_int)
+    declare("ckl_compile_with_options", pointer, ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_int, ct.c_int)
     declare("ckl_program_free", None, pointer)
     declare("ckl_program_ir", ct.c_char_p, pointer, ct.c_uint)
     declare("ckl_has_cuda_runtime", ct.c_int)
@@ -62,9 +65,11 @@ def _native():
         declare("ckl_buffer_copy", ct.c_int, pointer, pointer, size, ct.c_int)
         declare("ckl_bind", pointer, pointer, pointer, pointer, size)
         declare("ckl_invoke", ct.c_int, pointer, ct.c_int)
+        declare("ckl_invoke_plan", ct.c_int, pointer, ct.c_int, size)
         declare("ckl_invocation_free", None, pointer)
         declare("ckl_invocation_nodes", size, pointer)
         declare("ckl_benchmark", ct.c_int, pointer, ct.c_int, size, ct.POINTER(ct.c_double))
+        declare("ckl_benchmark_plan", ct.c_int, pointer, ct.c_int, size, size, ct.POINTER(ct.c_double))
     _library = lib
     return lib
 
@@ -146,9 +151,11 @@ class CompiledProgram(_Owned):
     """Own specialized device code and its JIT-compiled host entry point."""
     _release = "ckl_program_free"
 
-    def __init__(self, program, target: NVIDIATarget, *, fuse_pointwise=True):
+    def __init__(self, program, target: NVIDIATarget, *, fuse_pointwise=True, reuse_storage=True):
         if type(fuse_pointwise) is not bool:
             raise TypeError("fuse_pointwise must be bool")
+        if type(reuse_storage) is not bool:
+            raise TypeError("reuse_storage must be bool")
         if target.binary_format != "bin":
             raise ValueError("CKL CUDA compilation requires a binary target")
         if not re.fullmatch(r"sm_[0-9]+[a-z]?", target.chip) or not re.fullmatch(
@@ -158,9 +165,9 @@ class CompiledProgram(_Owned):
         self.signature, self.target = program.signature, target
         self._lib = _native()
         toolkit = str(Path(target.toolkit_root).resolve()) if target.toolkit_root else ""
-        self._handle = _checked(self._lib, self._lib.ckl_compile(
+        self._handle = _checked(self._lib, self._lib.ckl_compile_with_options(
             program.mlir.encode(), target.chip.encode(), target.features.encode(), toolkit.encode(),
-            fuse_pointwise))
+            fuse_pointwise, reuse_storage))
 
     @property
     def prepared_ir(self):
@@ -225,10 +232,22 @@ class Invocation(_Owned):
         self.program, self.device, self.arguments = program, device, arguments
         self._lib, self._handle = program._lib, handle
 
-    def run(self, *, graph=False):
+    @staticmethod
+    def _execution(graph, mode, batch_size):
+        if type(batch_size) is not int or not 0 < batch_size < (1 << 64):
+            raise ValueError("batch_size must be a positive 64-bit count")
+        if mode is not None and graph:
+            raise ValueError("specify either graph or mode")
+        choices = {"ordinary": 0, "graph": 1, "capture": 2}
+        if mode is not None and mode not in choices:
+            raise ValueError("mode must be ordinary, graph, or capture")
+        return choices[mode] if mode is not None else int(bool(graph))
+
+    def run(self, *, graph=False, mode=None, batch_size=1):
         # Synchronous execution keeps Python owners and temporary heaps alive
         # through completion. Reusing an invocation reuses its graph and heaps.
-        _checked(self._lib, self._lib.ckl_invoke(self._handle, bool(graph)))
+        execution = self._execution(graph, mode, batch_size)
+        _checked(self._lib, self._lib.ckl_invoke_plan(self._handle, execution, batch_size))
         return self
 
     @property
@@ -236,10 +255,17 @@ class Invocation(_Owned):
         """Actual bound topology, including any overlap-triggered fallback."""
         return self._lib.ckl_invocation_nodes(self._handle)
 
-    def benchmark(self, *, iterations=200, graph=False):
-        """Measure a native submission burst; CUDA stream time includes submission gaps."""
+    def benchmark(self, *, iterations=200, graph=False, mode=None, batch_size=1):
+        """Measure iterations groups of batch_size programs; report time per program.
+
+        mode='capture' uses actual single-stream CUDA capture. mode='graph'
+        uses inferred dependencies. Batched graphs serialize complete iterations,
+        sharing the bound invocation's storage. All execution is synchronous.
+        """
         if type(iterations) is not int or not 0 < iterations < (1 << 64):
             raise ValueError("iterations must be a positive 64-bit count")
         result = (ct.c_double * 3)()
-        _checked(self._lib, self._lib.ckl_benchmark(self._handle, bool(graph), iterations, result))
+        execution = self._execution(graph, mode, batch_size)
+        _checked(self._lib, self._lib.ckl_benchmark_plan(
+            self._handle, execution, iterations, batch_size, result))
         return dict(stream_us=result[0], wall_us=result[1], graph_setup_ms=result[2])

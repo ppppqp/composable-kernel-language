@@ -90,8 +90,9 @@ points, typed buffer/scalar annotations, shape specialization, and call-site `ck
 See [the Python frontend design](../docs/python-frontend.md) for the draft syntax and staging rules.
 The first API produces verified MLIR without executing source bodies or requiring a GPU. Syntax
 remains experimental. The initial decorators and `.lower(signature=..., constants=...)` API are
-implemented for guarded kernels and straight-line programs. Runtime branch results and loops
-remain deferred; unsupported constructs produce source-associated diagnostics.
+implemented for guarded kernels, kernel range loops with scalar loop-carried values, and
+straight-line programs with constant-loop unrolling. Runtime branch results and runtime program
+loops remain deferred; unsupported constructs produce source-associated diagnostics.
 
 Kernel IR must express typed scalars and buffers, indexed loads/stores, thread/block/global
 indices, arithmetic, comparisons, and structured conditionals/loops. Launch configuration must be
@@ -314,6 +315,15 @@ launches, preserving arithmetic flags and operation order. Native compilation re
 code and selects it when bound external byte ranges overlap. Stencils, branches/joins, escaping
 temporaries, and unsupported control flow remain unchanged. Benchmark and numerical acceptance
 results are retained under `benchmarks/standalone/results/rtx5060ti-fusion*`.
+
+The [initial complete autoregressive decoder](../benchmarks/decoder/README.md) is implemented as
+an orchestration experiment with a small randomly initialized f32 model and device-resident KV,
+tokens, history, and position. It compares identical unfused kernels under sequential launches,
+actual single-stream capture, inferred graphs, storage reuse, and repeated graph execution.
+Six batch/context configurations pass independent numerical and exact token checks. Inferred
+graphs improve native step time by 1.16–1.38x over sequential execution and 1.10–1.18x over capture
+in the retained RTX 5060 Ti run, with 71–78% fewer temporary heap bytes. This establishes one
+application result, not production-serving competitiveness or the multi-workload acceptance gate.
 
 ## 12. Risks and decisions
 

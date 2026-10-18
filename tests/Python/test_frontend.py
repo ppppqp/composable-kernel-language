@@ -251,15 +251,15 @@ class FrontendTest(unittest.TestCase):
 
         @ckl.kernel
         def loop(src: Vector, dst: Vector) -> None:
-            for i in range(4):
-                dst[i] = src[i]
+            while True:
+                dst[0] = src[0]
 
         @ckl.kernel
         def negative(src: Vector, dst: Vector) -> None:
             dst[0] = src[-1]
 
         for kernel, message in ((branch, "not defined on this path"),
-                                (loop, "unsupported statement: For"),
+                                (loop, "unsupported statement: While"),
                                 (negative, "out of bounds")):
             @ckl.program
             def entry(src: Vector, dst: Vector) -> None:

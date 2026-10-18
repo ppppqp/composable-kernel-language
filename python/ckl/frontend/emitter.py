@@ -45,10 +45,10 @@ class LoweredProgram:
         self.analyze(ckl_opt=ckl_opt)
         return self
 
-    def compile(self, *, target: NVIDIATarget, fuse_pointwise=True):
+    def compile(self, *, target: NVIDIATarget, fuse_pointwise=True, reuse_storage=True):
         """Compile device code and JIT its host entry point in this process."""
         from ..cuda import CompiledProgram
-        return CompiledProgram(self, target, fuse_pointwise=fuse_pointwise)
+        return CompiledProgram(self, target, fuse_pointwise=fuse_pointwise, reuse_storage=reuse_storage)
 
 
 def identity(definition: Definition, signature: BoundSignature) -> str:
@@ -317,7 +317,93 @@ class FunctionEmitter:
             if len(args) != 2 or keywords or not isinstance(args[1], ScalarType):
                 self.fail(node, "use cast(value, scalar_type)")
             return self.cast(args[0], args[1], node)
+        if name in ("exp", "rsqrt"):
+            self.require_kernel_arithmetic(node)
+            if len(args) != 1 or keywords or not isinstance(args[0], Value) or args[0].dtype not in (f32, f64):
+                self.fail(node, f"{name} requires one typed floating-point scalar")
+            return self.emit(f"math.{name} {args[0].name} : {args[0].dtype.mlir}", args[0].dtype, node)
+        if name == "select":
+            self.require_kernel_arithmetic(node)
+            if len(args) != 3 or keywords:
+                self.fail(node, "use select(predicate, true_value, false_value)")
+            condition = self.typed(args[0], bool_, node)
+            dynamic = next((v for v in args[1:] if isinstance(v, Value)), None)
+            if dynamic is None or not isinstance(dynamic.dtype, ScalarType):
+                self.fail(node, "select requires a typed scalar alternative")
+            lhs, rhs = [self.typed(v, dynamic.dtype, node) for v in args[1:]]
+            return self.emit(f"arith.select {condition.name}, {lhs.name}, {rhs.name} : {lhs.dtype.mlir}", lhs.dtype, node)
         self.fail(node, f"unsupported intrinsic: {name}")
+
+    def for_loop(self, node: ast.For, branch_outer):
+        if node.orelse or not isinstance(node.target, ast.Name) or not isinstance(node.iter, ast.Call):
+            self.fail(node, "for requires a simple induction variable and range without else")
+        callee = self.expression(node.iter.func)
+        if not isinstance(callee, Intrinsic) or callee.name != "range" or node.iter.keywords:
+            self.fail(node, "for requires range(start, stop, positive_constant_step)")
+        bounds = [self.expression(arg) for arg in node.iter.args]
+        if not 1 <= len(bounds) <= 3:
+            self.fail(node, "range requires one to three bounds")
+        start, stop, step = (0, bounds[0], 1) if len(bounds) == 1 else (
+            bounds[0], bounds[1], bounds[2] if len(bounds) == 3 else 1)
+        if type(step) is not int or step <= 0:
+            self.fail(node, "range step must be a positive compile-time integer")
+        induction = node.target.id
+        outer = self.env.copy()
+        if self.definition.kind == "program":
+            if type(start) is not int or type(stop) is not int:
+                self.fail(node, "program range bounds must be compile-time integers")
+            if len(range(start, stop, step)) > 1024:
+                self.fail(node, "program unrolling is limited to 1024 iterations")
+            for value in range(start, stop, step):
+                self.env[induction] = value
+                self.statements(node.body, branch_outer=branch_outer)
+            if induction in outer:
+                self.env[induction] = outer[induction]
+            else:
+                self.env.pop(induction, None)
+            return
+        assignments = {n.id for statement in node.body for n in ast.walk(statement)
+                       if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+        if induction in assignments:
+            self.fail(node, "cannot assign to the loop induction variable")
+        names = sorted(assignments & outer.keys())
+        initials = []
+        for name in names:
+            if branch_outer is not None and name in branch_outer:
+                self.fail(node, "runtime branch results are deferred")
+            value = outer[name]
+            if not isinstance(value, Value):
+                dtype = f32 if type(value) is float else i32 if type(value) is int else bool_
+                value = self.typed(value, dtype, node)
+            if not isinstance(value.dtype, ScalarType):
+                self.fail(node, "loop-carried locals must be scalars")
+            initials.append(value)
+        lower, upper, stride = [self.typed(v, index, node) for v in (start, stop, step)]
+
+        def fresh(dtype):
+            value = Value(f"%v{self.counter}", dtype)
+            self.counter += 1
+            return value
+
+        iv = fresh(index)
+        iterators = [fresh(v.dtype) for v in initials]
+        result = fresh(initials[0].dtype) if initials else None
+        prefix = "" if result is None else f"{result.name}" + (f":{len(initials)}" if len(initials) > 1 else "") + " = "
+        arguments = ", ".join(f"{arg.name} = {value.name}" for arg, value in zip(iterators, initials))
+        types = ", ".join(v.dtype.mlir for v in initials)
+        carried = f" iter_args({arguments}) -> ({types})" if initials else ""
+        self.line(f"{prefix}scf.for {iv.name} = {lower.name} to {upper.name} step {stride.name}{carried} {{")
+        self.indent += 1
+        self.env[induction] = iv
+        self.env.update(zip(names, iterators))
+        self.statements(node.body, branch_outer=branch_outer)
+        yielded = [self.typed(self.env[name], initial.dtype, node) for name, initial in zip(names, initials)]
+        self.line("scf.yield" + (" " + ", ".join(v.name for v in yielded) + f" : {types}" if yielded else ""), node)
+        self.indent -= 1
+        self.line("}", node)
+        self.env = outer
+        for i, (name, initial) in enumerate(zip(names, initials)):
+            self.env[name] = Value(result.name + (f"#{i}" if len(initials) > 1 else ""), initial.dtype)
 
     def cast(self, value: object, dtype: ScalarType, node: ast.AST) -> object:
         if not isinstance(value, Value):
@@ -457,6 +543,8 @@ class FunctionEmitter:
                     self.indent -= 1
                 self.line("}", node)
                 self.env = outer
+            elif isinstance(node, ast.For):
+                self.for_loop(node, branch_outer)
             elif isinstance(node, ast.Expr):
                 if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str) and position == 0 and top:
                     continue  # source docstring
@@ -465,7 +553,7 @@ class FunctionEmitter:
             elif isinstance(node, ast.Pass):
                 continue
             else:
-                self.fail(node, f"unsupported statement: {type(node).__name__}; loops and richer control flow are deferred")
+                self.fail(node, f"unsupported statement: {type(node).__name__}")
 
 
 def lower_program(definition: Definition, signature, constants, *, verify=False, ckl_opt=None):

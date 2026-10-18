@@ -27,7 +27,7 @@ class Intrinsic:
 
 INTRINSICS = {name: Intrinsic(name) for name in (
     "global_id", "thread_id", "block_id", "block_dim", "grid_dim",
-    "launch", "empty_like", "empty", "cdiv", "cast",
+    "launch", "empty_like", "empty", "cdiv", "cast", "exp", "rsqrt", "select",
 )}
 
 
@@ -48,6 +48,8 @@ def immutable(value: object) -> bool:
 
 
 def capture(value: object, name: str) -> object:
+    if value is range:
+        return Intrinsic("range")
     if immutable(value) or isinstance(value, (
         ScalarType, BufferType, ConstexprType, Dimension, Definition, Intrinsic,
     )) or value is Buffer or value is constexpr:
@@ -123,6 +125,7 @@ def decorate(function, kind: str) -> Definition:
     if node is None:
         raise FrontendError("CKL requires a synchronous function definition")
     environment = dict(function.__globals__)
+    environment.setdefault("range", range)
     environment.update(inspect.getclosurevars(function).nonlocals)
     names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
     for annotation in function.__annotations__.values():

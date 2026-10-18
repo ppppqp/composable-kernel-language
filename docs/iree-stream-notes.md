@@ -63,6 +63,14 @@ combines correlated bindings to storage; it does not replace a producer/consumer
 GPU kernel. CKL pointwise fusion changes device bodies and eliminates temporary store/load
 boundaries. Both optimizations can coexist, but solve different costs.
 
+IREE also performs actual computation fusion in an earlier stage. Its
+[DispatchCreation pipeline](../../iree/compiler/src/iree/compiler/DispatchCreation/Passes.cpp)
+runs elementwise fusion, forms dispatch regions, and fuses operations inside them.
+[FuseMultiUseElementwiseProducer.cpp](../../iree/compiler/src/iree/compiler/DispatchCreation/FuseMultiUseElementwiseProducer.cpp)
+calls `linalg::fuseElementwiseOps` to merge producer/consumer computation. Thus the absence of
+kernel fusion in the Stream passes reviewed here does not imply its absence from IREE as a whole.
+Whether CKL should fuse explicit user kernels remains a separate design/performance decision.
+
 **Rich IR does not imply an optimal scheduler.** In this checkout,
 [Partitioning.cpp](../../iree/compiler/src/iree/compiler/Dialect/Stream/Analysis/Partitioning.cpp)
 selects the reference algorithm for both execution partitioning and concurrency partitioning.

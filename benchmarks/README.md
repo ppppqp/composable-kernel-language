@@ -1,13 +1,19 @@
 # CKL benchmarks
 
-The application workloads below are proposals, not implemented benchmarks or performance results.
-Their purpose is to evaluate complete groups of kernels and let measurements guide language,
+The [complete autoregressive decoder](decoder/README.md) is now the primary generic orchestration
+experiment: identical CKL kernels under sequential launches, actual single-stream capture,
+inferred graphs, storage reuse, and repeated graph execution. It validates device-resident
+tokens/KV state and reports full generation completion time.
+
+The first two application workloads now have CKL source, GPU runners, independent numerical
+checks, PyTorch baselines, and retained RTX 5060 Ti measurements. AdamW, miniWeather, and CG remain
+proposals. The suite evaluates complete groups of kernels so measurements can guide language,
 kernel, and execution-planning work. Keep the existing synthetic cases as compiler controls.
 
 | Order | Workload | Timed unit | Main question |
 | --- | --- | --- | --- |
 | 1 | [Momentum SGD](momentum-sgd/README.md) | Complete dense optimizer step | Is multi-input/output pointwise fusion worthwhile? |
-| 2 | [Image preprocessing](image-preprocessing/README.md) | Complete batch preprocessing | Does tail fusion improve a pipeline with indexing and conversion? |
+| 2 | [Image preprocessing](image-preprocessing/README.md) | RGB normalization component implemented; full pipeline deferred | What comes from copy elimination versus combining arithmetic? |
 | 3 | [AdamW](adamw/README.md) | Complete dense optimizer step | Can fusion handle branches, persistent state, and register pressure? |
 | 4 | [miniWeather](miniweather/README.md) | Directional stage, then full timestep | What helps stencil pipelines when unary fusion cannot apply? |
 | 5 | [Conjugate gradient](conjugate-gradient/README.md) | Complete iteration and solve | What helps repeated work with reductions and device-produced scalars? |
@@ -48,5 +54,8 @@ See the [IREE Stream comparison](../docs/iree-stream-notes.md) for related execu
 - [Milestone 0](milestone0/README.md), [Milestone 3](milestone3/README.md), and
   [Milestone 4](milestone4/README.md): historical native orchestration/runtime experiments.
 
-The application proposals have no runner or reproduction command yet. Each directory will retain
-its source, reference/checker, measurement driver, and results when implemented.
+See the SGD and image-preprocessing READMEs for reproduction commands and exact measured scopes.
+Their shared harness is [application_common.py](application_common.py). It requires NumPy and a
+CUDA PyTorch environment; the compiler/frontend itself gains no dependency on either package.
+These are initial single-tensor SGD and normalization-component results, not training or full
+image-inference results. See [headroom findings](application-headroom.md).

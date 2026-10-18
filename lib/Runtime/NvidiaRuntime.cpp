@@ -87,6 +87,7 @@ struct BufferState {
 };
 
 struct GraphState {
+  bool captured = false;
   std::shared_ptr<ContextState> context;
   CUgraph graph{};
   CUgraphExec executable{};
@@ -361,6 +362,32 @@ void NvidiaRuntime::launchOrdinary(const NvidiaPlan &plan, const NvidiaStream &s
   }
 }
 
+NvidiaGraphExecutable NvidiaRuntime::capture(const NvidiaPlan &plan, const NvidiaStream &stream) const {
+  if (plan.empty() || !stream.state_ || stream.state_->context != context_)
+    throw std::invalid_argument("capture requires a nonempty plan and a stream in this context");
+  context_->makeCurrent();
+  auto state = std::make_shared<detail::GraphState>();
+  state->context = context_;
+  state->captured = true;
+  check(cuStreamBeginCapture(stream.state_->stream, CU_STREAM_CAPTURE_MODE_THREAD_LOCAL),
+        "cuStreamBeginCapture");
+  try {
+    launchOrdinary(plan, stream);
+  } catch (...) {
+    CUgraph abandoned = nullptr;
+    cuStreamEndCapture(stream.state_->stream, &abandoned);
+    if (abandoned) cuGraphDestroy(abandoned);
+    throw;
+  }
+  check(cuStreamEndCapture(stream.state_->stream, &state->graph), "cuStreamEndCapture");
+  size_t count = 0;
+  check(cuGraphGetNodes(state->graph, nullptr, &count), "cuGraphGetNodes");
+  state->nodes.resize(count);
+  check(cuGraphGetNodes(state->graph, state->nodes.data(), &count), "cuGraphGetNodes");
+  check(cuGraphInstantiate(&state->executable, state->graph, 0), "cuGraphInstantiate(captured)");
+  return NvidiaGraphExecutable(std::move(state));
+}
+
 NvidiaGraphExecutable NvidiaRuntime::instantiate(const NvidiaPlan &plan) const {
   if (plan.empty())
     throw std::invalid_argument("cannot instantiate an empty NVIDIA plan");
@@ -437,6 +464,8 @@ void NvidiaGraphExecutable::launch(const NvidiaStream &stream) const {
 }
 
 void NvidiaGraphExecutable::updateKernel(NvidiaPlan::NodeId node, const KernelLaunch &launch) {
+  if (state_ && state_->captured)
+    throw std::invalid_argument("captured graph node indices cannot be updated");
   // update the parameters of a kernel node in the graph executable
   // it does not require re-instantiating the graph, but the new parameters must be compatible with
   // the original node
