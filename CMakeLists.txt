@@ -11,32 +11,13 @@ option(CKL_BUILD_TESTS "Build CKL bootstrap tests" ON)
 option(CKL_ENABLE_MLIR "Build the CKL MLIR optimizer driver" OFF)
 option(CKL_ENABLE_CUDA_RUNTIME "Build the NVIDIA execution runtime" OFF)
 option(CKL_ENABLE_HIP_RUNTIME "Build the HIP execution runtime" OFF)
-option(CKL_BUILD_CUDA_BENCHMARKS "Build the Milestone 0 CUDA feasibility benchmarks" OFF)
-option(CKL_BUILD_HIP_BENCHMARKS "Build the HIP runtime-overhead benchmarks" OFF)
-
-if(CKL_BUILD_HIP_BENCHMARKS)
-  set(CKL_ENABLE_HIP_RUNTIME ON)
-endif()
-
-if(CKL_BUILD_CUDA_BENCHMARKS)
-  enable_language(CUDA)
-endif()
-
-if(CKL_ENABLE_CUDA_RUNTIME OR CKL_BUILD_CUDA_BENCHMARKS)
+if(CKL_ENABLE_CUDA_RUNTIME)
   find_package(CUDAToolkit REQUIRED)
 endif()
 
 if(CKL_ENABLE_HIP_RUNTIME)
   find_path(CKL_HIP_INCLUDE_DIR hip/hip_runtime_api.h REQUIRED)
   find_library(CKL_HIP_LIBRARY amdhip64 REQUIRED)
-endif()
-
-if(CKL_BUILD_CUDA_BENCHMARKS)
-  add_subdirectory(benchmarks/milestone0)
-endif()
-
-if(CKL_BUILD_HIP_BENCHMARKS)
-  add_subdirectory(benchmarks/hip-runtime-overhead)
 endif()
 
 if(CKL_ENABLE_MLIR)

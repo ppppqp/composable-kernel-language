@@ -3,14 +3,12 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import sys
 import unittest
 
 import ckl
 from test_frontend import step
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "benchmarks/standalone"))
-from workloads import CASES
+from fusion_workloads import CASES
 
 
 class PointwiseFusionTest(unittest.TestCase):

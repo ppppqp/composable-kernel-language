@@ -286,10 +286,10 @@ The former orchestration Milestones 0--4 provide useful infrastructure:
 - Runtime handoff: physical execution plans, JIT-compiled host entry points, artifact registration,
   borrowed buffers/streams, and the optional HIP executor remain implemented.
 
-Those results remain in `benchmarks/milestone0`, `benchmarks/milestone3`,
-`benchmarks/milestone4`, and `benchmarks/hip-runtime-overhead`. External DSL benchmarks and adapters
-have been removed. The old milestone numbering records infrastructure history; it does not imply
-the standalone language is complete.
+The earlier milestone benchmark harnesses and results have been removed; the runtime and
+compiler regression tests retain infrastructure coverage. The benchmark suite now contains only
+the decoder. The old milestone numbering records infrastructure history; it does not imply the
+standalone language is complete.
 
 The new sequence is:
 
@@ -313,8 +313,8 @@ The initial unary pointwise-chain fusion pass is implemented before CUDA prepara
 single-use temporary store/load boundaries only for matching guarded same-index computation and
 launches, preserving arithmetic flags and operation order. Native compilation retains original
 code and selects it when bound external byte ranges overlap. Stencils, branches/joins, escaping
-temporaries, and unsupported control flow remain unchanged. Benchmark and numerical acceptance
-results are retained under `benchmarks/standalone/results/rtx5060ti-fusion*`.
+temporaries, and unsupported control flow remain unchanged. Structural and numerical regression
+tests retain fusion coverage independently of the benchmark suite.
 
 The [initial complete autoregressive decoder](../benchmarks/decoder/README.md) is implemented as
 an orchestration experiment with a small randomly initialized f32 model and device-resident KV,

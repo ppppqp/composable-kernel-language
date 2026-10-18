@@ -82,11 +82,10 @@ scheduling or control-flow support.
 
 ## Recommended sequence for CKL
 
-1. **Establish application headroom before extending optimization.** Implement
-   [SGD](../benchmarks/momentum-sgd/README.md) and the
-   [preprocessing component](../benchmarks/image-preprocessing/README.md), with natural operation
-   boundaries and manually optimized controls. These determine whether broader pointwise fusion,
-   better kernels, or submission overhead is the most valuable next target.
+1. **Establish application headroom before extending optimization.** Use the
+   [decoder benchmark](../benchmarks/decoder/README.md) with natural operation boundaries,
+   captured/inferred graph controls, and GPU traces. These distinguish opportunities in kernel
+   implementations, dependency scheduling, storage reuse, and submission overhead.
 2. **Add a small asynchronous composition API if measured submission overhead warrants it.**
    Separate submission from waiting and represent completion across invocations. Retain code,
    buffers, and temporary heaps until completion; prevent simultaneous reuse of one invocation's
@@ -110,8 +109,8 @@ scheduling or control-flow support.
 Broader fusion is a separate branch of this sequence: multi-input/output same-index kernels,
 escaping persistent outputs, and branches/joins need explicit legality and alias handling.
 Reductions and stencils require additional kernel semantics and cannot be solved by execution
-grouping alone. The [application benchmark proposals](../benchmarks/README.md) are intended to
-decide which branch deserves implementation effort first.
+grouping alone. The [decoder trace report](../benchmarks/decoder/results/deep-dive/REPORT.md)
+provides evidence for deciding which branch deserves implementation effort first.
 
 ## Source-reading scope
 

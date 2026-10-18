@@ -1,4 +1,4 @@
-"""CKL-authored cases spanning launch, fusion, branching, and stencil costs."""
+"""CKL source fixtures for fusion, branching, and stencil regression tests."""
 import ckl
 
 N = ckl.dim("N")

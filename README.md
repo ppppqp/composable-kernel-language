@@ -119,23 +119,18 @@ bindings.
 Enable CUDA validation with `-DCKL_ENABLE_CUDA_RUNTIME=ON`. Combining it with MLIR enables
 the in-process `ckl-cuda-frontend-runtime` test, compiled directly from the Python example.
 `CKL_RUNTIME_TEST_ARCH` selects the SM architecture and
-`CKL_CUDA_HOST_COMPILER` selects the nvcc host compiler. See the
-[Milestone 3](benchmarks/milestone3/README.md) and
-[Milestone 4](benchmarks/milestone4/README.md) benchmarks.
+`CKL_CUDA_HOST_COMPILER` selects the nvcc host compiler. See
+[CUDA compilation and execution](docs/cuda-backend.md) for setup and validation.
 
 Enable HIP validation with `-DCKL_ENABLE_HIP_RUNTIME=ON`. The host runtime requires
 `hip_runtime_api.h` and `libamdhip64`; validation additionally needs `hipcc` and the offload bundler.
 `CKL_HIP_RUNTIME_TEST_ARCH` selects the GFX architecture. MLIR analysis tests separately verify HIP
 plans and their inferred dependencies. Device execution is skipped when no HIP device is accessible.
 
-`CKL_BUILD_CUDA_BENCHMARKS` enables the [feasibility harness](benchmarks/milestone0/README.md).
-`CKL_BUILD_HIP_BENCHMARKS` enables the [HIP overhead benchmark](benchmarks/hip-runtime-overhead/README.md).
-
-The [standalone workload suite](benchmarks/standalone/README.md) benchmarks five CKL-authored
-examples through the Python/JIT path. It retains correctness checks, raw samples, setup costs,
-temporary-memory measurements, and recommendations for the next compiler optimization.
-The initial automatic pointwise-chain fusion pass is enabled by default, with an unfused fallback
-for overlapping buffers. See the [fusion measurements](benchmarks/standalone/results/rtx5060ti-fusion.md).
+The [decoder benchmark](benchmarks/decoder/README.md) evaluates complete autoregressive decode
+through the Python/JIT path, comparing ordinary launches, captured and inferred graphs, storage
+reuse, step grouping, and independent requests. It retains correctness checks, raw samples,
+setup costs, and [GPU traces and analysis](benchmarks/decoder/results/deep-dive/REPORT.md).
 
 ## Repository layout
 
@@ -145,7 +140,7 @@ lib/             compiler analyses, transforms, and runtime implementations
 tools/           ckl-opt for optional verification and inspection
 python/ckl/      typed Python frontend, MLIR compilation, and GPU-artifact utilities
 tests/          core, Python, MLIR semantics, and optional GPU validation
-benchmarks/      feasibility, planning, and runtime measurements
+benchmarks/decoder/ autoregressive decode measurements and GPU traces
 docs/            language and compiler architecture
 specs/           normative scope and acceptance criteria
 ```

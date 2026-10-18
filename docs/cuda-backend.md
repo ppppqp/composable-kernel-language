@@ -113,8 +113,7 @@ Guarded pass output carries `ckl.fusion.requires_disjoint`; it is inspection IR 
 contract, not a standalone replacement for original source. Native compilation rejects pre-fused
 marked input because it needs original source to construct the fallback.
 
-The [measured fusion comparison](../benchmarks/standalone/results/rtx5060ti-fusion.md) includes
-automatic fusion, disabled fusion, and the manually fused control. CUDA regression tests cover
+Fusion regression tests retain automatic, disabled, and manually fused controls. CUDA tests cover
 partial blocks, million-element buffers, shifted overlaps, adjacent slices, and rounding-sensitive
 multiply/add operations.
 
@@ -169,8 +168,8 @@ keeps its program and buffer owners alive after other Python references are dele
 Additional numerical checks cover negative i64 constants and runtime f64 scalars.
 Compilation is checked even without an accessible GPU; numerical execution then returns skip code 77.
 
-The [standalone benchmark suite](../benchmarks/standalone/README.md) exercises pointwise chains,
-fork/join composition, and neighbor-dependent stencils. `Invocation.benchmark(iterations=..., graph=...)`
+The [decoder benchmark](../benchmarks/decoder/README.md) measures complete autoregressive steps
+and independent request groups. `Invocation.benchmark(iterations=..., graph=...)`
 measures a native submission burst with one final synchronization, returning CUDA stream and host
 wall microseconds per program plus graph-instantiation time. This is measurement instrumentation;
 the application-facing `.run()` remains synchronous. Stream timing includes host submission gaps.

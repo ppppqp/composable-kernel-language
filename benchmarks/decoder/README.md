@@ -62,8 +62,16 @@ its speedup must not be presented as streamed inter-token latency. Setup times a
 
 ## Reproduce
 
-Use a Release CKL build with CUDA runtime, NVPTX, and ExecutionEngine enabled; see
-[build instructions](../standalone/README.md). Rebuild for the new loop/math/execution support.
+Use a Release CKL build with CUDA runtime, NVPTX, and ExecutionEngine enabled:
+
+```bash
+cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCKL_ENABLE_MLIR=ON -DCKL_ENABLE_CUDA_RUNTIME=ON \
+  -DMLIR_DIR=/path/to/llvm/build/lib/cmake/mlir \
+  -DCUDAToolkit_ROOT=/path/to/cuda
+cmake --build build-bench --target CKLCompiler ckl-opt -j 8
+```
+
 Only NumPy is required by this runner; there is no PyTorch, FlashInfer, or model-download dependency.
 
 ```bash
