@@ -1,0 +1,577 @@
+{
+  "config": {
+    "batch": 4,
+    "hidden": 256,
+    "heads": 8,
+    "layers": 2,
+    "ffn": 512,
+    "vocab": 2048,
+    "context": 8,
+    "steps": 16
+  },
+  "requests": 1,
+  "reuse_storage": true,
+  "device": "NVIDIA GeForce RTX 5060 Ti",
+  "shared_readonly_weights": true,
+  "independent_prompt_seeds": [
+    123
+  ],
+  "target": "nvidia:sm_120:+ptx87:bin:/home/qiping-pan/Documents/workspace/llvm/cuda-12.8",
+  "symbols": {
+    "kernel_2464073ddb7e3aa42cb56165": "embedding",
+    "kernel_2e23a43f5a1194762d9efbf2": "rms_stats",
+    "kernel_8c680abeef7c19210d2012cb": "rms_apply",
+    "kernel_a7d65aa4d27d860f8bb76a05": "linear",
+    "kernel_d32eef7f7c61e6ea9ff9d154": "rope",
+    "kernel_cca365717e13bee0dc726dbc": "append_kv",
+    "kernel_ad87c08849d3995f30b3c715": "attention_scores",
+    "kernel_6eed9dd956ae0b3accf58ffe": "softmax",
+    "kernel_b50f61cf25819a4e27063c8e": "attention_values",
+    "kernel_b8aea1c0e0ed2dc930a35ddc": "add",
+    "kernel_735ae36c3db9bff62e4db4d2": "linear",
+    "kernel_0be9b54e98069868a3720a47": "silu",
+    "kernel_896c18a1f14018c98f291c95": "multiply",
+    "kernel_cebecc510a48c714d945f502": "linear",
+    "kernel_2effa42c60949d73ba6c2454": "rms_apply",
+    "kernel_2804e22bbe7060ee52659fdb": "linear",
+    "kernel_3d6c4dd090e5637adb723d3d": "append_kv",
+    "kernel_89bb3581fd4f47b3b52454ca": "attention_scores",
+    "kernel_514c01d299ac4e043367db3e": "attention_values",
+    "kernel_87e6e6c970bd53ebab0e29f1": "linear",
+    "kernel_a73ebf992eb28e29004d1b47": "linear",
+    "kernel_7a8d79faab5848b3e1f34c26": "rms_apply",
+    "kernel_a0b2840e3e5617bbe966c3a9": "linear",
+    "kernel_09dcd7000983713e4c742c8c": "greedy",
+    "kernel_19d42babcd66e4f3460286aa": "advance"
+  },
+  "plan": {
+    "nodes": 48,
+    "edges": 53,
+    "topology": {
+      "1": [],
+      "4": [
+        1
+      ],
+      "5": [
+        4
+      ],
+      "9": [
+        5
+      ],
+      "10": [
+        5
+      ],
+      "11": [
+        5
+      ],
+      "14": [
+        9
+      ],
+      "15": [
+        10
+      ],
+      "16": [
+        11,
+        14,
+        15
+      ],
+      "19": [
+        16
+      ],
+      "20": [
+        19
+      ],
+      "22": [
+        20
+      ],
+      "24": [
+        22
+      ],
+      "26": [
+        24
+      ],
+      "29": [
+        26
+      ],
+      "30": [
+        29
+      ],
+      "33": [
+        30
+      ],
+      "34": [
+        30
+      ],
+      "37": [
+        33
+      ],
+      "38": [
+        34,
+        37
+      ],
+      "41": [
+        38
+      ],
+      "42": [
+        41
+      ],
+      "45": [
+        42
+      ],
+      "46": [
+        45
+      ],
+      "50": [
+        46
+      ],
+      "51": [
+        46
+      ],
+      "52": [
+        46
+      ],
+      "55": [
+        50
+      ],
+      "56": [
+        51
+      ],
+      "57": [
+        52,
+        55,
+        56
+      ],
+      "60": [
+        57
+      ],
+      "61": [
+        60
+      ],
+      "63": [
+        61
+      ],
+      "65": [
+        63
+      ],
+      "67": [
+        65
+      ],
+      "70": [
+        67
+      ],
+      "71": [
+        70
+      ],
+      "74": [
+        71
+      ],
+      "75": [
+        71
+      ],
+      "78": [
+        74
+      ],
+      "79": [
+        75,
+        78
+      ],
+      "82": [
+        79
+      ],
+      "83": [
+        82
+      ],
+      "86": [
+        83
+      ],
+      "87": [
+        86
+      ],
+      "88": [
+        87
+      ],
+      "89": [
+        88
+      ],
+      "90": [
+        89
+      ]
+    },
+    "temporary_count": 43,
+    "temporary_heap_bytes": 40960
+  },
+  "kernel_ir_sha256": "5a02a9135a0f431b2d1c998b98e8601a3f623bed4c62cdab0ad0303af627d475",
+  "native_sha256": "b12e83d84ea2dfc67f2bb081bb85068c1b6d89aacce195e323efc969ba93c93a",
+  "source_hashes": {
+    "experiment.py": "f60cdf32ad2bcd6860fc3d8606febd951baa9c4dbed8c1b858310dd0b678fd71",
+    "run.py": "4a97d1cbee15156e2bbb129676710a1afdec2335847c0bada4b90988de3b03b4",
+    "workloads.py": "70ead9a739da6ce4c8a792bd3796dad18dd346cb2f25e51ee8dc3f6c617f912b",
+    "reference.py": "b4e81badc0e891dd0744728958a76f9b64d1ed11b2a76aeaf945944cf3aa78b4"
+  },
+  "complete": true,
+  "case": "wide_batch4",
+  "samples": 7,
+  "warmup": 3,
+  "results": [
+    {
+      "wall_ms": {
+        "median": 2.57011,
+        "minimum": 2.566272,
+        "maximum": 2.570881,
+        "samples": [
+          2.566272,
+          2.570861,
+          2.570881,
+          2.569288,
+          2.569899,
+          2.57011,
+          2.5702
+        ]
+      },
+      "native_stream_us": [
+        [
+          159.2639982700348
+        ],
+        [
+          159.51600670814514
+        ],
+        [
+          159.53999757766724
+        ],
+        [
+          159.53800082206726
+        ],
+        [
+          159.59399938583374
+        ],
+        [
+          159.53800082206726
+        ],
+        [
+          159.48399901390076
+        ]
+      ],
+      "max_abs_error": 9.5367431640625e-07,
+      "mode": "ordinary",
+      "group": 1,
+      "parallel": false,
+      "correct": true,
+      "tokens_per_second": 24901.65790569275
+    },
+    {
+      "wall_ms": {
+        "median": 2.613592,
+        "minimum": 2.611268,
+        "maximum": 2.626517,
+        "samples": [
+          2.613592,
+          2.611268,
+          2.626517,
+          2.611778,
+          2.624773,
+          2.611688,
+          2.625525
+        ]
+      },
+      "native_stream_us": [
+        [
+          159.1459959745407
+        ],
+        [
+          159.59399938583374
+        ],
+        [
+          159.70200300216675
+        ],
+        [
+          159.65600311756134
+        ],
+        [
+          159.73399579524994
+        ],
+        [
+          159.57799553871155
+        ],
+        [
+          159.76600348949432
+        ]
+      ],
+      "max_abs_error": 9.5367431640625e-07,
+      "mode": "ordinary",
+      "group": 1,
+      "parallel": true,
+      "correct": true,
+      "tokens_per_second": 24487.372168264978
+    },
+    {
+      "wall_ms": {
+        "median": 2.484808,
+        "minimum": 2.48088,
+        "maximum": 2.487472,
+        "samples": [
+          2.48088,
+          2.483535,
+          2.485218,
+          2.485139,
+          2.487472,
+          2.482904,
+          2.484808
+        ]
+      },
+      "native_stream_us": [
+        [
+          154.0440022945404
+        ],
+        [
+          154.2779952287674
+        ],
+        [
+          154.42399680614471
+        ],
+        [
+          154.34400737285614
+        ],
+        [
+          154.5639932155609
+        ],
+        [
+          154.27400171756744
+        ],
+        [
+          154.38799560070038
+        ]
+      ],
+      "max_abs_error": 9.5367431640625e-07,
+      "mode": "capture",
+      "group": 1,
+      "parallel": false,
+      "correct": true,
+      "tokens_per_second": 25756.517203743708
+    },
+    {
+      "wall_ms": {
+        "median": 2.53384,
+        "minimum": 2.52814,
+        "maximum": 2.53868,
+        "samples": [
+          2.53384,
+          2.531516,
+          2.531065,
+          2.52814,
+          2.535895,
+          2.536075,
+          2.53868
+        ]
+      },
+      "native_stream_us": [
+        [
+          153.88600528240204
+        ],
+        [
+          154.28400039672852
+        ],
+        [
+          154.28799390792847
+        ],
+        [
+          154.51200306415558
+        ],
+        [
+          154.3080061674118
+        ],
+        [
+          154.21800315380096
+        ],
+        [
+          154.32600677013397
+        ]
+      ],
+      "max_abs_error": 9.5367431640625e-07,
+      "mode": "capture",
+      "group": 1,
+      "parallel": true,
+      "correct": true,
+      "tokens_per_second": 25258.106273482146
+    },
+    {
+      "wall_ms": {
+        "median": 2.072987,
+        "minimum": 2.068659,
+        "maximum": 2.074991,
+        "samples": [
+          2.068659,
+          2.074971,
+          2.072998,
+          2.071705,
+          2.072987,
+          2.074991,
+          2.071956
+        ]
+      },
+      "native_stream_us": [
+        [
+          128.3860057592392
+        ],
+        [
+          128.73199582099915
+        ],
+        [
+          128.63999605178833
+        ],
+        [
+          128.57399880886078
+        ],
+        [
+          128.63199412822723
+        ],
+        [
+          128.78000736236572
+        ],
+        [
+          128.59800457954407
+        ]
+      ],
+      "max_abs_error": 9.5367431640625e-07,
+      "mode": "graph",
+      "group": 1,
+      "parallel": false,
+      "correct": true,
+      "tokens_per_second": 30873.32433826165
+    },
+    {
+      "wall_ms": {
+        "median": 2.124274,
+        "minimum": 2.113414,
+        "maximum": 2.179529,
+        "samples": [
+          2.122912,
+          2.126439,
+          2.124274,
+          2.113414,
+          2.128123,
+          2.179529,
+          2.122371
+        ]
+      },
+      "native_stream_us": [
+        [
+          128.5420060157776
+        ],
+        [
+          128.70800495147705
+        ],
+        [
+          128.59800457954407
+        ],
+        [
+          128.7740021944046
+        ],
+        [
+          128.52400541305542
+        ],
+        [
+          128.9059966802597
+        ],
+        [
+          128.62199544906616
+        ]
+      ],
+      "max_abs_error": 9.5367431640625e-07,
+      "mode": "graph",
+      "group": 1,
+      "parallel": true,
+      "correct": true,
+      "tokens_per_second": 30127.94018097477
+    },
+    {
+      "wall_ms": {
+        "median": 2.048691,
+        "minimum": 2.046858,
+        "maximum": 2.05286,
+        "samples": [
+          2.049342,
+          2.05286,
+          2.04807,
+          2.048691,
+          2.04782,
+          2.048712,
+          2.046858
+        ]
+      },
+      "native_stream_us": [
+        [
+          127.12399661540985
+        ],
+        [
+          127.31799483299255
+        ],
+        [
+          127.10399925708771
+        ],
+        [
+          127.11000442504883
+        ],
+        [
+          127.09000706672668
+        ],
+        [
+          127.07400321960449
+        ],
+        [
+          127.12199985980988
+        ]
+      ],
+      "max_abs_error": 9.5367431640625e-07,
+      "mode": "graph",
+      "group": 16,
+      "parallel": false,
+      "correct": true,
+      "tokens_per_second": 31239.459733068583
+    },
+    {
+      "wall_ms": {
+        "median": 2.099788,
+        "minimum": 2.088006,
+        "maximum": 2.289919,
+        "samples": [
+          2.095851,
+          2.093436,
+          2.107162,
+          2.088006,
+          2.289919,
+          2.102313,
+          2.099788
+        ]
+      },
+      "native_stream_us": [
+        [
+          127.16799974441528
+        ],
+        [
+          127.26600468158722
+        ],
+        [
+          127.20799446105957
+        ],
+        [
+          127.19599902629852
+        ],
+        [
+          127.11599469184875
+        ],
+        [
+          127.128005027771
+        ],
+        [
+          127.19400227069855
+        ]
+      ],
+      "max_abs_error": 9.5367431640625e-07,
+      "mode": "graph",
+      "group": 16,
+      "parallel": true,
+      "correct": true,
+      "tokens_per_second": 30479.267430807296
+    }
+  ]
+}

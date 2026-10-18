@@ -75,7 +75,7 @@ def step(arrays, config):
     a["position"][0] += 1
 
 
-def make_inputs(c, seed=123):
+def make_inputs(c, seed=123, *, prompt_seed=None):
     """Create random model weights and reference-prefill an explicit prompt."""
     rng = np.random.default_rng(seed)
     b, h, l, t, d = c.batch, c.hidden, c.layers, c.capacity, c.head_dim
@@ -92,7 +92,8 @@ def make_inputs(c, seed=123):
             arrays[name] = rng.normal(0, scale, shape).astype(np.float32)
     angles = np.arange(t)[:, None] * (10000. ** (-np.arange(0, d, 2) / d))[None, :]
     arrays["sincos"] = np.stack((np.cos(angles), np.sin(angles)), axis=-1).astype(np.float32)
-    prompts = rng.integers(0, c.vocab, (c.context, b), dtype=np.int32)
+    prompt_rng = rng if prompt_seed is None else np.random.default_rng(prompt_seed)
+    prompts = prompt_rng.integers(0, c.vocab, (c.context, b), dtype=np.int32)
     arrays.update(tokens=prompts[0].copy(), position=np.array([0], dtype=np.int32),
                   history=np.full((t, b), -1, dtype=np.int32),
                   kc=np.full((l, b, c.heads, t, d), -12345, dtype=np.float32),

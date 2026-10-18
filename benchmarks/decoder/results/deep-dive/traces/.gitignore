@@ -1,0 +1,6 @@
+# Keep portable Chrome traces, figures, metadata, and the offline viewer in git.
+# Native Nsight reports/SQLite exports remain available locally; collect.py regenerates them.
+*.nsys-rep
+*.sqlite*
+*.qdstrm
+*.log

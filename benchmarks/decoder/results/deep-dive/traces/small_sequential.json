@@ -1,0 +1,228 @@
+{
+  "config": {
+    "batch": 1,
+    "hidden": 64,
+    "heads": 4,
+    "layers": 2,
+    "ffn": 128,
+    "vocab": 256,
+    "context": 8,
+    "steps": 16
+  },
+  "requests": 1,
+  "reuse_storage": false,
+  "device": "NVIDIA GeForce RTX 5060 Ti",
+  "shared_readonly_weights": true,
+  "independent_prompt_seeds": [
+    123
+  ],
+  "target": "nvidia:sm_120:+ptx87:bin:/home/qiping-pan/Documents/workspace/llvm/cuda-12.8",
+  "symbols": {
+    "kernel_124ee0412c721e09bf167830": "embedding",
+    "kernel_294b13c2fb4029fa17c90eab": "rms_stats",
+    "kernel_6f89d64c49bea04a5bab6890": "rms_apply",
+    "kernel_58f5c9ed6c8cad603f6cc8a4": "linear",
+    "kernel_a3bfaa967fe81e350b823fb0": "rope",
+    "kernel_2a684c479aa5edcad46e7f95": "append_kv",
+    "kernel_b7d8a0b7585c434483f96ecc": "attention_scores",
+    "kernel_852094db36f918832f548308": "softmax",
+    "kernel_6042af1c1d97740bdceaa8aa": "attention_values",
+    "kernel_e975254045ad96b08422f97d": "add",
+    "kernel_78cff5682fb807881cda6ceb": "linear",
+    "kernel_ef0760e70b57562eb1661fd3": "silu",
+    "kernel_3a378681d1dca498d90294f5": "multiply",
+    "kernel_d523a7c1ec5f6aa29354a141": "linear",
+    "kernel_16e63d639fca49e9c804bac4": "rms_apply",
+    "kernel_1271f6f502744b1853527a0e": "linear",
+    "kernel_eac0253c5ce3496fc98eb65f": "append_kv",
+    "kernel_5b15944170508fb65d009855": "attention_scores",
+    "kernel_d1c034b12ec21c487b4c838a": "attention_values",
+    "kernel_968a061592711845f862e4b8": "linear",
+    "kernel_acaa3805862627393005e66c": "linear",
+    "kernel_067d80bd91eaf15cac24b92b": "rms_apply",
+    "kernel_43870322959f76a0ba573615": "linear",
+    "kernel_93b411c73405fe9cfaccbbf3": "greedy",
+    "kernel_19d42babcd66e4f3460286aa": "advance"
+  },
+  "plan": {
+    "nodes": 48,
+    "edges": 53,
+    "topology": {
+      "1": [],
+      "4": [
+        1
+      ],
+      "5": [
+        4
+      ],
+      "9": [
+        5
+      ],
+      "10": [
+        5
+      ],
+      "11": [
+        5
+      ],
+      "14": [
+        9
+      ],
+      "15": [
+        10
+      ],
+      "16": [
+        11,
+        14,
+        15
+      ],
+      "19": [
+        16
+      ],
+      "20": [
+        19
+      ],
+      "22": [
+        20
+      ],
+      "24": [
+        22
+      ],
+      "26": [
+        24
+      ],
+      "29": [
+        26
+      ],
+      "30": [
+        29
+      ],
+      "33": [
+        30
+      ],
+      "34": [
+        30
+      ],
+      "37": [
+        33
+      ],
+      "38": [
+        34,
+        37
+      ],
+      "41": [
+        38
+      ],
+      "42": [
+        41
+      ],
+      "45": [
+        42
+      ],
+      "46": [
+        45
+      ],
+      "50": [
+        46
+      ],
+      "51": [
+        46
+      ],
+      "52": [
+        46
+      ],
+      "55": [
+        50
+      ],
+      "56": [
+        51
+      ],
+      "57": [
+        52,
+        55,
+        56
+      ],
+      "60": [
+        57
+      ],
+      "61": [
+        60
+      ],
+      "63": [
+        61
+      ],
+      "65": [
+        63
+      ],
+      "67": [
+        65
+      ],
+      "70": [
+        67
+      ],
+      "71": [
+        70
+      ],
+      "74": [
+        71
+      ],
+      "75": [
+        71
+      ],
+      "78": [
+        74
+      ],
+      "79": [
+        75,
+        78
+      ],
+      "82": [
+        79
+      ],
+      "83": [
+        82
+      ],
+      "86": [
+        83
+      ],
+      "87": [
+        86
+      ],
+      "88": [
+        87
+      ],
+      "89": [
+        88
+      ],
+      "90": [
+        89
+      ]
+    },
+    "temporary_count": 43,
+    "temporary_heap_bytes": 14080
+  },
+  "kernel_ir_sha256": "953227627e481925aa7dcc6b69b4dc0b7a9eff3918d18859afda1bb72513be9f",
+  "native_sha256": "b12e83d84ea2dfc67f2bb081bb85068c1b6d89aacce195e323efc969ba93c93a",
+  "source_hashes": {
+    "experiment.py": "f60cdf32ad2bcd6860fc3d8606febd951baa9c4dbed8c1b858310dd0b678fd71",
+    "run.py": "4a97d1cbee15156e2bbb129676710a1afdec2335847c0bada4b90988de3b03b4",
+    "workloads.py": "70ead9a739da6ce4c8a792bd3796dad18dd346cb2f25e51ee8dc3f6c617f912b",
+    "reference.py": "b4e81badc0e891dd0744728958a76f9b64d1ed11b2a76aeaf945944cf3aa78b4"
+  },
+  "complete": true,
+  "case": "small",
+  "samples": 7,
+  "warmup": 3,
+  "results": [],
+  "mode": "ordinary",
+  "group": 1,
+  "parallel": false,
+  "wall_ms": 2.086483,
+  "native_timings": [
+    {
+      "stream_us": 125.91800093650818,
+      "wall_us": 125.886,
+      "graph_setup_ms": 2e-05
+    }
+  ],
+  "max_abs_error": 5.960464477539062e-07
+}

@@ -4,6 +4,8 @@ The [complete autoregressive decoder](decoder/README.md) is now the primary gene
 experiment: identical CKL kernels under sequential launches, actual single-stream capture,
 inferred graphs, storage reuse, and repeated graph execution. It validates device-resident
 tokens/KV state and reports full generation completion time.
+The [decoder GPU trace report](decoder/results/deep-dive/REPORT.md) adds model/context scaling,
+partial step groups, independent request streams, matched batching controls, and recorded GPU timelines.
 
 The first two application workloads now have CKL source, GPU runners, independent numerical
 checks, PyTorch baselines, and retained RTX 5060 Ti measurements. AdamW, miniWeather, and CG remain

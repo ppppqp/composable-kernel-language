@@ -21,6 +21,38 @@ TAIL = 256
 SENTINEL = -12345
 
 
+def variants(steps, groups=()):
+    rows = [("sequential", False, "ordinary", 1),
+            ("capture", False, "capture", 1),
+            ("inferred", False, "graph", 1),
+            ("sequential_reuse", True, "ordinary", 1),
+            ("capture_reuse", True, "capture", 1),
+            ("inferred_reuse", True, "graph", 1),
+            ("batched_capture", True, "capture", steps),
+            ("batched_inferred", True, "graph", steps)]
+    for count in sorted(set(groups)):
+        if count <= 1 or count >= steps or steps % count:
+            continue
+        rows += [(f"group{count}_capture", True, "capture", count),
+                 (f"group{count}_inferred", True, "graph", count)]
+    return rows
+
+
+def extended_cases(steps):
+    """Change one workload axis from the small baseline where practical."""
+    return [("small", Config(steps=steps)),
+            ("awkward", Config(batch=3, hidden=48, heads=3, layers=1,
+                               ffn=80, vocab=129, context=3, steps=steps)),
+            ("long_context", Config(context=512, steps=steps)),
+            ("wide", Config(hidden=256, heads=8, ffn=512, vocab=2048, steps=steps)),
+            ("deep", Config(layers=8, steps=steps)),
+            ("large_vocab", Config(vocab=8192, steps=steps)),
+            ("large_batch", Config(batch=64, context=64, steps=steps)),
+            ("batch4", Config(batch=4, steps=steps)),
+            ("wide_batch4", Config(batch=4, hidden=256, heads=8, ffn=512,
+                                   vocab=2048, steps=steps))]
+
+
 def timed(action):
     start = time.perf_counter_ns()
     value = action()
@@ -47,10 +79,17 @@ def plan_stats(ir):
 
 
 class State:
-    def __init__(self, device, arrays):
+    def __init__(self, device, arrays, *, shared=None):
         self.initial = arrays
         self.owners, self.buffers, self.host = {}, {}, {}
         for name, values in arrays.items():
+            if shared is not None and name not in MUTABLE:
+                if not np.array_equal(values, shared.initial[name]):
+                    raise ValueError(f"cannot share different read-only input {name}")
+                self.owners[name] = shared.owners[name]
+                self.host[name] = shared.host[name]
+                self.buffers[name] = shared.buffers[name]
+                continue
             host = np.full(values.size + TAIL, SENTINEL, dtype=values.dtype)
             host[:values.size] = values.ravel()
             dtype = ckl.i32 if values.dtype == np.int32 else ckl.f32
@@ -94,8 +133,10 @@ class State:
 
 
 def run_case(device, target, config, args):
+    variant_rows = variants(config.steps, args.groups)
     initial, prompts = make_inputs(config, args.seed)
-    references = {count: expected(initial, config, count) for count in (1, config.steps)}
+    references = {count: expected(initial, config, count)
+                  for count in {1, config.steps, *(v[3] for v in variant_rows)}}
     state = State(device, initial)
     signature = {name: buffer.spec for name, buffer in state.buffers.items()}
     signature.update(epsilon=ckl.f32, attention_scale=ckl.f32)
@@ -119,18 +160,12 @@ def run_case(device, target, config, args):
 
     # Same code and same buffers. Only dependency topology, storage placement,
     # and number of complete steps per graph submission change.
-    variants = [("sequential", False, "ordinary", 1),
-                ("capture", False, "capture", 1),
-                ("inferred", False, "graph", 1),
-                ("inferred_reuse", True, "graph", 1),
-                ("batched_capture", True, "capture", config.steps),
-                ("batched_inferred", True, "graph", config.steps)]
     metrics = {name: {key: [] for key in ("stream_us", "wall_us", "generation_ms")}
-               for name, *_ in variants}
+               for name, *_ in variant_rows}
     setup, errors = {}, {}
     # All setup and warmup precedes paired measurement. Capture records work
     # without executing it; the benchmark then launches it once.
-    for name, reuse, mode, group in variants:
+    for name, reuse, mode, group in variant_rows:
         bound = invocations[reuse]
         state.reset()
         first = bound.benchmark(iterations=1, mode=mode, batch_size=group)
@@ -143,8 +178,8 @@ def run_case(device, target, config, args):
             state.reset()
             bound.benchmark(iterations=config.steps // group, mode=mode, batch_size=group)
     for sample in range(args.samples):
-        offset = sample % len(variants)
-        order = variants[offset:] + variants[:offset]
+        offset = sample % len(variant_rows)
+        order = variant_rows[offset:] + variant_rows[:offset]
         if sample % 2:
             order = list(reversed(order))
         for name, reuse, mode, group in order:
@@ -161,7 +196,7 @@ def run_case(device, target, config, args):
             metrics[name]["generation_ms"].append((time.perf_counter_ns() - begin) / 1e6)
             errors[name] = max(errors[name], state.verify(references[config.steps], config))
     results = []
-    for name, reuse, mode, group in variants:
+    for name, reuse, mode, group in variant_rows:
         row = dict(variant=name, reuse_storage=reuse, mode=mode, steps_per_submission=group,
                    correct=True, max_abs_error=errors[name], graph_setup_ms=setup[name],
                    timings={key: summary(value) for key, value in metrics[name].items()})
@@ -192,11 +227,11 @@ def render(data):
              "sequence, rather than repeatedly decoding the same token/position. Python generation latency covers all generated "
              "steps, with one completion wait per submission; batched variants submit all steps "
              "at once. That metric measures generation completion, not streamed token latency.", "",
-             "| Batch | Initial context | Variant | Stream µs/step | Native wall µs/step | "
-             "Python generation ms | Temp heap bytes | Setup ms |", "|---:|---:|---|---:|---:|---:|---:|---:|"]
-    expected_labels = {"sequential", "capture", "inferred", "inferred_reuse", "batched_capture", "batched_inferred"}
+             "| Case | Batch | Initial context | Variant | Stream µs/step | Native wall µs/step | "
+             "Python generation ms | Temp heap bytes | Setup ms |", "|---|---:|---:|---|---:|---:|---:|---:|---:|"]
     for case in data["cases"]:
-        if {r["variant"] for r in case["results"]} != expected_labels or len(case["results"]) != 6:
+        expected_labels = {v[0] for v in variants(case["config"]["steps"], data["configuration"].get("groups", []))}
+        if {r["variant"] for r in case["results"]} != expected_labels or len(case["results"]) != len(expected_labels):
             raise ValueError("incomplete variant matrix")
         for row in case["results"]:
             if not row["correct"] or any(len(metric["samples"]) != data["configuration"]["samples"]
@@ -205,7 +240,7 @@ def render(data):
                 raise ValueError("invalid decoder results")
             c, t = case["config"], row["timings"]
             heap = case["plans"][str(row["reuse_storage"])]["temporary_heap_bytes"]
-            lines.append(f"| {c['batch']} | {c['context']} | {row['variant']} | "
+            lines.append(f"| {case.get('name', '')} | {c['batch']} | {c['context']} | {row['variant']} | "
                          f"{t['stream_us']['median']:.2f} | {t['wall_us']['median']:.2f} | "
                          f"{t['generation_ms']['median']:.3f} | {heap:,} | {row['graph_setup_ms']:.3f} |")
     lines += ["", "| Batch | Context | Sequential/inferred | Capture/inferred | "
@@ -233,6 +268,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--toolkit", type=Path, required=True)
     parser.add_argument("--chip", default="sm_120")
+    parser.add_argument("--suite", choices=("custom", "extended"), default="custom",
+                        help="extended varies width, depth, vocabulary, context, and batch")
+    parser.add_argument("--groups", type=int, nargs="*", default=[2, 4, 8],
+                        help="extra step groups; only proper divisors of --steps are used")
     parser.add_argument("--cases", nargs="+", default=["1x1", "1x8", "8x8", "1x64", "8x64", "32x64"],
                         help="batch x initial context")
     parser.add_argument("--hidden", type=int, default=64)
@@ -246,13 +285,13 @@ def main():
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if args.samples < 1 or args.warmup < 1:
+    if args.samples < 1 or args.warmup < 1 or any(g < 1 for g in args.groups):
         parser.error("samples and warmup must be positive")
-    cases = []
-    for shape in args.cases:
+    cases = extended_cases(args.steps) if args.suite == "extended" else []
+    for shape in args.cases if args.suite == "custom" else []:
         b, context = map(int, shape.split("x"))
-        cases.append(Config(b, args.hidden, args.heads, args.layers, args.ffn,
-                            args.vocab, context, args.steps))
+        cases.append((shape, Config(b, args.hidden, args.heads, args.layers, args.ffn,
+                                   args.vocab, context, args.steps)))
     device = ckl.Device()
     target = ckl.NVIDIATarget(args.chip, "+ptx87", args.toolkit)
     lib = Path(device._lib._name).resolve()
@@ -268,11 +307,14 @@ def main():
                 if k not in ("toolkit", "output")}, cases=[])
     info = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
     data["nvidia_smi"] = info.stdout if not info.returncode else info.stderr
+    data["configuration"]["cases"] = [name for name, _ in cases]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(data, indent=2) + "\n")
-    for config in cases:
+    for name, config in cases:
         print(f"Compiling and checking {config}...", flush=True)
-        data["cases"].append(run_case(device, target, config, args))
+        case = run_case(device, target, config, args)
+        case["name"] = name
+        data["cases"].append(case)
         args.output.write_text(json.dumps(data, indent=2) + "\n")
     data["complete"] = True
     report = render(data)
