@@ -1,0 +1,25 @@
+Test project /home/qiping-pan/Documents/workspace/ckl/build
+      Start  1: ckl-memory-planner
+ 1/10 Test  #1: ckl-memory-planner ...............   Passed    0.00 sec
+      Start  2: ckl-execution-plan
+ 2/10 Test  #2: ckl-execution-plan ...............   Passed    0.00 sec
+      Start  3: ckl-python-compiler-utils
+ 3/10 Test  #3: ckl-python-compiler-utils ........   Passed    1.32 sec
+      Start  4: ckl-exec-to-llvm
+ 4/10 Test  #4: ckl-exec-to-llvm .................   Passed    0.10 sec
+      Start  5: ckl-mlir-analysis
+ 5/10 Test  #5: ckl-mlir-analysis ................   Passed    0.40 sec
+      Start  6: ckl-nvidia-runtime
+ 6/10 Test  #6: ckl-nvidia-runtime ...............   Passed    0.25 sec
+      Start  7: ckl-milestone4
+ 7/10 Test  #7: ckl-milestone4 ...................   Passed    0.26 sec
+      Start  8: ckl-cuda-frontend-runtime
+ 8/10 Test  #8: ckl-cuda-frontend-runtime ........   Passed    0.61 sec
+      Start  9: ckl-cuda-pointwise-fusion
+ 9/10 Test  #9: ckl-cuda-pointwise-fusion ........   Passed    0.87 sec
+      Start 10: ckl-cuda-kernel-loops
+10/10 Test #10: ckl-cuda-kernel-loops ............   Passed    0.40 sec
+
+100% tests passed, 0 tests failed out of 10
+
+Total Test time (real) =   4.22 sec

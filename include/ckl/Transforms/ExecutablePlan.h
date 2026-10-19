@@ -3,8 +3,11 @@
 
 namespace mlir::ckl {
 
-/// Register transformations from analyzed orchestration graphs to executable plans.
+/// Register graph-to-plan and executable-to-LLVM transformations.
 void registerCKLExecutablePlanPasses();
+
+/// Register lowering of a dedicated executable host module to the LLVM dialect.
+void registerCKLExecToLLVMPass();
 
 } // namespace mlir::ckl
 

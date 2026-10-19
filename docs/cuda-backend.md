@@ -1,8 +1,9 @@
 # In-process CUDA compilation and execution
 
 CKL compiles specialized kernel bodies and their planned host program in the Python process.
-Following FlyDSL's approach, device bytes are embedded in a host LLVM module, and MLIR's
-`ExecutionEngine` JIT-compiles its entry point. There is no generated C++ file, exported CUBIN,
+Following FlyDSL's approach, a compiler pass lowers the executable plan to the MLIR LLVM dialect,
+with device bytes embedded as an LLVM dialect global. Upstream LLVM translation and MLIR's
+`ExecutionEngine` JIT-compile its entry point. There is no generated C++ file, exported CUBIN,
 or external CKL compilation tool in this path.
 
 ```python
@@ -24,6 +25,49 @@ with lower().compile(
         dst.copy_to_host(result)  # result[i] == i + 0.25
 ```
 
+## Host lowering
+
+The host compilation path is:
+
+```text
+verified ckl_exec plan + source signature + embedded CUBIN
+    → ckl-lower-exec-to-llvm
+    → MLIR LLVM dialect
+    → upstream translateModuleToLLVMIR
+    → ExecutionEngine → ckl_entry(frame, arguments)
+```
+
+`lib/Transforms/ExecToLLVM.cpp` implements the lowering. `python/ckl/_jit.py` selects and runs
+the pipelines using `mlir.passmanager.PassManager`, stages the host module, and creates
+`mlir.execution_engine.ExecutionEngine`. `NativeBindings.cpp` registers CKL dialects/passes
+and exposes LLVM IR inspection. `lib/Runtime/NvidiaProgram.cpp` owns the host runtime callbacks,
+argument packing, binding/alias fallback, graph caching, execution, and timing. Its C++ interface
+in `include/ckl/Runtime/NvidiaProgram.h` has no Python or MLIR dependency.
+`RuntimeBindings.cpp` only converts Python arguments, handles the Python buffer protocol, and
+exposes runtime objects with their keep-alive relationships. There is no native compile function
+or direct LLVM IR builder. Inspect
+`program.host_mlir` for the lowered LLVM dialect,
+`program.host_ir` for translated LLVM IR, and `program.executable_ir` for the original plan.
+
+The pass also runs independently through `ckl-opt --ckl-lower-exec-to-llvm`. Its input is a
+dedicated host module containing exactly one `ckl_exec.plan`, the referenced `func.func`
+declaration describing the original argument types, and a non-empty `ckl_exec.binary` string
+attribute on the module. It consumes that staging module and emits LLVM operations only.
+The current ABI supports CUDA device 0, global resources, and `cuda.direct` kernels. Unsupported
+backends, unresolved or mismatched argument bindings, and unrelated module operations fail with
+diagnostics. The pass preserves physical slot order, scalar bits, temporary heap offsets, launch
+geometry, and dependency IDs. See `tests/MLIR/test_exec_to_llvm.py` for a complete standalone input.
+The Python driver uses JIT optimization level 0: the host entry constructs a plan once per bind,
+while repeated execution remains in the native runtime and cached graphs.
+
+The generated entry runs once during `bind()`: it loads/caches the device module, allocates
+temporary heaps, and constructs the bound runtime plan. Subsequent execution uses that plan or
+its cached command graph. This lowering change preserves that lifecycle; it does not add dynamic
+host control flow or move launches into Python.
+
+The [host compilation migration report](../benchmarks/decoder/results/exec-llvm/README.md)
+contains Debug/Release regression results, matched decode measurements, and repeated setup costs.
+
 ## Build and ownership
 
 Build with `CKL_ENABLE_MLIR=ON` against LLVM/MLIR with the native execution engine, NVPTX, and
@@ -35,6 +79,9 @@ Python imports that nanobind extension from there or alongside the installed pac
 points to a C ABI library. Matching upstream MLIR Python bindings are required for the frontend;
 set `CKL_MLIR_PYTHON_PATH` for CMake tests and include it in `PYTHONPATH` for direct Python use. `CKL_ENABLE_CUDA_RUNTIME=ON` enables execution. Compilation needs a compatible CUDA toolkit
 but no GPU. Choose chip/PTX features supported by your toolkit and GPU.
+The extension links against the matching Python package's shared `libMLIRPythonCAPI`, so
+Python's pass manager and CKL use one MLIR implementation and pass registry. CMake locates
+that library under `CKL_MLIR_PYTHON_PATH/mlir/_mlir_libs`; `CKL_MLIR_PYTHON_CAPI` can override it.
 The toolkit path is passed directly to the serializer without changing process environment variables.
 Upstream serialization may invoke CUDA toolkit programs such as `ptxas` internally.
 
@@ -55,8 +102,11 @@ The four resource classes support `with`, idempotent `close()`, and `closed`. Cl
 wrapper prevents further operations through that wrapper. Native shared ownership keeps resources
 alive for existing buffers and bound invocations, including imported CKL allocations whose owner
 wrapper has closed. Native destructors also provide cleanup when wrappers become unreachable;
-there is no Python `__del__` handle management. Compile, bind/JIT entry, execution, and benchmark
-bursts release the GIL while doing native work. Host copies use the Python buffer protocol.
+there is no Python `__del__` handle management. Native bind/JIT entry, execution, and benchmark
+bursts release the GIL. Compilation is orchestrated through the MLIR Python bindings.
+Native program wrappers retain their Python execution engine, and bound invocation wrappers
+retain those program wrappers. The engine's runtime-symbol references keep its host module and
+MLIR context alive until after JIT destruction. Host copies use the Python buffer protocol.
 Invalid native arguments map to Python `ValueError`; compilation and driver failures map to `RuntimeError`.
 
 Scalar arguments are captured at binding; rebind to change them. Automatic tensor/framework conversion and borrowed streams are deferred.
@@ -108,7 +158,7 @@ Views, escaping or multiply consumed temporaries, nested control flow, stencils,
 joins remain unchanged. Operations are cloned without reassociation or added fast-math flags.
 
 External buffers can overlap even when they have different argument names. When fusion succeeds,
-the native compiler retains a separately compiled original program. At binding, it compares the
+the Python compiler retains a separately compiled original program. At binding, the native runtime compares the
 logical byte ranges of all external buffers; any overlap selects the original topology. Adjacent
 disjoint slices can use fusion. Exact aliases conservatively use the original program too.
 `invocation.node_count` reports the actual selected topology; the compiled object's IR properties
@@ -118,7 +168,7 @@ a new no-alias promise from source authors. Both paths retain their usual ordina
 The fallback roughly doubles compilation time for eligible programs in the initial implementation.
 It is compiled once per compiled object, with device loading deferred until that path is bound.
 Guarded pass output carries `ckl.fusion.requires_disjoint`; it is inspection IR with a runtime
-contract, not a standalone replacement for original source. Native compilation rejects pre-fused
+contract, not a standalone replacement for original source. Compilation rejects pre-fused
 marked input because it needs original source to construct the fallback.
 
 Fusion regression tests retain automatic, disabled, and manually fused controls. CUDA tests cover

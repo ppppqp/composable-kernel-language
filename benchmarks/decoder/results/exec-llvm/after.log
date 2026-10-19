@@ -1,0 +1,136 @@
+Compiling and checking Config(batch=1, hidden=64, heads=4, layers=2, ffn=128, vocab=256, context=8, steps=16)...
+B= 1 context=  8 sequential         stream=   62.86 us/step generation=  1.090 ms heap=14080 correct=true
+B= 1 context=  8 capture            stream=   55.08 us/step generation=  0.925 ms heap=14080 correct=true
+B= 1 context=  8 inferred           stream=   46.87 us/step generation=  0.797 ms heap=14080 correct=true
+B= 1 context=  8 sequential_reuse   stream=   63.59 us/step generation=  1.090 ms heap=3072 correct=true
+B= 1 context=  8 capture_reuse      stream=   55.19 us/step generation=  0.928 ms heap=3072 correct=true
+B= 1 context=  8 inferred_reuse     stream=   47.10 us/step generation=  0.799 ms heap=3072 correct=true
+B= 1 context=  8 batched_capture    stream=   53.78 us/step generation=  0.860 ms heap=3072 correct=true
+B= 1 context=  8 batched_inferred   stream=   45.94 us/step generation=  0.733 ms heap=3072 correct=true
+B= 1 context=  8 group2_capture     stream=   54.29 us/step generation=  0.892 ms heap=3072 correct=true
+B= 1 context=  8 group2_inferred    stream=   46.13 us/step generation=  0.764 ms heap=3072 correct=true
+B= 1 context=  8 group4_capture     stream=   53.98 us/step generation=  0.874 ms heap=3072 correct=true
+B= 1 context=  8 group4_inferred    stream=   45.90 us/step generation=  0.745 ms heap=3072 correct=true
+B= 1 context=  8 group8_capture     stream=   53.71 us/step generation=  0.865 ms heap=3072 correct=true
+B= 1 context=  8 group8_inferred    stream=   45.76 us/step generation=  0.738 ms heap=3072 correct=true
+Compiling and checking Config(batch=3, hidden=48, heads=3, layers=1, ffn=80, vocab=129, context=3, steps=16)...
+B= 3 context=  3 sequential         stream=   35.15 us/step generation=  0.622 ms heap=17152 correct=true
+B= 3 context=  3 capture            stream=   27.97 us/step generation=  0.496 ms heap=17152 correct=true
+B= 3 context=  3 inferred           stream=   24.55 us/step generation=  0.440 ms heap=17152 correct=true
+B= 3 context=  3 sequential_reuse   stream=   35.04 us/step generation=  0.620 ms heap=6144 correct=true
+B= 3 context=  3 capture_reuse      stream=   28.13 us/step generation=  0.497 ms heap=6144 correct=true
+B= 3 context=  3 inferred_reuse     stream=   24.55 us/step generation=  0.441 ms heap=6144 correct=true
+B= 3 context=  3 batched_capture    stream=   26.49 us/step generation=  0.428 ms heap=6144 correct=true
+B= 3 context=  3 batched_inferred   stream=   23.12 us/step generation=  0.373 ms heap=6144 correct=true
+B= 3 context=  3 group2_capture     stream=   27.10 us/step generation=  0.460 ms heap=6144 correct=true
+B= 3 context=  3 group2_inferred    stream=   23.90 us/step generation=  0.404 ms heap=6144 correct=true
+B= 3 context=  3 group4_capture     stream=   26.81 us/step generation=  0.441 ms heap=6144 correct=true
+B= 3 context=  3 group4_inferred    stream=   23.42 us/step generation=  0.386 ms heap=6144 correct=true
+B= 3 context=  3 group8_capture     stream=   26.68 us/step generation=  0.432 ms heap=6144 correct=true
+B= 3 context=  3 group8_inferred    stream=   23.14 us/step generation=  0.377 ms heap=6144 correct=true
+Compiling and checking Config(batch=1, hidden=64, heads=4, layers=2, ffn=128, vocab=256, context=512, steps=16)...
+B= 1 context=512 sequential         stream=  177.95 us/step generation=  2.931 ms heap=45824 correct=true
+B= 1 context=512 capture            stream=  171.77 us/step generation=  2.799 ms heap=45824 correct=true
+B= 1 context=512 inferred           stream=  163.82 us/step generation=  2.672 ms heap=45824 correct=true
+B= 1 context=512 sequential_reuse   stream=  177.76 us/step generation=  2.940 ms heap=18944 correct=true
+B= 1 context=512 capture_reuse      stream=  172.14 us/step generation=  2.807 ms heap=18944 correct=true
+B= 1 context=512 inferred_reuse     stream=  164.03 us/step generation=  2.678 ms heap=18944 correct=true
+B= 1 context=512 batched_capture    stream=  170.60 us/step generation=  2.736 ms heap=18944 correct=true
+B= 1 context=512 batched_inferred   stream=  162.94 us/step generation=  2.613 ms heap=18944 correct=true
+B= 1 context=512 group2_capture     stream=  171.35 us/step generation=  2.768 ms heap=18944 correct=true
+B= 1 context=512 group2_inferred    stream=  163.35 us/step generation=  2.639 ms heap=18944 correct=true
+B= 1 context=512 group4_capture     stream=  170.90 us/step generation=  2.749 ms heap=18944 correct=true
+B= 1 context=512 group4_inferred    stream=  162.89 us/step generation=  2.621 ms heap=18944 correct=true
+B= 1 context=512 group8_capture     stream=  170.73 us/step generation=  2.741 ms heap=18944 correct=true
+B= 1 context=512 group8_inferred    stream=  162.77 us/step generation=  2.613 ms heap=18944 correct=true
+Compiling and checking Config(batch=1, hidden=256, heads=8, layers=2, ffn=512, vocab=2048, context=8, steps=16)...
+B= 1 context=  8 sequential         stream=  154.24 us/step generation=  2.542 ms heap=47360 correct=true
+B= 1 context=  8 capture            stream=  149.05 us/step generation=  2.434 ms heap=47360 correct=true
+B= 1 context=  8 inferred           stream=  122.55 us/step generation=  2.010 ms heap=47360 correct=true
+B= 1 context=  8 sequential_reuse   stream=  154.17 us/step generation=  2.543 ms heap=10240 correct=true
+B= 1 context=  8 capture_reuse      stream=  149.09 us/step generation=  2.436 ms heap=10240 correct=true
+B= 1 context=  8 inferred_reuse     stream=  122.50 us/step generation=  2.011 ms heap=10240 correct=true
+B= 1 context=  8 batched_capture    stream=  147.66 us/step generation=  2.376 ms heap=10240 correct=true
+B= 1 context=  8 batched_inferred   stream=  121.28 us/step generation=  1.952 ms heap=10240 correct=true
+B= 1 context=  8 group2_capture     stream=  148.07 us/step generation=  2.398 ms heap=10240 correct=true
+B= 1 context=  8 group2_inferred    stream=  121.43 us/step generation=  1.976 ms heap=10240 correct=true
+B= 1 context=  8 group4_capture     stream=  147.78 us/step generation=  2.380 ms heap=10240 correct=true
+B= 1 context=  8 group4_inferred    stream=  121.18 us/step generation=  1.955 ms heap=10240 correct=true
+B= 1 context=  8 group8_capture     stream=  147.63 us/step generation=  2.372 ms heap=10240 correct=true
+B= 1 context=  8 group8_inferred    stream=  121.18 us/step generation=  1.956 ms heap=10240 correct=true
+Compiling and checking Config(batch=1, hidden=64, heads=4, layers=8, ffn=128, vocab=256, context=8, steps=16)...
+B= 1 context=  8 sequential         stream=  230.98 us/step generation=  3.747 ms heap=54016 correct=true
+B= 1 context=  8 capture            stream=  194.53 us/step generation=  3.160 ms heap=54016 correct=true
+B= 1 context=  8 inferred           stream=  162.40 us/step generation=  2.645 ms heap=54016 correct=true
+B= 1 context=  8 sequential_reuse   stream=  229.86 us/step generation=  3.740 ms heap=3072 correct=true
+B= 1 context=  8 capture_reuse      stream=  194.44 us/step generation=  3.155 ms heap=3072 correct=true
+B= 1 context=  8 inferred_reuse     stream=  162.18 us/step generation=  2.645 ms heap=3072 correct=true
+B= 1 context=  8 batched_capture    stream=  193.01 us/step generation=  3.089 ms heap=3072 correct=true
+B= 1 context=  8 batched_inferred   stream=  161.34 us/step generation=  2.580 ms heap=3072 correct=true
+B= 1 context=  8 group2_capture     stream=  193.55 us/step generation=  3.120 ms heap=3072 correct=true
+B= 1 context=  8 group2_inferred    stream=  161.75 us/step generation=  2.611 ms heap=3072 correct=true
+B= 1 context=  8 group4_capture     stream=  193.04 us/step generation=  3.102 ms heap=3072 correct=true
+B= 1 context=  8 group4_inferred    stream=  161.29 us/step generation=  2.594 ms heap=3072 correct=true
+B= 1 context=  8 group8_capture     stream=  192.79 us/step generation=  3.093 ms heap=3072 correct=true
+B= 1 context=  8 group8_inferred    stream=  161.17 us/step generation=  2.584 ms heap=3072 correct=true
+Compiling and checking Config(batch=1, hidden=64, heads=4, layers=2, ffn=128, vocab=8192, context=8, steps=16)...
+B= 1 context=  8 sequential         stream=  215.90 us/step generation=  3.572 ms heap=14080 correct=true
+B= 1 context=  8 capture            stream=  209.70 us/step generation=  3.412 ms heap=14080 correct=true
+B= 1 context=  8 inferred           stream=  201.66 us/step generation=  3.286 ms heap=14080 correct=true
+B= 1 context=  8 sequential_reuse   stream=  215.77 us/step generation=  3.578 ms heap=3072 correct=true
+B= 1 context=  8 capture_reuse      stream=  209.69 us/step generation=  3.414 ms heap=3072 correct=true
+B= 1 context=  8 inferred_reuse     stream=  201.91 us/step generation=  3.287 ms heap=3072 correct=true
+B= 1 context=  8 batched_capture    stream=  208.31 us/step generation=  3.345 ms heap=3072 correct=true
+B= 1 context=  8 batched_inferred   stream=  200.41 us/step generation=  3.219 ms heap=3072 correct=true
+B= 1 context=  8 group2_capture     stream=  208.98 us/step generation=  3.379 ms heap=3072 correct=true
+B= 1 context=  8 group2_inferred    stream=  201.21 us/step generation=  3.250 ms heap=3072 correct=true
+B= 1 context=  8 group4_capture     stream=  208.58 us/step generation=  3.359 ms heap=3072 correct=true
+B= 1 context=  8 group4_inferred    stream=  200.67 us/step generation=  3.232 ms heap=3072 correct=true
+B= 1 context=  8 group8_capture     stream=  208.41 us/step generation=  3.350 ms heap=3072 correct=true
+B= 1 context=  8 group8_inferred    stream=  200.56 us/step generation=  3.224 ms heap=3072 correct=true
+Compiling and checking Config(batch=64, hidden=64, heads=4, layers=2, ffn=128, vocab=256, context=64, steps=16)...
+B=64 context= 64 sequential         stream=  102.02 us/step generation=  1.711 ms heap=1017088 correct=true
+B=64 context= 64 capture            stream=   95.94 us/step generation=  1.598 ms heap=1017088 correct=true
+B=64 context= 64 inferred           stream=   88.22 us/step generation=  1.471 ms heap=1017088 correct=true
+B=64 context= 64 sequential_reuse   stream=  101.77 us/step generation=  1.708 ms heap=294912 correct=true
+B=64 context= 64 capture_reuse      stream=   95.72 us/step generation=  1.592 ms heap=294912 correct=true
+B=64 context= 64 inferred_reuse     stream=   87.66 us/step generation=  1.465 ms heap=294912 correct=true
+B=64 context= 64 batched_capture    stream=   94.33 us/step generation=  1.525 ms heap=294912 correct=true
+B=64 context= 64 batched_inferred   stream=   86.59 us/step generation=  1.403 ms heap=294912 correct=true
+B=64 context= 64 group2_capture     stream=   94.75 us/step generation=  1.556 ms heap=294912 correct=true
+B=64 context= 64 group2_inferred    stream=   87.03 us/step generation=  1.433 ms heap=294912 correct=true
+B=64 context= 64 group4_capture     stream=   94.42 us/step generation=  1.538 ms heap=294912 correct=true
+B=64 context= 64 group4_inferred    stream=   86.63 us/step generation=  1.414 ms heap=294912 correct=true
+B=64 context= 64 group8_capture     stream=   94.29 us/step generation=  1.529 ms heap=294912 correct=true
+B=64 context= 64 group8_inferred    stream=   86.55 us/step generation=  1.404 ms heap=294912 correct=true
+Compiling and checking Config(batch=4, hidden=64, heads=4, layers=2, ffn=128, vocab=256, context=8, steps=16)...
+B= 4 context=  8 sequential         stream=   63.94 us/step generation=  1.111 ms heap=50432 correct=true
+B= 4 context=  8 capture            stream=   55.42 us/step generation=  0.936 ms heap=50432 correct=true
+B= 4 context=  8 inferred           stream=   47.38 us/step generation=  0.809 ms heap=50432 correct=true
+B= 4 context=  8 sequential_reuse   stream=   63.88 us/step generation=  1.101 ms heap=11264 correct=true
+B= 4 context=  8 capture_reuse      stream=   55.46 us/step generation=  0.935 ms heap=11264 correct=true
+B= 4 context=  8 inferred_reuse     stream=   47.38 us/step generation=  0.808 ms heap=11264 correct=true
+B= 4 context=  8 batched_capture    stream=   54.05 us/step generation=  0.868 ms heap=11264 correct=true
+B= 4 context=  8 batched_inferred   stream=   46.12 us/step generation=  0.740 ms heap=11264 correct=true
+B= 4 context=  8 group2_capture     stream=   54.87 us/step generation=  0.899 ms heap=11264 correct=true
+B= 4 context=  8 group2_inferred    stream=   46.67 us/step generation=  0.771 ms heap=11264 correct=true
+B= 4 context=  8 group4_capture     stream=   54.27 us/step generation=  0.880 ms heap=11264 correct=true
+B= 4 context=  8 group4_inferred    stream=   46.22 us/step generation=  0.753 ms heap=11264 correct=true
+B= 4 context=  8 group8_capture     stream=   54.10 us/step generation=  0.872 ms heap=11264 correct=true
+B= 4 context=  8 group8_inferred    stream=   46.16 us/step generation=  0.745 ms heap=11264 correct=true
+Compiling and checking Config(batch=4, hidden=256, heads=8, layers=2, ffn=512, vocab=2048, context=8, steps=16)...
+B= 4 context=  8 sequential         stream=  160.16 us/step generation=  2.638 ms heap=185600 correct=true
+B= 4 context=  8 capture            stream=  154.83 us/step generation=  2.534 ms heap=185600 correct=true
+B= 4 context=  8 inferred           stream=  129.14 us/step generation=  2.121 ms heap=185600 correct=true
+B= 4 context=  8 sequential_reuse   stream=  159.55 us/step generation=  2.636 ms heap=40960 correct=true
+B= 4 context=  8 capture_reuse      stream=  154.44 us/step generation=  2.527 ms heap=40960 correct=true
+B= 4 context=  8 inferred_reuse     stream=  128.60 us/step generation=  2.114 ms heap=40960 correct=true
+B= 4 context=  8 batched_capture    stream=  152.88 us/step generation=  2.460 ms heap=40960 correct=true
+B= 4 context=  8 batched_inferred   stream=  127.17 us/step generation=  2.049 ms heap=40960 correct=true
+B= 4 context=  8 group2_capture     stream=  153.52 us/step generation=  2.490 ms heap=40960 correct=true
+B= 4 context=  8 group2_inferred    stream=  127.57 us/step generation=  2.078 ms heap=40960 correct=true
+B= 4 context=  8 group4_capture     stream=  153.10 us/step generation=  2.472 ms heap=40960 correct=true
+B= 4 context=  8 group4_inferred    stream=  127.42 us/step generation=  2.061 ms heap=40960 correct=true
+B= 4 context=  8 group8_capture     stream=  152.97 us/step generation=  2.464 ms heap=40960 correct=true
+B= 4 context=  8 group8_inferred    stream=  127.22 us/step generation=  2.052 ms heap=40960 correct=true
+Saved benchmarks/decoder/results/exec-llvm/after.json and benchmarks/decoder/results/exec-llvm/after.md

@@ -16,6 +16,14 @@ add_custom_command(
 )
 add_custom_target(ckl-runtime-test-cubin DEPENDS "${runtime_cubin}")
 
+add_executable(ckl-nvidia-program-validation NvidiaProgramValidation.cpp)
+add_dependencies(ckl-nvidia-program-validation ckl-runtime-test-cubin)
+target_link_libraries(ckl-nvidia-program-validation PRIVATE CKLNvidiaRuntime)
+target_compile_options(ckl-nvidia-program-validation PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME ckl-nvidia-program
+  COMMAND ckl-nvidia-program-validation "${runtime_cubin}")
+set_tests_properties(ckl-nvidia-program PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(ckl-nvidia-runtime-validation NvidiaRuntimeValidation.cpp)
 add_dependencies(ckl-nvidia-runtime-validation ckl-runtime-test-cubin)
 target_link_libraries(ckl-nvidia-runtime-validation PRIVATE CKLNvidiaRuntime CUDA::cuda_driver)

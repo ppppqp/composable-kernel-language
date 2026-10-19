@@ -1,5 +1,6 @@
 add_mlir_library(CKLTransforms
   ExecutablePlan.cpp
+  ExecToLLVM.cpp
   CudaKernels.cpp
   PointwiseFusion.cpp
 
@@ -14,5 +15,6 @@ add_mlir_library(CKLTransforms
   MLIRMathDialect
   MLIRSCFDialect
   MLIRIR
+  MLIRLLVMDialect
   MLIRPass
 )

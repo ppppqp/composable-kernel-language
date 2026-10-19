@@ -41,7 +41,8 @@ CKL source: kernels + repeated programs
     -> inferred effects, aliases, and dependency graph
     -> memory planning and verified executable plan
     -> CKL device lowering + compiled CUBIN/HSACO artifacts
-    -> LLVM host JIT + CUDA executor (HIP runtime retained separately)
+    -> ckl_exec-to-LLVM lowering + Python-managed host JIT
+    -> CUDA executor (HIP runtime retained separately)
 ```
 
 Effect analysis runs while kernel bodies remain available. CKL owns argument packing, launch
@@ -123,7 +124,7 @@ bindings.
 Enable CUDA validation with `-DCKL_ENABLE_CUDA_RUNTIME=ON`. Combining it with MLIR enables
 the in-process `ckl-cuda-frontend-runtime` test, compiled directly from the Python example.
 `CKL_RUNTIME_TEST_ARCH` selects the SM architecture and
-`CKL_CUDA_HOST_COMPILER` selects the nvcc host compiler. See
+`CKL_CUDA_HOST_COMPILER` selects the nvcc host compiler (e.g. `-DCKL_CUDA_HOST_COMPILER=/usr/bin/g++-13`). See
 [CUDA compilation and execution](docs/cuda-backend.md) for setup and validation.
 
 Enable HIP validation with `-DCKL_ENABLE_HIP_RUNTIME=ON`. The host runtime requires

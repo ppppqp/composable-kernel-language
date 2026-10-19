@@ -1,6 +1,7 @@
 if(CKL_ENABLE_CUDA_RUNTIME)
   add_library(CKLNvidiaRuntime
     NvidiaRuntime.cpp
+    NvidiaProgram.cpp
   )
   target_include_directories(CKLNvidiaRuntime PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>

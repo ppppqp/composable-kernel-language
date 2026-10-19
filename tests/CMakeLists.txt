@@ -35,6 +35,9 @@ add_test(
 )
 
 if(CKL_ENABLE_MLIR)
+  add_test(NAME ckl-exec-to-llvm
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/MLIR/test_exec_to_llvm.py
+      $<TARGET_FILE:ckl-opt>)
   add_test(
     NAME ckl-mlir-analysis
     COMMAND ${CMAKE_COMMAND} -E env

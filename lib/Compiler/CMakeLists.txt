@@ -6,14 +6,10 @@ if(NOT nanobind_status EQUAL 0)
   message(FATAL_ERROR "Install nanobind in ${Python_EXECUTABLE}'s environment")
 endif()
 find_package(nanobind CONFIG REQUIRED)
-nanobind_add_module(CKLCompiler NB_STATIC NOMINSIZE Compiler.cpp)
+nanobind_add_module(CKLCompiler NB_STATIC NOMINSIZE NativeBindings.cpp RuntimeBindings.cpp)
 set_target_properties(CKLCompiler PROPERTIES
   OUTPUT_NAME "_ckl_native"
   LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/python/ckl")
-target_link_libraries(CKLCompiler PRIVATE
-  CKLTransforms CKLAnalysis CKLDialect CKLExecDialect
-  MLIRRegisterAllPasses MLIRRegisterAllDialects MLIRRegisterAllExtensions
-  MLIRToLLVMIRTranslationRegistration MLIRExecutionEngine MLIRParser)
 if(CKL_ENABLE_CUDA_RUNTIME)
   target_compile_definitions(CKLCompiler PRIVATE CKL_HAS_CUDA_RUNTIME=1)
   target_link_libraries(CKLCompiler PRIVATE CKLNvidiaRuntime)
@@ -32,8 +28,19 @@ if(NOT ckl_mlir_python_status EQUAL 0)
   message(FATAL_ERROR "MLIR Python bindings unavailable; set CKL_MLIR_PYTHON_PATH")
 endif()
 
-# A static LLVM build may also be embedded in MLIR's Python CAPI library.
-# Keep our archive symbols private so their registries cannot interpose each other.
+# Python and CKL must use one MLIR implementation and process-wide pass registry.
+# Put the Python CAPI library before transitive static MLIR archives, so the
+# extension resolves upstream symbols there instead of embedding a second copy.
+find_library(CKL_MLIR_PYTHON_CAPI NAMES MLIRPythonCAPI
+  PATHS "${CKL_MLIR_PYTHON_PATH}/mlir/_mlir_libs" NO_DEFAULT_PATH REQUIRED)
+target_link_libraries(CKLCompiler PRIVATE
+  "${CKL_MLIR_PYTHON_CAPI}"
+  CKLTransforms CKLAnalysis CKLDialect CKLExecDialect
+  MLIRRegisterAllDialects MLIRRegisterAllExtensions
+  MLIRToLLVMIRTranslationRegistration)
+
+# CKL's static archive symbols remain private; upstream MLIR symbols come from
+# the shared Python CAPI library above.
 if(UNIX AND NOT APPLE)
   target_link_options(CKLCompiler PRIVATE "LINKER:--exclude-libs,ALL")
 endif()

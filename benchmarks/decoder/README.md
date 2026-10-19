@@ -168,6 +168,10 @@ python benchmarks/decoder/compare.py before.json after.json --output comparison.
 
 ## Findings and limits
 
+The [Python compiler and executable-to-LLVM migration report](results/exec-llvm/README.md)
+records a matched correctness/performance comparison for that implementation change, including
+repeated compilation and binding costs.
+
 - Inferred graphs are **1.16–1.38x** faster than native sequential launches and **1.10–1.18x**
   faster than single-stream capture with identical unreused storage and kernels.
 - Reuse reduces temporary heap bytes **71–78%**. Timing changes are small/mixed; this establishes

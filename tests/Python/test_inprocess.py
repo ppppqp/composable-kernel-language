@@ -1,4 +1,4 @@
-"""Exercise the native compiler without a GPU."""
+"""Exercise Python-driven in-process MLIR compilation without a GPU."""
 from dataclasses import replace
 from contextlib import chdir
 import os
@@ -44,6 +44,12 @@ class InProcessTest(unittest.TestCase):
             with self.subTest(target=target), self.assertRaises(ValueError):
                 self.lowered.compile(target=target)
 
+    def test_compilation_rejects_mismatched_python_and_ir_signatures(self):
+        changed = replace(self.lowered, mlir=self.lowered.mlir.replace(
+            "memref<257xf32>", "memref<4xf32>"))
+        with self.assertRaisesRegex(RuntimeError, "does not match the Python signature"):
+            changed.compile(target=self.target, fuse_pointwise=False)
+
     def test_guarded_ir_requires_original_source(self):
         fused = self.lowered.analyze("--ckl-fuse-pointwise")
         with self.assertRaisesRegex(RuntimeError, "not pre-fused guarded IR"):
@@ -64,6 +70,9 @@ class InProcessTest(unittest.TestCase):
         self.assertIn("@ckl_entry", compiled.host_ir)
         self.assertIn("@ckl.binary", compiled.host_ir)
         self.assertIn("call void @ckl_argument_value", compiled.host_ir)
+        self.assertIn("llvm.func @ckl_entry", compiled.host_mlir)
+        self.assertIn("llvm.call @ckl_argument_value", compiled.host_mlir)
+        self.assertNotIn("ckl_exec.", compiled.host_mlir)
         self.assertIn('dependencies = array<i64: 1>', compiled.executable_ir)
         self.assertIn('"ckl_exec.heap"', compiled.executable_ir)
         self.assertIn("gpu.binary", compiled.device_ir)

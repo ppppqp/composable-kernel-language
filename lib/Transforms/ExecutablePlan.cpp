@@ -171,4 +171,7 @@ struct LowerGraphToExecPass : public PassWrapper<LowerGraphToExecPass, Operation
 
 } // namespace
 
-void mlir::ckl::registerCKLExecutablePlanPasses() { PassRegistration<LowerGraphToExecPass>(); }
+void mlir::ckl::registerCKLExecutablePlanPasses() {
+  PassRegistration<LowerGraphToExecPass>();
+  registerCKLExecToLLVMPass();
+}

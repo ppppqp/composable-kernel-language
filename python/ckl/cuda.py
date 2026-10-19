@@ -63,7 +63,7 @@ def _native():
 
 
 class _ContextManager(AbstractContextManager):
-    """Explicit scopes for resources whose storage is owned by native C++ objects."""
+    """Explicit scopes for compiled state and native runtime resources."""
 
     _resource = None
 
@@ -168,9 +168,10 @@ class CompiledProgram(_ContextManager):
             raise ValueError("invalid CUDA chip or features")
         self.signature, self.target = program.signature, target
         self._module = _native()
-        toolkit = str(Path(target.toolkit_root).resolve()) if target.toolkit_root else ""
-        self._resource = self._module.compile(
-            program.mlir, target.chip, target.features, toolkit, fuse_pointwise, reuse_storage
+        from ._jit import compile_program
+
+        self._resource = compile_program(
+            program, target, self._module, fusion=fuse_pointwise, reuse_storage=reuse_storage
         )
 
     @property
@@ -188,6 +189,11 @@ class CompiledProgram(_ContextManager):
     @property
     def host_ir(self):
         return self._native_resource.ir(3)
+
+    @property
+    def host_mlir(self):
+        """LLVM dialect module produced by ckl-lower-exec-to-llvm."""
+        return self._native_resource.ir(4)
 
     def bind(self, *arguments, device: Device | None = None) -> Invocation:
         parameters = self.signature.runtime
@@ -227,7 +233,7 @@ class CompiledProgram(_ContextManager):
                     if not math.isfinite(rounded):
                         raise ValueError(f"{parameter.name} overflows {parameter.dtype.name}")
                 packed.append(value)
-        resource = self._module.bind(self._native_resource, device._native_resource, packed)
+        resource = self._module.bind(self._native_resource.native, device._native_resource, packed)
         return Invocation(self, device, arguments, resource)
 
     def run(self, *arguments, graph=False, device=None) -> Invocation:

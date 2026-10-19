@@ -13,6 +13,7 @@ CKL source
     -> dispatch dependency graph with provenance
     -> resource lifetimes and memory plan
     -> verified ckl_exec plan + CKL-generated device artifacts
+    -> ckl-lower-exec-to-llvm (MLIR LLVM dialect)
     -> in-process LLVM host JIT with embedded device code
     -> CUDA executor (HIP runtime retained separately)
 ```
@@ -56,8 +57,10 @@ unsupported resources receive an unavailable reason rather than an assumed size.
 
 `ckl-lower-graph-to-exec` converts analyzed graphs to verified `ckl_exec.plan` operations with heaps,
 resource slices, launch metadata, CKL backend ABI identities, physical argument slots, and reduced
-dependencies. The native compiler consumes this executable IR and JIT-compiles an LLVM host
-entry point with the device binary embedded.
+dependencies. `ckl-lower-exec-to-llvm` lowers a dedicated host module containing the executable
+plan, its source signature, and embedded device bytes to the LLVM dialect. Upstream translation
+and the native execution engine JIT-compile its host entry point. See
+[host lowering](cuda-backend.md#host-lowering) for the pass interface and inspection APIs.
 
 The current static subset requires unconditional host-entry-block dispatches. Conditional or
 repeated host nodes are rejected until executable IR can represent predicates and trip counts.
