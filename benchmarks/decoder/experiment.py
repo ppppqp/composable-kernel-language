@@ -2,7 +2,6 @@
 """Independent-request measurements and warmed, correctness-checked profiler ranges."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-import ctypes
 from dataclasses import asdict
 import hashlib
 import json
@@ -46,7 +45,7 @@ def prepare(device, target, config, requests, seed, reuse):
         shared_readonly_weights=True, independent_prompt_seeds=list(range(seed, seed + requests)),
         target=target.cache_identity(), symbols=symbols, plan=plan_stats(program.executable_ir),
         kernel_ir_sha256=hashlib.sha256(program.prepared_ir.encode()).hexdigest(),
-        native_sha256=hashlib.sha256(Path(device._lib._name).read_bytes()).hexdigest(),
+        native_sha256=hashlib.sha256(device.native_library.read_bytes()).hexdigest(),
         source_hashes={name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
                        for name in ("experiment.py", "run.py", "workloads.py", "reference.py")})
 
@@ -56,7 +55,7 @@ def burst(invocations, config, mode, group, parallel, executor):
         return bound.benchmark(iterations=config.steps // group, mode=mode, batch_size=group)
     if parallel:
         # Each invocation owns a stream, all mutable state, and its scratch heap.
-        # CDLL releases the GIL. No Python work occurs between native step submissions.
+        # The nanobind benchmark call releases the GIL. No Python work occurs between native step submissions.
         barrier = threading.Barrier(len(invocations) + 1)
         def worker(bound):
             barrier.wait(timeout=30)
@@ -115,17 +114,13 @@ def main():
                 verify()
         if args.profile:
             reset()
-            driver = ctypes.CDLL("libcuda.so.1")
-            for name in ("cuProfilerStart", "cuProfilerStop"):
-                getattr(driver, name).argtypes = []
-                getattr(driver, name).restype = ctypes.c_int
-            if driver.cuProfilerStart() != 0:
-                raise RuntimeError("cuProfilerStart failed")
+            from ckl.cuda import _native
+            driver = _native()
+            driver.profiler_start()
             try:
                 elapsed, timings = burst(invocations, config, args.mode, args.group, args.parallel, executor)
             finally:
-                if driver.cuProfilerStop() != 0:
-                    raise RuntimeError("cuProfilerStop failed")
+                driver.profiler_stop()
             data.update(mode=args.mode, group=args.group, parallel=args.parallel,
                         wall_ms=elapsed, native_timings=timings, max_abs_error=verify())
         else:

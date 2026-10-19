@@ -1,3 +1,7 @@
+if(CKL_ENABLE_MLIR)
+  # The extension and its tests must use the same Python ABI.
+  set(Python3_EXECUTABLE "${Python_EXECUTABLE}")
+endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 add_executable(ckl-memory-planner-test Core/MemoryPlannerTest.cpp)
@@ -12,7 +16,7 @@ target_compile_features(ckl-execution-plan-test PRIVATE cxx_std_17)
 target_compile_options(ckl-execution-plan-test PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME ckl-execution-plan COMMAND ckl-execution-plan-test)
 
-set(ckl_python_test_environment "PYTHONPATH=${PROJECT_SOURCE_DIR}/python")
+set(ckl_python_test_environment "PYTHONPATH=${PROJECT_SOURCE_DIR}/python:${CKL_MLIR_PYTHON_PATH}:$ENV{PYTHONPATH}")
 if(CKL_ENABLE_MLIR)
   list(APPEND ckl_python_test_environment "CKL_OPT=$<TARGET_FILE:ckl-opt>")
   list(APPEND ckl_python_test_environment "CKL_NATIVE_LIBRARY=$<TARGET_FILE:CKLCompiler>")

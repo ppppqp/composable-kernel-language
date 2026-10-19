@@ -1,4 +1,4 @@
-"""Exercise the native compiler without a GPU or MLIR Python bindings."""
+"""Exercise the native compiler without a GPU."""
 from dataclasses import replace
 from contextlib import chdir
 import os

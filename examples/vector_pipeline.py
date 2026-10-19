@@ -1,4 +1,5 @@
-"""Lower a two-kernel program without a GPU or MLIR Python bindings."""
+"""Lower a two-kernel program with MLIR Python bindings and no GPU."""
+
 from __future__ import annotations
 
 import ckl
@@ -8,6 +9,7 @@ Vector = ckl.Buffer[ckl.f32, (N,)]
 
 
 @ckl.kernel
+# a kernel describes a device computation
 def update(src: Vector, dst: Vector, bias: ckl.f32) -> None:
     i = ckl.global_id(0)
     if i < src.shape[0]:
@@ -15,6 +17,7 @@ def update(src: Vector, dst: Vector, bias: ckl.f32) -> None:
 
 
 @ckl.program
+# a program describes allocation and composition.
 def step(src: Vector, dst: Vector, bias: ckl.f32) -> None:
     temporary = ckl.empty_like(src)
     grid = (ckl.cdiv(src.shape[0], 256),)
@@ -24,11 +27,13 @@ def step(src: Vector, dst: Vector, bias: ckl.f32) -> None:
 
 
 def lower():
-    return step.lower(signature={
-        "src": ckl.BufferSpec(shape=(257,), dtype=ckl.f32),
-        "dst": ckl.BufferSpec(shape=(257,), dtype=ckl.f32),
-        "bias": ckl.f32,
-    })
+    return step.lower(
+        signature={
+            "src": ckl.BufferSpec(shape=(257,), dtype=ckl.f32),
+            "dst": ckl.BufferSpec(shape=(257,), dtype=ckl.f32),
+            "bias": ckl.f32,
+        }
+    )
 
 
 if __name__ == "__main__":

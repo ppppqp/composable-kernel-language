@@ -11,31 +11,30 @@ from pathlib import Path
 import ckl
 from vector_pipeline import lower  # examples/vector_pipeline.py
 
-program = lower().compile(
+with lower().compile(
     target=ckl.NVIDIATarget("sm_120", "+ptx87", Path("/path/to/cuda")),
-)
-device = ckl.Device()
-spec = ckl.BufferSpec((257,), ckl.f32)
-src, dst = device.empty(spec), device.empty(spec)
-src.copy_from_host(array("f", range(257)))
-
-program.run(src, dst, 0.125)
-result = array("f", [0.] * 257)
-dst.copy_to_host(result)  # result[i] == i + 0.25
-
-# Bind once to reuse temporary storage and a lazily instantiated CUDA graph.
-invocation = program.bind(src, dst, 0.125)
-invocation.run(graph=True)
-invocation.run(graph=True)
+) as program, ckl.Device() as device:
+    spec = ckl.BufferSpec((257,), ckl.f32)
+    with device.empty(spec) as src, device.empty(spec) as dst:
+        src.copy_from_host(array("f", range(257)))
+        with program.bind(src, dst, 0.125) as invocation:
+            invocation.run(graph=True)
+            invocation.run(graph=True)
+        result = array("f", [0.] * 257)
+        dst.copy_to_host(result)  # result[i] == i + 0.25
 ```
 
 ## Build and ownership
 
 Build with `CKL_ENABLE_MLIR=ON` against LLVM/MLIR with the native execution engine, NVPTX, and
-NVIDIA binary serialization enabled. This builds `libCKLCompiler.so` under `build/python/ckl`.
-Python finds it there or alongside the installed package; `CKL_NATIVE_LIBRARY` selects another
-build. `CKL_ENABLE_CUDA_RUNTIME=ON` enables execution. Compilation needs a compatible CUDA toolkit
-but no GPU and no MLIR Python bindings. Choose chip/PTX features supported by your toolkit and GPU.
+NVIDIA binary serialization enabled. Install `nanobind>=2.9,<3` in the selected Python
+3.12 environment, then configure CMake with `-DPython_EXECUTABLE=/path/to/python`.
+This builds `_ckl_native.<python-abi>.so` under `build/python/ckl`.
+Python imports that nanobind extension from there or alongside the installed package;
+`CKL_NATIVE_LIBRARY` optionally selects the extension file from another build. It no longer
+points to a C ABI library. Matching upstream MLIR Python bindings are required for the frontend;
+set `CKL_MLIR_PYTHON_PATH` for CMake tests and include it in `PYTHONPATH` for direct Python use. `CKL_ENABLE_CUDA_RUNTIME=ON` enables execution. Compilation needs a compatible CUDA toolkit
+but no GPU. Choose chip/PTX features supported by your toolkit and GPU.
 The toolkit path is passed directly to the serializer without changing process environment variables.
 Upstream serialization may invoke CUDA toolkit programs such as `ptxas` internally.
 
@@ -50,8 +49,17 @@ host buffers; subsequent nonblocking execution streams can safely consume those 
 A bound `Invocation` retains the compiled program, device, external buffers and their owners,
 temporary heaps, stream, and optional graph executable. Execution is synchronous. This makes
 `program.run(...)` safe as a convenience call; `bind(...).run(...)` supports repeated execution
-without reallocating heaps or recreating the graph. Scalar arguments are captured at binding;
-rebind to change them. Automatic tensor/framework conversion and borrowed streams are deferred.
+without reallocating heaps or recreating the graph.
+
+The four resource classes support `with`, idempotent `close()`, and `closed`. Closing a
+wrapper prevents further operations through that wrapper. Native shared ownership keeps resources
+alive for existing buffers and bound invocations, including imported CKL allocations whose owner
+wrapper has closed. Native destructors also provide cleanup when wrappers become unreachable;
+there is no Python `__del__` handle management. Compile, bind/JIT entry, execution, and benchmark
+bursts release the GIL while doing native work. Host copies use the Python buffer protocol.
+Invalid native arguments map to Python `ValueError`; compilation and driver failures map to `RuntimeError`.
+
+Scalar arguments are captured at binding; rebind to change them. Automatic tensor/framework conversion and borrowed streams are deferred.
 
 ## Execution modes, repetition, and storage ablations
 

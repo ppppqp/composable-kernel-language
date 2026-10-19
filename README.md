@@ -55,7 +55,8 @@ capture, manually scheduled streams, and a hand-written explicit graph remain th
 ## Build and test
 
 The default build requires CMake 3.20+, a C++17 compiler, and Python. The Python package requires
-Python 3.12. Native core tests do not require MLIR or a GPU toolkit.
+Python 3.12 and matching upstream MLIR Python bindings. Native compiler builds additionally
+require nanobind (`uv pip install nanobind`). Native core tests do not require MLIR or a GPU toolkit.
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
@@ -68,7 +69,8 @@ For the MLIR compiler tools, point `MLIR_DIR` at a compatible LLVM/MLIR build:
 ```bash
 cmake -S . -B build-mlir -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug -DCKL_ENABLE_MLIR=ON \
-  -DMLIR_DIR=/path/to/llvm-project/build/lib/cmake/mlir
+  -DMLIR_DIR=/path/to/llvm-project/build/lib/cmake/mlir \
+  -DPython_EXECUTABLE=/path/to/python-with-nanobind
 cmake --build build-mlir
 ctest --test-dir build-mlir --output-on-failure
 ```
@@ -90,14 +92,15 @@ Install and test the Python utilities:
 
 ```bash
 uv venv --python 3.12
-uv pip install -e .
+uv pip install -e ".[build,benchmark]"
+export PYTHONPATH=python:/path/to/llvm-project/build/tools/mlir/python_packages/mlir_core
 uv run python -m unittest discover -s tests/Python -p "test_*.py"
 ```
 
 Lower the [two-kernel Python example](examples/vector_pipeline.py) without GPU dependencies:
 
 ```bash
-PYTHONPATH=python python3 examples/vector_pipeline.py > /tmp/vector-pipeline.mlir
+uv run python examples/vector_pipeline.py > /tmp/vector-pipeline.mlir
 build-mlir/tools/ckl-opt/ckl-opt /tmp/vector-pipeline.mlir --ckl-build-graph
 ```
 
@@ -108,7 +111,8 @@ compilation supplies real device artifacts and packing metadata.
 
 Use `lowered.compile(target=ckl.NVIDIATarget(...))` to compile device code and its host launcher
 in process. The result supports `.run(...)` and `.bind(...).run(graph=True)`, with no generated
-files or MLIR Python bindings. See [CUDA compilation and execution](docs/cuda-backend.md).
+files. The frontend uses the matching upstream MLIR Python bindings, and the native
+interface uses nanobind. See [CUDA compilation and execution](docs/cuda-backend.md).
 
 `ckl.compiler.compile_module` accepts raw MLIR through a built `ckl-opt`. `NVIDIATarget` configures
 upstream GPU-to-NVVM compilation; embedded object extraction requires compatible MLIR Python

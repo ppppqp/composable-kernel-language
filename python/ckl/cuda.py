@@ -1,18 +1,22 @@
 """In-process CUDA compilation, host JIT, and execution."""
+
 from __future__ import annotations
 
-import ctypes as ct
+import importlib.util
 import math
 import os
-from pathlib import Path
 import re
+import struct
+import sys
+from contextlib import AbstractContextManager
+from importlib.machinery import EXTENSION_SUFFIXES
+from pathlib import Path
 
 from .compiler import NVIDIATarget
 from .types import BufferSpec, f32, f64, i32, i64
 
 _library = None
-_SCALARS = {f32: (ct.c_float, 4), f64: (ct.c_double, 8),
-            i32: (ct.c_int32, 4), i64: (ct.c_int64, 8)}
+_SCALARS = {f32: ("f", 4), f64: ("d", 8), i32: ("i", 4), i64: ("q", 8)}
 
 
 def _byte_count(spec):
@@ -30,126 +34,126 @@ def _native():
         return _library
     configured = os.environ.get("CKL_NATIVE_LIBRARY")
     root = Path(__file__).resolve().parents[2]
-    candidates = [Path(configured)] if configured else [
-        Path(__file__).with_name("libCKLCompiler.so"),
-        root / "build/python/ckl/libCKLCompiler.so",
-    ]
+    candidates = (
+        [Path(configured)]
+        if configured
+        else [
+            directory / ("_ckl_native" + suffix)
+            for directory in (Path(__file__).parent, root / "build/python/ckl")
+            for suffix in EXTENSION_SUFFIXES
+        ]
+    )
     path = next((p for p in candidates if p.is_file()), None)
     if path is None:
-        raise RuntimeError("CKL native compiler is not built; enable CKL_ENABLE_MLIR "
-                           "or set CKL_NATIVE_LIBRARY to libCKLCompiler.so")
-    lib = ct.CDLL(str(path.resolve()))
-    if not hasattr(lib, "ckl_compile_with_options"):
-        raise RuntimeError("CKL native library is outdated; rebuild CKLCompiler")
-    pointer, size = ct.c_void_p, ct.c_uint64
-
-    def declare(name, result, *arguments):
-        fn = getattr(lib, name)
-        fn.restype, fn.argtypes = result, arguments
-
-    declare("ckl_error", ct.c_char_p)
-    declare("ckl_compile", pointer, ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_int)
-    declare("ckl_compile_with_options", pointer, ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_int, ct.c_int)
-    declare("ckl_program_free", None, pointer)
-    declare("ckl_program_ir", ct.c_char_p, pointer, ct.c_uint)
-    declare("ckl_has_cuda_runtime", ct.c_int)
-    if lib.ckl_has_cuda_runtime():
-        declare("ckl_device_create", pointer)
-        declare("ckl_device_free", None, pointer)
-        declare("ckl_device_name", ct.c_char_p, pointer)
-        declare("ckl_buffer_create", pointer, pointer, size)
-        declare("ckl_buffer_import", pointer, pointer, size, size)
-        declare("ckl_buffer_free", None, pointer)
-        declare("ckl_buffer_address", size, pointer)
-        declare("ckl_buffer_size", size, pointer)
-        declare("ckl_buffer_copy", ct.c_int, pointer, pointer, size, ct.c_int)
-        declare("ckl_bind", pointer, pointer, pointer, pointer, size)
-        declare("ckl_invoke", ct.c_int, pointer, ct.c_int)
-        declare("ckl_invoke_plan", ct.c_int, pointer, ct.c_int, size)
-        declare("ckl_invocation_free", None, pointer)
-        declare("ckl_invocation_nodes", size, pointer)
-        declare("ckl_benchmark", ct.c_int, pointer, ct.c_int, size, ct.POINTER(ct.c_double))
-        declare("ckl_benchmark_plan", ct.c_int, pointer, ct.c_int, size, size, ct.POINTER(ct.c_double))
-    _library = lib
-    return lib
+        raise RuntimeError(
+            "CKL nanobind extension is not built; enable CKL_ENABLE_MLIR "
+            "or set CKL_NATIVE_LIBRARY to the built _ckl_native extension"
+        )
+    name = "ckl._ckl_native"
+    spec = importlib.util.spec_from_file_location(name, path.resolve())
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    _library = module
+    return module
 
 
-def _checked(lib, result):
-    if not result:
-        raise RuntimeError(lib.ckl_error().decode() or "CKL native operation failed")
-    return result
+class _ContextManager(AbstractContextManager):
+    """Explicit scopes for resources whose storage is owned by native C++ objects."""
+
+    _resource = None
+
+    @property
+    def _native_resource(self):
+        if self._resource is None:
+            raise RuntimeError(f"{type(self).__name__} is closed")
+        return self._resource
+
+    @property
+    def closed(self):
+        return self._resource is None
+
+    def close(self):
+        # Bound invocations retain their native dependencies independently.
+        self._resource = None
+
+    def __enter__(self):
+        _ = self._native_resource
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+        return False
 
 
-class _Owned:
-    _handle = None
-
-    def __del__(self):
-        if self._handle is not None:
-            getattr(self._lib, self._release)(self._handle)
-            self._handle = None
-
-
-class Device(_Owned):
+class Device(_ContextManager):
     """Own CUDA device 0's runtime. Construction initializes CUDA; compilation does not."""
-    _release = "ckl_device_free"
 
     def __init__(self):
-        self._lib = _native()
-        if not self._lib.ckl_has_cuda_runtime():
+        self._module = _native()
+        if not self._module.has_cuda_runtime:
             raise RuntimeError("rebuild CKL with CKL_ENABLE_CUDA_RUNTIME=ON to execute programs")
-        self._handle = _checked(self._lib, self._lib.ckl_device_create())
+        self._resource = self._module.Device()
+
+    @property
+    def native_library(self):
+        return Path(self._module.__file__).resolve()
 
     @property
     def name(self):
-        return _checked(self._lib, self._lib.ckl_device_name(self._handle)).decode()
+        return self._native_resource.name
 
     def empty(self, spec: BufferSpec) -> DeviceBuffer:
         size = _byte_count(spec)
-        handle = _checked(self._lib, self._lib.ckl_buffer_create(self._handle, size))
-        return DeviceBuffer(self, handle, spec)
+        resource = self._native_resource.empty(size)
+        return DeviceBuffer(self, resource, spec)
 
     def import_buffer(self, address: int, spec: BufferSpec, *, owner) -> DeviceBuffer:
         """Borrow device storage, retaining its Python owner for the buffer's lifetime."""
         size = _byte_count(spec)
         if type(address) is not int or not 0 < address < (1 << 64) or owner is None:
             raise ValueError("imported storage requires a valid address and a live owner")
-        handle = _checked(self._lib, self._lib.ckl_buffer_import(self._handle, address, size))
-        return DeviceBuffer(self, handle, spec, owner)
+        native_owner = owner._native_resource if isinstance(owner, DeviceBuffer) else owner
+        resource = self._native_resource.import_buffer(address, size, native_owner)
+        return DeviceBuffer(self, resource, spec, owner)
 
 
-class DeviceBuffer(_Owned):
-    _release = "ckl_buffer_free"
-
-    def __init__(self, device, handle, spec, owner=None):
+class DeviceBuffer(_ContextManager):
+    def __init__(self, device, resource, spec, owner=None):
         self.device, self.spec, self._owner = device, spec, owner
-        self._lib, self._handle = device._lib, handle
+        self._module, self._resource = device._module, resource
+
+    def close(self):
+        super().close()
+        self.device = self._owner = None
 
     @property
     def address(self):
-        return self._lib.ckl_buffer_address(self._handle)
+        return self._native_resource.address
 
     @property
     def nbytes(self):
-        return self._lib.ckl_buffer_size(self._handle)
+        return self._native_resource.nbytes
 
     def copy_from_host(self, source):
         view = memoryview(source).cast("B")
         if view.nbytes != self.nbytes:
             raise ValueError("host buffer byte count does not match device storage")
-        storage = ct.create_string_buffer(view.tobytes())
-        _checked(self._lib, self._lib.ckl_buffer_copy(self._handle, storage, self.nbytes, 1))
+        self._native_resource.copy_from_host(view)
 
     def copy_to_host(self, destination):
         view = memoryview(destination).cast("B")
         if view.readonly or view.nbytes != self.nbytes:
             raise ValueError("destination must be writable and match device storage byte count")
-        storage = (ct.c_byte * view.nbytes).from_buffer(view)
-        _checked(self._lib, self._lib.ckl_buffer_copy(self._handle, storage, self.nbytes, 0))
+        self._native_resource.copy_to_host(view)
 
 
-class CompiledProgram(_Owned):
+class CompiledProgram(_ContextManager):
     """Own specialized device code and its JIT-compiled host entry point."""
-    _release = "ckl_program_free"
 
     def __init__(self, program, target: NVIDIATarget, *, fuse_pointwise=True, reuse_storage=True):
         if type(fuse_pointwise) is not bool:
@@ -163,27 +167,27 @@ class CompiledProgram(_Owned):
         ):
             raise ValueError("invalid CUDA chip or features")
         self.signature, self.target = program.signature, target
-        self._lib = _native()
+        self._module = _native()
         toolkit = str(Path(target.toolkit_root).resolve()) if target.toolkit_root else ""
-        self._handle = _checked(self._lib, self._lib.ckl_compile_with_options(
-            program.mlir.encode(), target.chip.encode(), target.features.encode(), toolkit.encode(),
-            fuse_pointwise, reuse_storage))
+        self._resource = self._module.compile(
+            program.mlir, target.chip, target.features, toolkit, fuse_pointwise, reuse_storage
+        )
 
     @property
     def prepared_ir(self):
-        return self._lib.ckl_program_ir(self._handle, 0).decode()
+        return self._native_resource.ir(0)
 
     @property
     def executable_ir(self):
-        return self._lib.ckl_program_ir(self._handle, 1).decode()
+        return self._native_resource.ir(1)
 
     @property
     def device_ir(self):
-        return self._lib.ckl_program_ir(self._handle, 2).decode()
+        return self._native_resource.ir(2)
 
     @property
     def host_ir(self):
-        return self._lib.ckl_program_ir(self._handle, 3).decode()
+        return self._native_resource.ir(3)
 
     def bind(self, *arguments, device: Device | None = None) -> Invocation:
         parameters = self.signature.runtime
@@ -193,44 +197,53 @@ class CompiledProgram(_Owned):
         device = device or (buffers[0].device if buffers else None)
         if device is None:
             raise ValueError("pass a Device for programs without buffer arguments")
-        if device._lib is not self._lib:
+        if device._module is not self._module:
             raise ValueError("program and device must use the same native library")
-        storage, packed = [], (ct.c_void_p * len(arguments))()
+        packed = []
         for index, (parameter, value) in enumerate(zip(parameters, arguments)):
             if isinstance(parameter.dtype, BufferSpec):
                 if not isinstance(value, DeviceBuffer) or value.spec != parameter.dtype:
                     raise TypeError(f"{parameter.name} requires {parameter.dtype}")
                 if value.device is not device:
                     raise ValueError("all buffers must belong to the selected Device")
-                packed[index] = value._handle
+                packed.append(value._native_resource)
             else:
                 scalar, _ = _SCALARS[parameter.dtype]
                 if parameter.dtype in (i32, i64):
-                    width = ct.sizeof(scalar) * 8
-                    if type(value) is not int or not -(1 << (width - 1)) <= value < (1 << (width - 1)):
+                    width = _SCALARS[parameter.dtype][1] * 8
+                    if type(value) is not int or not -(1 << (width - 1)) <= value < (
+                        1 << (width - 1)
+                    ):
                         raise TypeError(f"{parameter.name} requires a {width}-bit integer")
                 elif type(value) not in (int, float) or not math.isfinite(float(value)):
                     raise TypeError(f"{parameter.name} requires a finite numeric value")
-                holder = scalar(value)
-                if parameter.dtype in (f32, f64) and not math.isfinite(holder.value):
-                    raise ValueError(f"{parameter.name} overflows {parameter.dtype.name}")
-                storage.append(holder)
-                packed[index] = ct.addressof(holder)
-        handle = _checked(self._lib, self._lib.ckl_bind(self._handle, device._handle,
-                                                      packed, len(arguments)))
-        return Invocation(self, device, arguments, handle)
+                if parameter.dtype in (f32, f64):
+                    try:
+                        rounded = struct.unpack(scalar, struct.pack(scalar, value))[0]
+                    except (OverflowError, struct.error):
+                        raise ValueError(
+                            f"{parameter.name} overflows {parameter.dtype.name}"
+                        ) from None
+                    if not math.isfinite(rounded):
+                        raise ValueError(f"{parameter.name} overflows {parameter.dtype.name}")
+                packed.append(value)
+        resource = self._module.bind(self._native_resource, device._native_resource, packed)
+        return Invocation(self, device, arguments, resource)
 
     def run(self, *arguments, graph=False, device=None) -> Invocation:
         return self.bind(*arguments, device=device).run(graph=graph)
 
 
-class Invocation(_Owned):
+class Invocation(_ContextManager):
     """A bound program, owning temporaries and a lazily instantiated CUDA graph."""
-    _release = "ckl_invocation_free"
 
-    def __init__(self, program, device, arguments, handle):
+    def __init__(self, program, device, arguments, resource):
         self.program, self.device, self.arguments = program, device, arguments
-        self._lib, self._handle = program._lib, handle
+        self._module, self._resource = program._module, resource
+
+    def close(self):
+        super().close()
+        self.program = self.device = self.arguments = None
 
     @staticmethod
     def _execution(graph, mode, batch_size):
@@ -247,13 +260,13 @@ class Invocation(_Owned):
         # Synchronous execution keeps Python owners and temporary heaps alive
         # through completion. Reusing an invocation reuses its graph and heaps.
         execution = self._execution(graph, mode, batch_size)
-        _checked(self._lib, self._lib.ckl_invoke_plan(self._handle, execution, batch_size))
+        self._native_resource.run(execution, batch_size)
         return self
 
     @property
     def node_count(self):
         """Actual bound topology, including any overlap-triggered fallback."""
-        return self._lib.ckl_invocation_nodes(self._handle)
+        return self._native_resource.node_count
 
     def benchmark(self, *, iterations=200, graph=False, mode=None, batch_size=1):
         """Measure iterations groups of batch_size programs; report time per program.
@@ -264,8 +277,6 @@ class Invocation(_Owned):
         """
         if type(iterations) is not int or not 0 < iterations < (1 << 64):
             raise ValueError("iterations must be a positive 64-bit count")
-        result = (ct.c_double * 3)()
         execution = self._execution(graph, mode, batch_size)
-        _checked(self._lib, self._lib.ckl_benchmark_plan(
-            self._handle, execution, iterations, batch_size, result))
-        return dict(stream_us=result[0], wall_us=result[1], graph_setup_ms=result[2])
+        result = self._native_resource.benchmark(execution, iterations, batch_size)
+        return {"stream_us": result[0], "wall_us": result[1], "graph_setup_ms": result[2]}

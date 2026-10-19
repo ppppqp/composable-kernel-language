@@ -68,16 +68,17 @@ Use a Release CKL build with CUDA runtime, NVPTX, and ExecutionEngine enabled:
 cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCKL_ENABLE_MLIR=ON -DCKL_ENABLE_CUDA_RUNTIME=ON \
   -DMLIR_DIR=/path/to/llvm/build/lib/cmake/mlir \
-  -DCUDAToolkit_ROOT=/path/to/cuda
+  -DCUDAToolkit_ROOT=/path/to/cuda \
+  -DPython_EXECUTABLE=/path/to/python-with-nanobind
 cmake --build build-bench --target CKLCompiler ckl-opt -j 8
 ```
 
-Only NumPy is required by this runner; there is no PyTorch, FlashInfer, or model-download dependency.
+The runner uses NumPy, matching upstream MLIR Python bindings, and the nanobind extension; there is no PyTorch, FlashInfer, or model-download dependency.
 
 ```bash
 cmake --build /tmp/ckl-standalone-bench --target CKLCompiler ckl-opt -j 8
-PYTHONPATH=python \
-CKL_NATIVE_LIBRARY=/tmp/ckl-standalone-bench/python/ckl/libCKLCompiler.so \
+PYTHONPATH=python:/path/to/mlir/python_packages/mlir_core \
+CKL_NATIVE_LIBRARY=/tmp/ckl-standalone-bench/python/ckl/_ckl_native.cpython-312-x86_64-linux-gnu.so \
 CUDA_CACHE_PATH=/tmp/ckl-decoder-cuda \
 /path/to/numpy-env/bin/python benchmarks/decoder/run.py \
   --toolkit /path/to/cuda --chip sm_120 \
@@ -103,7 +104,7 @@ The default six custom shapes remain available through `--cases`.
 The request experiment runs two, four, or eight independent invocations with shared read-only
 model weights and distinct prompts, tokens, positions, KV caches, histories, and scratch heaps.
 It compares serialized bursts with simultaneous native bursts on separate streams using a
-persistent Python thread pool; ctypes releases the GIL during each burst. Reported completion
+persistent Python thread pool; the nanobind benchmark call releases the GIL during each burst. Reported completion
 latency includes worker wakeup/barrier costs. This is an explicit concurrency experiment using
 isolated state, not compiler-inferred cross-request scheduling or continuous batching. Matched
 batch-four controls quantify the advantage of ordinary batching when requests can be batched.
@@ -153,6 +154,17 @@ exercises a zero-trip softmax maximum loop, greedy selection carries multiple sc
 and the awkward-size run covers partial blocks and a non-power-of-two vocabulary. Valid token
 IDs and `0 <= position < capacity` are kernel input preconditions. The runner ensures enough
 capacity for every reset sequence.
+
+## Binding migration validation
+
+The MLIR Python builder / nanobind migration has a matched before/after report in
+[results/nanobind/README.md](results/nanobind/README.md), including raw samples,
+plan invariants, frontend setup cost, and independent-request measurements.
+Compare future complete matrices with:
+
+```bash
+python benchmarks/decoder/compare.py before.json after.json --output comparison.md
+```
 
 ## Findings and limits
 

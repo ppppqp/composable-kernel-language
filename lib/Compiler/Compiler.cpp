@@ -1,22 +1,28 @@
-// In-process CKL compiler and host JIT. The C ABI keeps Python independent of
-// a particular MLIR Python package or Python extension binding framework.
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/array.h>
+#include <array>
+#include <cstring>
+
+// In-process CKL compiler and host JIT, exposed as typed nanobind objects.
 #include "ckl/Analysis/EffectAnalysis.h"
 #include "ckl/Dialect/CKL/IR/CKLDialect.h"
-#include "ckl/Dialect/Exec/IR/CKLExecOps.h"
 #include "ckl/Dialect/Exec/IR/CKLExecDialect.h"
+#include "ckl/Dialect/Exec/IR/CKLExecOps.h"
 #include "ckl/Transforms/CudaKernels.h"
 #include "ckl/Transforms/ExecutablePlan.h"
 #include "ckl/Transforms/PointwiseFusion.h"
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllExtensions.h"
 #include "mlir/InitAllPasses.h"
 #include "mlir/Parser/Parser.h"
-#include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "llvm/IR/IRBuilder.h"
@@ -34,19 +40,12 @@
 #ifdef CKL_HAS_CUDA_RUNTIME
 #include "ckl/Runtime/NvidiaRuntime.h"
 #include <cuda.h>
+#include <cudaProfiler.h>
 #endif
 
+namespace nb = nanobind;
 using namespace mlir;
 namespace {
-thread_local std::string lastError;
-
-template <typename F> auto protect(F action) -> decltype(action()) {
-  lastError.clear();
-  try { return action(); }
-  catch (const std::exception &error) { lastError = error.what(); }
-  return {};
-}
-
 void initialize() {
   static std::once_flag once;
   std::call_once(once, [] {
@@ -99,6 +98,7 @@ struct Program {
   Entry entry = nullptr;
   unsigned argumentCount = 0;
   std::vector<uint64_t> bufferBytes;
+  std::vector<std::string> scalarTypes;
   std::shared_ptr<Program> aliasFallback;
 #ifdef CKL_HAS_CUDA_RUNTIME
   std::mutex moduleMutex;
@@ -113,13 +113,17 @@ struct Device {
   NvidiaRuntime runtime;
   const uint64_t id = nextDeviceId++;
 };
-struct Buffer { Device *device; NvidiaBuffer buffer; };
+struct Buffer {
+  std::shared_ptr<Device> device;
+  NvidiaBuffer buffer;
+};
 struct Invocation {
   std::shared_ptr<Program> program;
-  Device *device;
+  std::shared_ptr<Device> device;
   NvidiaStream stream;
   NvidiaModule module;
   std::vector<NvidiaBuffer> heaps;
+  std::vector<std::shared_ptr<Buffer>> buffers;
   std::vector<uint64_t> resources;
   NvidiaPlan plan;
   KernelLaunch pending;
@@ -129,45 +133,54 @@ struct Invocation {
   std::map<std::pair<int, uint64_t>, NvidiaGraphExecutable> executionGraphs;
   std::mutex runMutex;
   std::string error;
-  Invocation(std::shared_ptr<Program> program, Device *device)
+  Invocation(std::shared_ptr<Program> program, std::shared_ptr<Device> device)
       : program(std::move(program)), device(device), stream(device->runtime.createStream()) {}
 };
 
 // Exceptions never unwind through JIT frames. Each callback records failure and
-// subsequent callbacks become no-ops; the C ABI reports the error after entry returns.
+// subsequent callbacks become no-ops; binding reports the error after entry returns.
 template <typename F> void callback(void *opaque, F action) {
   auto &frame = *static_cast<Invocation *>(opaque);
-  if (!frame.error.empty()) return;
-  try { action(frame); }
-  catch (const std::exception &error) { frame.error = error.what(); }
+  if (!frame.error.empty())
+    return;
+  try {
+    action(frame);
+  } catch (const std::exception &error) {
+    frame.error = error.what();
+  }
 }
 void begin(void *frame, const void *binary, uint64_t bytes) {
   callback(frame, [&](Invocation &f) {
     std::lock_guard<std::mutex> lock(f.program->moduleMutex);
     auto &module = f.program->loadedModules[f.device->id];
-    if (!module) module = f.device->runtime.loadCubin(binary, bytes);
+    if (!module)
+      module = f.device->runtime.loadCubin(binary, bytes);
     f.module = module;
   });
 }
 void heap(void *frame, uint64_t id, uint64_t bytes) {
   callback(frame, [&](Invocation &f) {
-    if (f.heaps.size() <= id) f.heaps.resize(id + 1);
+    if (f.heaps.size() <= id)
+      f.heaps.resize(id + 1);
     f.heaps[id] = f.device->runtime.allocate(bytes);
   });
 }
 void resource(void *frame, uint64_t id, uint64_t heapId, uint64_t offset, void *external) {
   callback(frame, [&](Invocation &f) {
-    if (f.resources.size() <= id) f.resources.resize(id + 1);
-    f.resources[id] = external ? *static_cast<uint64_t *>(external)
-                               : f.heaps.at(heapId).address() + offset;
+    if (f.resources.size() <= id)
+      f.resources.resize(id + 1);
+    f.resources[id] =
+        external ? *static_cast<uint64_t *>(external) : f.heaps.at(heapId).address() + offset;
   });
 }
-void kernel(void *frame, const char *name, uint64_t gx, uint64_t gy, uint64_t gz,
-            uint64_t bx, uint64_t by, uint64_t bz, uint64_t shared) {
+void kernel(void *frame, const char *name, uint64_t gx, uint64_t gy, uint64_t gz, uint64_t bx,
+            uint64_t by, uint64_t bz, uint64_t shared) {
   callback(frame, [&](Invocation &f) {
     f.pending = {f.module.function(name),
                  {unsigned(gx), unsigned(gy), unsigned(gz)},
-                 {unsigned(bx), unsigned(by), unsigned(bz)}, unsigned(shared), {}};
+                 {unsigned(bx), unsigned(by), unsigned(bz)},
+                 unsigned(shared),
+                 {}};
     f.dependencies.clear();
   });
 }
@@ -195,39 +208,42 @@ NvidiaGraphExecutable &executionGraph(Invocation &f, int mode, uint64_t batch) {
   auto &graph = f.executionGraphs[{mode, batch}];
   if (!graph) {
     NvidiaPlan plan = batch == 1 ? f.plan : f.plan.repeat(batch);
-    graph = mode == 2 ? f.device->runtime.capture(plan, f.stream)
-                      : f.device->runtime.instantiate(plan);
+    graph =
+        mode == 2 ? f.device->runtime.capture(plan, f.stream) : f.device->runtime.instantiate(plan);
   }
   return graph;
 }
 
 void execute(Invocation &f, int mode, uint64_t batch) {
-  if (mode) executionGraph(f, mode, batch).launch(f.stream);
-  else for (uint64_t i = 0; i < batch; ++i)
-    f.device->runtime.launchOrdinary(f.plan, f.stream);
+  if (mode)
+    executionGraph(f, mode, batch).launch(f.stream);
+  else
+    for (uint64_t i = 0; i < batch; ++i)
+      f.device->runtime.launchOrdinary(f.plan, f.stream);
 }
 #endif
 
-// Emit host LLVM directly from the verified executable plan. No generated C++,
-// external host compiler, binary extraction, or plan parsing at invocation time.
-std::unique_ptr<llvm::Module> buildHost(Program &program, ckl::exec::PlanOp plan,
-                                      StringRef binary, llvm::LLVMContext &context) {
+// Emit host LLVM directly from the verified executable plan.
+std::unique_ptr<llvm::Module> buildHost(Program &program, ckl::exec::PlanOp plan, StringRef binary,
+                                        llvm::LLVMContext &context) {
   auto module = std::make_unique<llvm::Module>("ckl.program", context);
   llvm::IRBuilder<> b(context);
   auto *ptr = b.getPtrTy();
   auto *i64 = b.getInt64Ty();
-  auto *function = llvm::Function::Create(
-      llvm::FunctionType::get(b.getVoidTy(), {ptr, ptr}, false),
-      llvm::GlobalValue::ExternalLinkage, "ckl_entry", module.get());
+  auto *function =
+      llvm::Function::Create(llvm::FunctionType::get(b.getVoidTy(), {ptr, ptr}, false),
+                             llvm::GlobalValue::ExternalLinkage, "ckl_entry", module.get());
   b.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", function));
   auto *frame = function->getArg(0);
   auto *arguments = function->getArg(1);
   auto number = [&](uint64_t value) { return b.getInt64(value); };
   auto call = [&](StringRef name, llvm::ArrayRef<llvm::Value *> values) {
+    // emit a call to a host runtime function with the given name and arguments
     llvm::SmallVector<llvm::Type *> types;
-    for (auto *value : values) types.push_back(value->getType());
-    auto callee = module->getOrInsertFunction(
-        name, llvm::FunctionType::get(b.getVoidTy(), types, false));
+    for (auto *value : values)
+      types.push_back(value->getType());
+    auto callee =
+        module->getOrInsertFunction(name, llvm::FunctionType::get(b.getVoidTy(), types, false));
     b.CreateCall(callee, values);
   };
   auto arg = [&](StringRef name) -> llvm::Value * {
@@ -237,8 +253,8 @@ std::unique_ptr<llvm::Module> buildHost(Program &program, ckl::exec::PlanOp plan
       throw std::runtime_error("host JIT requires original program argument bindings");
     return b.CreateLoad(ptr, b.CreateConstGEP1_64(ptr, arguments, index));
   };
-  call("ckl_begin", {frame, b.CreateGlobalString(binary, "ckl.binary", 0, module.get()),
-                     number(binary.size())});
+  call("ckl_begin",
+       {frame, b.CreateGlobalString(binary, "ckl.binary", 0, module.get()), number(binary.size())});
   std::map<std::string, uint64_t> resources;
   for (auto heap : plan.getBody().front().getOps<ckl::exec::HeapOp>())
     call("ckl_heap", {frame, number(heap.getId()), number(heap.getBytes())});
@@ -246,18 +262,19 @@ std::unique_ptr<llvm::Module> buildHost(Program &program, ckl::exec::PlanOp plan
     uint64_t id = resources.size();
     resources.emplace(resource.getName().str(), id);
     bool external = resource.getKind() == "external";
-    call("ckl_resource", {frame, number(id),
-         number(external ? 0 : resource.getHeapAttr().getInt()),
-         number(external ? 0 : resource.getOffsetAttr().getInt()),
-         external ? arg(resource.getName()) : llvm::ConstantPointerNull::get(ptr)});
+    call("ckl_resource",
+         {frame, number(id), number(external ? 0 : resource.getHeapAttr().getInt()),
+          number(external ? 0 : resource.getOffsetAttr().getInt()),
+          external ? arg(resource.getName()) : llvm::ConstantPointerNull::get(ptr)});
   }
   for (auto kernel : plan.getBody().front().getOps<ckl::exec::KernelOp>()) {
     if (kernel.getAbi() != "cuda.direct" || kernel.getDevice() != "cuda:0")
       throw std::runtime_error("host JIT requires cuda.direct on logical device 0");
     auto grid = kernel.getGrid(), block = kernel.getBlock();
-    call("ckl_kernel", {frame, b.CreateGlobalString(kernel.getKernel().getLeafReference().getValue()),
-         number(grid[0]), number(grid[1]), number(grid[2]), number(block[0]),
-         number(block[1]), number(block[2]), number(kernel.getSharedMemory())});
+    call("ckl_kernel",
+         {frame, b.CreateGlobalString(kernel.getKernel().getLeafReference().getValue()),
+          number(grid[0]), number(grid[1]), number(grid[2]), number(block[0]), number(block[1]),
+          number(block[2]), number(kernel.getSharedMemory())});
     SmallVector<DictionaryAttr> slots(kernel.getArguments().getAsRange<DictionaryAttr>());
     llvm::sort(slots, [](DictionaryAttr a, DictionaryAttr b) {
       return a.getAs<IntegerAttr>("slot").getInt() < b.getAs<IntegerAttr>("slot").getInt();
@@ -265,8 +282,8 @@ std::unique_ptr<llvm::Module> buildHost(Program &program, ckl::exec::PlanOp plan
     for (auto slot : slots) {
       StringRef kind = slot.getAs<StringAttr>("kind").getValue();
       if (kind == "resource") {
-        call("ckl_argument_resource", {frame, number(resources.at(
-            slot.getAs<StringAttr>("resource").getValue().str()))});
+        call("ckl_argument_resource",
+             {frame, number(resources.at(slot.getAs<StringAttr>("resource").getValue().str()))});
         continue;
       }
       uint64_t bytes = 0;
@@ -288,7 +305,8 @@ std::unique_ptr<llvm::Module> buildHost(Program &program, ckl::exec::PlanOp plan
             bits = cast<FloatAttr>(slot.get("value")).getValue().bitcastToAPInt().getZExtValue();
           std::string data(bytes, '\0');
           // NVPTX and supported host platforms use little-endian scalar ABI.
-          for (uint64_t i = 0; i < bytes; ++i) data[i] = (bits >> (8 * i)) & 255;
+          for (uint64_t i = 0; i < bytes; ++i)
+            data[i] = (bits >> (8 * i)) & 255;
           value = b.CreateGlobalString(data);
         } else {
           throw std::runtime_error("unsupported host argument binding");
@@ -308,9 +326,8 @@ std::unique_ptr<llvm::Module> buildHost(Program &program, ckl::exec::PlanOp plan
   return module;
 }
 
-std::shared_ptr<Program> compile(const char *source, const char *chip,
-                               const char *features, const char *toolkit, bool fusion,
-                               bool reuseStorage = true) {
+std::shared_ptr<Program> compile(const char *source, const char *chip, const char *features,
+                                 const char *toolkit, bool fusion, bool reuseStorage = true) {
   initialize();
   auto program = std::make_shared<Program>();
   DialectRegistry registry;
@@ -327,41 +344,56 @@ std::shared_ptr<Program> compile(const char *source, const char *chip,
   });
   try {
     program->source = parseSourceString<ModuleOp>(source, &program->context);
-    if (!program->source) throw std::runtime_error("invalid CKL source module");
+    if (!program->source)
+      throw std::runtime_error("invalid CKL source module");
     if ((*program->source)->hasAttr("ckl.fusion.requires_disjoint"))
       throw std::runtime_error("compile original source, not pre-fused guarded IR");
-    if (fusion) pipeline(*program->source, "ckl-fuse-pointwise");
+    if (fusion)
+      pipeline(*program->source, "ckl-fuse-pointwise");
     bool needsFallback = (*program->source)->hasAttr("ckl.fusion.requires_disjoint");
-    pipeline(*program->source, "ckl-prepare-cuda{chip=" + std::string(chip) +
-                              " features=" + features + "}");
+    pipeline(*program->source,
+             "ckl-prepare-cuda{chip=" + std::string(chip) + " features=" + features + "}");
     program->preparedIR = print(*program->source);
     program->executable = cast<ModuleOp>((*program->source)->clone());
     pipeline(*program->executable, std::string("ckl-build-graph{reuse-storage=") +
-             (reuseStorage ? "true" : "false") + "},ckl-lower-graph-to-exec");
+                                       (reuseStorage ? "true" : "false") +
+                                       "},ckl-lower-graph-to-exec");
     program->executableIR = print(*program->executable);
     SmallVector<ckl::exec::PlanOp> plans(program->executable->getOps<ckl::exec::PlanOp>());
-    if (plans.size() != 1) throw std::runtime_error("compilation requires exactly one host program");
-    auto function = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(plans[0], plans[0].getSource());
+    if (plans.size() != 1)
+      throw std::runtime_error("compilation requires exactly one host program");
+    auto function =
+        SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(plans[0], plans[0].getSource());
     program->argumentCount = function.getNumArguments();
     for (Type type : function.getArgumentTypes()) {
       uint64_t bytes = 0;
       if (auto buffer = dyn_cast<MemRefType>(type))
         bytes = buffer.getNumElements() * (buffer.getElementTypeBitWidth() / 8);
       program->bufferBytes.push_back(bytes);
+      std::string scalarType;
+      if (!bytes) {
+        llvm::raw_string_ostream out(scalarType);
+        type.print(out);
+      }
+      program->scalarTypes.push_back(std::move(scalarType));
     }
     program->device = cast<ModuleOp>((*program->source)->clone());
-    std::string devicePipeline = "ckl-lower-kernels-to-gpu,gpu-lower-to-nvvm-pipeline{cubin-chip=" +
-        std::string(chip) + " cubin-features=" + features +
+    std::string devicePipeline =
+        "ckl-lower-kernels-to-gpu,gpu-lower-to-nvvm-pipeline{cubin-chip=" + std::string(chip) +
+        " cubin-features=" + features +
         " cubin-format=bin index-bitwidth=64 opt-level=3 kernel-bare-ptr-calling-convention=true}";
     pipeline(*program->device, devicePipeline, toolkit);
     program->deviceIR = print(*program->device);
     SmallVector<gpu::ObjectAttr> objects;
     program->device->walk([&](gpu::BinaryOp binary) {
-      for (auto object : binary.getObjects()) objects.push_back(cast<gpu::ObjectAttr>(object));
+      for (auto object : binary.getObjects())
+        objects.push_back(cast<gpu::ObjectAttr>(object));
     });
     if (objects.size() != 1 || objects[0].getFormat() != gpu::CompilationTarget::Binary ||
         !isa<NVVM::NVVMTargetAttr>(objects[0].getTarget()) ||
-        !objects[0].getObject().getValue().starts_with(StringRef("\x7f" "ELF", 4)))
+        !objects[0].getObject().getValue().starts_with(StringRef("\x7f"
+                                                                 "ELF",
+                                                                 4)))
       throw std::runtime_error("expected exactly one NVIDIA ELF binary object");
     auto builder = [&](Operation *, llvm::LLVMContext &context) {
       return buildHost(*program, plans[0], objects[0].getObject().getValue(), context);
@@ -369,201 +401,207 @@ std::shared_ptr<Program> compile(const char *source, const char *chip,
     ExecutionEngineOptions options;
     options.llvmModuleBuilder = builder;
     auto engine = ExecutionEngine::create(*program->executable, options);
-    if (!engine) throw std::runtime_error(llvm::toString(engine.takeError()));
+    if (!engine)
+      throw std::runtime_error(llvm::toString(engine.takeError()));
     program->engine = std::move(*engine);
 #ifdef CKL_HAS_CUDA_RUNTIME
     program->engine->registerSymbols([&](llvm::orc::MangleAndInterner mangle) {
       llvm::orc::SymbolMap symbols;
       auto add = [&](const char *name, auto pointer) {
-        symbols[mangle(name)] = {llvm::orc::ExecutorAddr::fromPtr(pointer), llvm::JITSymbolFlags::Exported};
+        symbols[mangle(name)] = {llvm::orc::ExecutorAddr::fromPtr(pointer),
+                                 llvm::JITSymbolFlags::Exported};
       };
-      add("ckl_begin", &begin); add("ckl_heap", &heap); add("ckl_resource", &resource);
-      add("ckl_kernel", &kernel); add("ckl_argument_resource", &argumentResource);
-      add("ckl_argument_value", &argumentValue); add("ckl_dependency", &dependency);
+      add("ckl_begin", &begin);
+      add("ckl_heap", &heap);
+      add("ckl_resource", &resource);
+      add("ckl_kernel", &kernel);
+      add("ckl_argument_resource", &argumentResource);
+      add("ckl_argument_value", &argumentValue);
+      add("ckl_dependency", &dependency);
       add("ckl_commit", &commit);
       return symbols;
     });
     auto entry = program->engine->lookup("ckl_entry");
-    if (!entry) throw std::runtime_error(llvm::toString(entry.takeError()));
+    if (!entry)
+      throw std::runtime_error(llvm::toString(entry.takeError()));
     program->entry = reinterpret_cast<Program::Entry>(*entry);
 #endif
-    if (needsFallback) program->aliasFallback = compile(source, chip, features, toolkit, false, reuseStorage);
+    if (needsFallback)
+      program->aliasFallback = compile(source, chip, features, toolkit, false, reuseStorage);
     return program;
   } catch (const std::exception &error) {
     throw std::runtime_error(std::string(error.what()) + "\n" + program->diagnostics);
   }
 }
-using Handle = std::shared_ptr<Program>;
+#ifdef CKL_HAS_CUDA_RUNTIME
+std::shared_ptr<Invocation> bindProgram(std::shared_ptr<Program> p, std::shared_ptr<Device> d,
+                                      nb::sequence arguments) {
+  const auto count = nb::len(arguments);
+  if (count != p->argumentCount)
+    throw std::invalid_argument("incorrect program argument count");
+  std::vector<uint64_t> addresses(count), scalarStorage(count);
+  std::vector<void *> packed(count);
+  std::vector<std::shared_ptr<Buffer>> buffers;
+  for (size_t i = 0; i < count; ++i) {
+    if (p->bufferBytes[i]) {
+      auto buffer = nb::cast<std::shared_ptr<Buffer>>(arguments[i]);
+      if (buffer->device != d || buffer->buffer.size() < p->bufferBytes[i])
+        throw std::invalid_argument("buffer device or size does not match compiled signature");
+      addresses[i] = buffer->buffer.address();
+      packed[i] = &addresses[i];
+      buffers.push_back(std::move(buffer));
+    } else {
+      const auto &type = p->scalarTypes[i];
+      auto store = [&](auto value) { std::memcpy(&scalarStorage[i], &value, sizeof(value)); };
+      if (type == "i32") store(nb::cast<int32_t>(arguments[i]));
+      else if (type == "i64") store(nb::cast<int64_t>(arguments[i]));
+      else if (type == "f32") store(nb::cast<float>(arguments[i]));
+      else if (type == "f64") store(nb::cast<double>(arguments[i]));
+      else throw std::invalid_argument("unsupported scalar binding type");
+      packed[i] = &scalarStorage[i];
+    }
+  }
+  nb::gil_scoped_release release;
+  // Scalarized intermediates change ordering between threads when external
+  // ranges overlap (including shifted views). Keep the original whole-kernel
+  // boundaries for those bindings. Compare differences to avoid overflow.
+  if (p->aliasFallback) {
+    bool overlap = false;
+    for (uint64_t i = 0; i < count; ++i)
+      for (uint64_t j = i + 1; j < count; ++j) {
+        if (!p->bufferBytes[i] || !p->bufferBytes[j])
+          continue;
+        overlap |= addresses[i] <= addresses[j] ? addresses[j] - addresses[i] < p->bufferBytes[i]
+                                                : addresses[i] - addresses[j] < p->bufferBytes[j];
+      }
+    if (overlap)
+      p = p->aliasFallback;
+  }
+  auto invocation = std::make_shared<Invocation>(p, d);
+  invocation->buffers = std::move(buffers);
+  p->entry(invocation.get(), packed.data());
+  if (!invocation->error.empty())
+    throw std::runtime_error(invocation->error);
+  return invocation;
+}
+
+void runInvocation(Invocation &f, int mode, uint64_t batch) {
+  std::lock_guard<std::mutex> lock(f.runMutex);
+  validateExecution(f, mode, batch);
+  execute(f, mode, batch);
+  f.stream.synchronize();
+}
+
+std::array<double, 3> benchmarkInvocation(Invocation &f, int mode, uint64_t iterations,
+                                       uint64_t batch) {
+  std::array<double, 3> result{};
+  if (!iterations)
+    throw std::invalid_argument("benchmark iterations must be positive");
+  std::lock_guard<std::mutex> lock(f.runMutex);
+  validateExecution(f, mode, batch);
+  using Clock = std::chrono::steady_clock;
+  f.stream.synchronize();
+  auto setupStart = Clock::now();
+  if (mode)
+    executionGraph(f, mode, batch);
+  result[2] = std::chrono::duration<double, std::milli>(Clock::now() - setupStart).count();
+  auto check = [](CUresult error) {
+    if (error != CUDA_SUCCESS) {
+      const char *message = nullptr;
+      cuGetErrorString(error, &message);
+      throw std::runtime_error(message ? message : "CUDA event measurement failed");
+    }
+  };
+  struct Event {
+    CUevent value = nullptr;
+    ~Event() {
+      if (value)
+        cuEventDestroy(value);
+    }
+  } start, stop;
+  check(cuEventCreate(&start.value, CU_EVENT_DEFAULT));
+  check(cuEventCreate(&stop.value, CU_EVENT_DEFAULT));
+  auto stream = reinterpret_cast<CUstream>(f.stream.nativeHandle());
+  check(cuEventRecord(start.value, stream));
+  auto wallStart = Clock::now();
+  for (uint64_t i = 0; i < iterations; ++i) {
+    execute(f, mode, batch);
+  }
+  check(cuEventRecord(stop.value, stream));
+  check(cuEventSynchronize(stop.value));
+  auto wallStop = Clock::now();
+  float elapsed;
+  check(cuEventElapsedTime(&elapsed, start.value, stop.value));
+  result[0] = elapsed * 1000.0 / iterations / batch;
+  result[1] = std::chrono::duration<double, std::micro>(wallStop - wallStart).count() /
+              iterations / batch;
+  return result;
+}
+
+// Use Python's contiguous buffer protocol for host transfers, including NumPy and memoryviews.
+void copyBuffer(Buffer &buffer, nb::handle object, bool toDevice) {
+  Py_buffer view{};
+  if (PyObject_GetBuffer(object.ptr(), &view, toDevice ? PyBUF_CONTIG_RO : PyBUF_CONTIG) != 0)
+    throw nb::python_error();
+  struct Release { Py_buffer *view; ~Release() { PyBuffer_Release(view); } } cleanup{&view};
+  if (size_t(view.len) != buffer.buffer.size())
+    throw std::invalid_argument("host buffer byte count does not match device storage");
+  nb::gil_scoped_release release;
+  if (toDevice) buffer.buffer.copyFromHost(view.buf, view.len);
+  else buffer.buffer.copyToHost(view.buf, view.len);
+}
+#endif
 } // namespace
 
-extern "C" {
-const char *ckl_error() { return lastError.c_str(); }
-void *ckl_compile(const char *source, const char *chip, const char *features, const char *toolkit,
-                  int fusion) {
-  return protect([&]() -> void * { return new Handle(compile(source, chip, features, toolkit, fusion)); });
-}
-void *ckl_compile_with_options(const char *source, const char *chip, const char *features,
-                               const char *toolkit, int fusion, int reuseStorage) {
-  return protect([&]() -> void * {
-    return new Handle(compile(source, chip, features, toolkit, fusion, reuseStorage));
-  });
-}
-void ckl_program_free(void *program) { delete static_cast<Handle *>(program); }
-const char *ckl_program_ir(void *program, unsigned stage) {
-  auto &p = **static_cast<Handle *>(program);
-  switch (stage) {
-  case 0: return p.preparedIR.c_str();
-  case 1: return p.executableIR.c_str();
-  case 2: return p.deviceIR.c_str();
-  default: return p.hostIR.c_str();
-  }
-}
-int ckl_has_cuda_runtime() {
-#ifdef CKL_HAS_CUDA_RUNTIME
-  return 1;
-#else
-  return 0;
-#endif
-}
-#ifdef CKL_HAS_CUDA_RUNTIME
-void *ckl_device_create() { return protect([]() -> void * { return new Device; }); }
-void ckl_device_free(void *device) { delete static_cast<Device *>(device); }
-const char *ckl_device_name(void *device) {
-  return protect([&]() -> const char * {
-    static thread_local std::string name;
-    name = static_cast<Device *>(device)->runtime.deviceName();
-    return name.c_str();
-  });
-}
-void *ckl_buffer_create(void *device, uint64_t bytes) {
-  return protect([&]() -> void * {
-    auto *d = static_cast<Device *>(device);
-    return new Buffer{d, d->runtime.allocate(bytes)};
-  });
-}
-void *ckl_buffer_import(void *device, uint64_t address, uint64_t bytes) {
-  return protect([&]() -> void * {
-    auto *d = static_cast<Device *>(device);
-    return new Buffer{d, d->runtime.importBuffer(address, bytes)};
-  });
-}
-void ckl_buffer_free(void *buffer) { delete static_cast<Buffer *>(buffer); }
-uint64_t ckl_buffer_address(void *buffer) { return static_cast<Buffer *>(buffer)->buffer.address(); }
-uint64_t ckl_buffer_size(void *buffer) { return static_cast<Buffer *>(buffer)->buffer.size(); }
-int ckl_buffer_copy(void *buffer, void *host, uint64_t bytes, int toDevice) {
-  return protect([&] {
-    auto &b = static_cast<Buffer *>(buffer)->buffer;
-    if (toDevice) b.copyFromHost(host, bytes); else b.copyToHost(host, bytes);
-    return 1;
-  });
-}
-void *ckl_bind(void *program, void *device, void **arguments, uint64_t count) {
-  return protect([&]() -> void * {
-    auto p = *static_cast<Handle *>(program);
-    auto *d = static_cast<Device *>(device);
-    if (count != p->argumentCount) throw std::runtime_error("incorrect program argument count");
-    std::vector<uint64_t> addresses(count);
-    std::vector<void *> packed(count);
-    for (uint64_t i = 0; i < count; ++i) {
-      if (p->bufferBytes[i]) {
-        auto &buffer = *static_cast<Buffer *>(arguments[i]);
-        if (buffer.device != d || buffer.buffer.size() < p->bufferBytes[i])
-          throw std::runtime_error("buffer device or size does not match compiled signature");
-        addresses[i] = buffer.buffer.address();
-        packed[i] = &addresses[i];
-      } else packed[i] = arguments[i];
-    }
-    // Scalarized intermediates change ordering between threads when external
-    // ranges overlap (including shifted views). Keep the original whole-kernel
-    // boundaries for those bindings. Compare differences to avoid overflow.
-    if (p->aliasFallback) {
-      bool overlap = false;
-      for (uint64_t i = 0; i < count; ++i)
-        for (uint64_t j = i + 1; j < count; ++j) {
-          if (!p->bufferBytes[i] || !p->bufferBytes[j]) continue;
-          overlap |= addresses[i] <= addresses[j]
-              ? addresses[j] - addresses[i] < p->bufferBytes[i]
-              : addresses[i] - addresses[j] < p->bufferBytes[j];
+NB_MODULE(_ckl_native, m) {
+  m.doc() = "CKL in-process compiler and CUDA runtime";
+  nb::class_<Program>(m, "Program")
+      .def("ir", [](const Program &p, unsigned stage) {
+        switch (stage) {
+        case 0: return p.preparedIR;
+        case 1: return p.executableIR;
+        case 2: return p.deviceIR;
+        case 3: return p.hostIR;
+        default: throw std::invalid_argument("invalid IR stage");
         }
-      if (overlap) p = p->aliasFallback;
-    }
-    auto invocation = std::make_unique<Invocation>(p, d);
-    p->entry(invocation.get(), packed.data());
-    if (!invocation->error.empty()) throw std::runtime_error(invocation->error);
-    return invocation.release();
+      });
+  m.def("compile", [](const std::string &source, const std::string &chip,
+                       const std::string &features, const std::string &toolkit,
+                       bool fusion, bool reuse) {
+    return compile(source.c_str(), chip.c_str(), features.c_str(), toolkit.c_str(), fusion, reuse);
+  }, nb::call_guard<nb::gil_scoped_release>());
+#ifdef CKL_HAS_CUDA_RUNTIME
+  m.attr("has_cuda_runtime") = true;
+  nb::class_<Device>(m, "Device")
+      .def(nb::init<>())
+      .def_prop_ro("name", [](const Device &d) { return d.runtime.deviceName(); })
+      .def("empty", [](std::shared_ptr<Device> d, uint64_t bytes) {
+        return std::make_shared<Buffer>(Buffer{d, d->runtime.allocate(bytes)});
+      })
+      .def("import_buffer", [](std::shared_ptr<Device> d, uint64_t address, uint64_t bytes,
+                                nb::handle /* owner */) {
+        return std::make_shared<Buffer>(Buffer{d, d->runtime.importBuffer(address, bytes)});
+      }, nb::keep_alive<0, 4>());
+  nb::class_<Buffer>(m, "Buffer")
+      .def_prop_ro("address", [](const Buffer &b) { return b.buffer.address(); })
+      .def_prop_ro("nbytes", [](const Buffer &b) { return b.buffer.size(); })
+      .def("copy_from_host", [](Buffer &b, nb::handle data) { copyBuffer(b, data, true); })
+      .def("copy_to_host", [](Buffer &b, nb::handle data) { copyBuffer(b, data, false); });
+  nb::class_<Invocation>(m, "Invocation")
+      .def("run", &runInvocation, nb::call_guard<nb::gil_scoped_release>())
+      .def("benchmark", &benchmarkInvocation, nb::call_guard<nb::gil_scoped_release>())
+      .def_prop_ro("node_count", [](const Invocation &f) { return f.plan.nodes().size(); });
+  m.def("bind", &bindProgram);
+  m.def("cuda_available", [] {
+    int count = 0;
+    return cuInit(0) == CUDA_SUCCESS && cuDeviceGetCount(&count) == CUDA_SUCCESS && count > 0;
   });
-}
-int ckl_invoke(void *invocation, int graph) {
-  return protect([&] {
-    auto &f = *static_cast<Invocation *>(invocation);
-    std::lock_guard<std::mutex> lock(f.runMutex);
-    if (graph) {
-      if (!f.graph) f.graph = f.device->runtime.instantiate(f.plan);
-      f.graph.launch(f.stream);
-    } else f.device->runtime.launchOrdinary(f.plan, f.stream);
-    f.stream.synchronize();
-    return 1;
-  });
-}
-int ckl_invoke_plan(void *invocation, int mode, uint64_t batch) {
-  return protect([&] {
-    auto &f = *static_cast<Invocation *>(invocation);
-    std::lock_guard<std::mutex> lock(f.runMutex);
-    validateExecution(f, mode, batch);
-    execute(f, mode, batch);
-    f.stream.synchronize();
-    return 1;
-  });
-}
-void ckl_invocation_free(void *invocation) { delete static_cast<Invocation *>(invocation); }
-uint64_t ckl_invocation_nodes(void *invocation) {
-  return static_cast<Invocation *>(invocation)->plan.nodes().size();
-}
-// Benchmark a burst without Python dispatch or per-iteration synchronization.
-// CUDA stream elapsed time includes any gaps caused by native host submission.
-int ckl_benchmark_plan(void *invocation, int mode, uint64_t iterations, uint64_t batch,
-                        double *result) {
-  return protect([&] {
-    if (!iterations) throw std::invalid_argument("benchmark iterations must be positive");
-    auto &f = *static_cast<Invocation *>(invocation);
-    std::lock_guard<std::mutex> lock(f.runMutex);
-    validateExecution(f, mode, batch);
-    using Clock = std::chrono::steady_clock;
-    f.stream.synchronize();
-    auto setupStart = Clock::now();
-    if (mode) executionGraph(f, mode, batch);
-    result[2] = std::chrono::duration<double, std::milli>(Clock::now() - setupStart).count();
-    auto check = [](CUresult error) {
-      if (error != CUDA_SUCCESS) {
-        const char *message = nullptr;
-        cuGetErrorString(error, &message);
-        throw std::runtime_error(message ? message : "CUDA event measurement failed");
-      }
-    };
-    struct Event {
-      CUevent value = nullptr;
-      ~Event() { if (value) cuEventDestroy(value); }
-    } start, stop;
-    check(cuEventCreate(&start.value, CU_EVENT_DEFAULT));
-    check(cuEventCreate(&stop.value, CU_EVENT_DEFAULT));
-    auto stream = reinterpret_cast<CUstream>(f.stream.nativeHandle());
-    check(cuEventRecord(start.value, stream));
-    auto wallStart = Clock::now();
-    for (uint64_t i = 0; i < iterations; ++i) {
-      execute(f, mode, batch);
-    }
-    check(cuEventRecord(stop.value, stream));
-    check(cuEventSynchronize(stop.value));
-    auto wallStop = Clock::now();
-    float elapsed;
-    check(cuEventElapsedTime(&elapsed, start.value, stop.value));
-    result[0] = elapsed * 1000.0 / iterations / batch;
-    result[1] = std::chrono::duration<double, std::micro>(wallStop - wallStart).count() / iterations / batch;
-    return 1;
-  });
-}
-int ckl_benchmark(void *invocation, int graph, uint64_t iterations, double *result) {
-  return ckl_benchmark_plan(invocation, graph ? 1 : 0, iterations, 1, result);
-}
+  m.def("profiler_start", [] { if (cuProfilerStart() != CUDA_SUCCESS)
+      throw std::runtime_error("CUDA profiler start failed"); });
+  m.def("profiler_stop", [] { if (cuProfilerStop() != CUDA_SUCCESS)
+      throw std::runtime_error("CUDA profiler stop failed"); });
+#else
+  m.attr("has_cuda_runtime") = false;
+  m.def("cuda_available", [] { return false; });
 #endif
 }

@@ -98,6 +98,7 @@ def CKL_SyncOp : CKL_Op<"sync"> {
   let hasVerifier = 1;
 }
 
+// TODO:
 def CKL_ViewOp : CKL_Op<"view", [Pure, ViewLikeOpInterface,
                                    SameOperandsAndResultType]> {
   let summary = "creates an alias retaining its source resource identity";

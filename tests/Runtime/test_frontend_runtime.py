@@ -1,7 +1,6 @@
 """Numerically validate Python -> in-process compiler -> host JIT -> CUDA."""
 from array import array
 import argparse
-import ctypes
 import gc
 from pathlib import Path
 import sys
@@ -69,9 +68,8 @@ assert "@ckl.binary" in compiled.host_ir
 assert 'dependencies = array<i64: 1>' in compiled.executable_ir
 assert compiled.executable_ir.count('"ckl_exec.heap"') == 1
 
-cuda = ctypes.CDLL("libcuda.so.1")
-devices = ctypes.c_int()
-if cuda.cuInit(0) or cuda.cuDeviceGetCount(ctypes.byref(devices)) or not devices.value:
+from ckl.cuda import _native
+if not _native().cuda_available():
     print("CUDA device unavailable; in-process compilation passed")
     sys.exit(77)
 

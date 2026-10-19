@@ -1,7 +1,6 @@
 """Numerical fusion, overlap fallback, bounds, and rounding checks."""
 from array import array
 import argparse
-import ctypes
 from pathlib import Path
 import sys
 
@@ -44,9 +43,8 @@ spec = ckl.BufferSpec((257,), ckl.f32)
 program = step.lower(signature={"src": spec, "dst": spec, "bias": ckl.f32}).compile(target=target)
 assert program.executable_ir.count('"ckl_exec.kernel"') == 1
 assert '"ckl_exec.heap"' not in program.executable_ir
-cuda = ctypes.CDLL("libcuda.so.1")
-count = ctypes.c_int()
-if cuda.cuInit(0) or cuda.cuDeviceGetCount(ctypes.byref(count)) or not count.value:
+from ckl.cuda import _native
+if not _native().cuda_available():
     print("CUDA unavailable; fused compilation passed")
     sys.exit(77)
 device = ckl.Device()

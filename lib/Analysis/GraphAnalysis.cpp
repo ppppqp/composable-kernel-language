@@ -7,8 +7,8 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/SymbolTable.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -397,6 +397,7 @@ LogicalResult appendLifetimeNode(Operation *operation, func::FuncOp host,
 }
 
 LogicalResult buildGraph(ModuleOp module, func::FuncOp function, bool reuseStorage) {
+  // entry point
   Builder builder(module.getContext());
   DenseMap<Operation *, unsigned> allocationIds;
   SmallVector<NodeInfo> nodes;
@@ -524,9 +525,9 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function, bool reuseStora
         builder.getStringAttr(node.kind), node.kernel, node.materializedAccesses,
         builder.getBoolAttr(node.unknown), builder.getBoolAttr(node.synchronizes),
         node.orderingScopes, builder.getStringAttr(printLocation(node.source->getLoc())));
-    graphNode->setAttr("ckl.execution_control",
-                       builder.getStringAttr(node.nestedControl ? "unsupported_control_flow"
-                                                                : "unconditional"));
+    graphNode->setAttr(
+        "ckl.execution_control",
+        builder.getStringAttr(node.nestedControl ? "unsupported_control_flow" : "unconditional"));
     if (node.kind == "dispatch") {
       auto dispatch = cast<DispatchOpInterface>(node.source);
       DenseI64ArrayAttr grid = dispatch.getGridDimensions();
@@ -536,8 +537,7 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function, bool reuseStora
       StringAttr implementation = dispatch.getImplementationIdentity();
       StringAttr artifact = dispatch.getArtifactIdentity();
       if (!grid || !block || !sharedMemory || !device || !implementation || !artifact)
-        return node.source->emitError(
-            "dispatch interface did not provide static launch metadata");
+        return node.source->emitError("dispatch interface did not provide static launch metadata");
       graphNode->setAttr("ckl.launch_grid", grid);
       graphNode->setAttr("ckl.launch_block", block);
       graphNode->setAttr("ckl.launch_shared_memory", sharedMemory);
@@ -566,14 +566,14 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function, bool reuseStora
                      !type || !type.getLayout().isIdentity()) {
             packing = "unsupported_layout";
           }
-          attributes.push_back(
-              builder.getNamedAttr("packing", builder.getStringAttr(packing)));
+          attributes.push_back(builder.getNamedAttr("packing", builder.getStringAttr(packing)));
         } else if (Operation *definition = argument.getDefiningOp()) {
           if (Attribute value = definition->getAttr("value")) {
             attributes.push_back(builder.getNamedAttr("kind", builder.getStringAttr("constant")));
             attributes.push_back(builder.getNamedAttr("value", value));
           } else {
-            attributes.push_back(builder.getNamedAttr("kind", builder.getStringAttr("unsupported")));
+            attributes.push_back(
+                builder.getNamedAttr("kind", builder.getStringAttr("unsupported")));
           }
         } else if (auto blockArgument = dyn_cast<BlockArgument>(argument)) {
           attributes.push_back(builder.getNamedAttr("kind", builder.getStringAttr("scalar")));
@@ -599,7 +599,8 @@ struct BuildGraphPass : public PassWrapper<BuildGraphPass, OperationPass<ModuleO
 
   Option<bool> strict{*this, "strict", llvm::cl::desc("Reject missing effect semantics"),
                       llvm::cl::init(true)};
-  Option<bool> reuseStorage{*this, "reuse-storage", llvm::cl::desc("Recycle ordered temporary storage"),
+  Option<bool> reuseStorage{*this, "reuse-storage",
+                            llvm::cl::desc("Recycle ordered temporary storage"),
                             llvm::cl::init(true)};
 
   StringRef getArgument() const final { return "ckl-build-graph"; }

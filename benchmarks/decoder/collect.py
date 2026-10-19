@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Collect independent-request timings and representative Nsight Systems traces.
 
-Run with the same PYTHONPATH/CKL_NATIVE_LIBRARY as run.py. Measurements and
+Run with the same MLIR PYTHONPATH/CKL_NATIVE_LIBRARY extension path as run.py. Measurements and
 profiles execute serially; Nsight instrumentation never supplies speedup numbers.
 """
 import argparse

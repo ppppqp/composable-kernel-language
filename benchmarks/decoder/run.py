@@ -294,7 +294,7 @@ def main():
                                    args.vocab, context, args.steps)))
     device = ckl.Device()
     target = ckl.NVIDIATarget(args.chip, "+ptx87", args.toolkit)
-    lib = Path(device._lib._name).resolve()
+    lib = device.native_library
     cache = lib.parents[2] / "CMakeCache.txt"
     build = next((line.split("=", 1)[1] for line in cache.read_text().splitlines()
                   if line.startswith("CMAKE_BUILD_TYPE:")), "unknown") if cache.exists() else "unknown"

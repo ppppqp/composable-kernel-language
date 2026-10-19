@@ -49,6 +49,7 @@ public:
     KernelSummary summary;
     summary.argumentEffects.resize(function.getNumArguments());
     summary.unknownRegions.resize(function.getNumArguments());
+    // TODO: Do we really have external functions?
     if (function.isExternal()) {
       markUnknown(summary, function);
       if (strict) {
@@ -97,8 +98,7 @@ private:
   }
 
   LogicalResult addEffect(Value value, unsigned bits, FunctionOpInterface function,
-                          KernelSummary &summary,
-                          Operation *source, bool unknownRegion = false) {
+                          KernelSummary &summary, Operation *source, bool unknownRegion = false) {
     Value base = getBaseResource(value);
     if (auto argument = dyn_cast<BlockArgument>(base)) {
       if (argument.getOwner() == &function.getFunctionBody().front()) {
@@ -143,8 +143,7 @@ private:
   }
 
   LogicalResult handleUnknown(Operation *operation, FunctionOpInterface function,
-                              KernelSummary &summary,
-                              StringRef reason) {
+                              KernelSummary &summary, StringRef reason) {
     if (strict)
       return operation->emitError() << reason << " in strict effect mode";
     markUnknown(summary, function);
@@ -153,14 +152,22 @@ private:
 
   LogicalResult analyzeOperation(Operation *operation, FunctionOpInterface function,
                                  KernelSummary &summary) {
+    /*
+      Analyze the effects of a single operation and update the kernel summary. This function
+      handles different types of operations,
+      including function calls, dispatches, atomic operations, synchronization operations,
+      and memory effect interfaces. It recursively analyzes nested operations in regions and updates
+      the summary accordingly.
+     */
+
     if (isa<func::ReturnOp>(operation))
       return success();
 
     if (auto call = dyn_cast<func::CallOp>(operation)) {
       // calling another function
       // recursively apply the callee's summary
-      auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
-          call, call.getCalleeAttr());
+      auto callee =
+          SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(call, call.getCalleeAttr());
       if (!callee)
         return handleUnknown(operation, function, summary, "cannot resolve callee");
       return applyCalleeSummary(operation, call.getOperands(), callee, function, summary);

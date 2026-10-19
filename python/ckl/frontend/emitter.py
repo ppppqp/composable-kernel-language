@@ -1,4 +1,5 @@
 """Typed AST lowering to deterministic, source-associated CKL MLIR."""
+
 from __future__ import annotations
 
 import ast
@@ -6,9 +7,11 @@ import hashlib
 import json
 import math
 import operator
-import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from mlir import ir
+from mlir.dialects import arith, func
 
 from ..compiler import CompilerOptions, NVIDIATarget, compile_module
 from ..types import BufferSpec, Dimension, ScalarType, bool_, f32, f64, i32, i64, index
@@ -18,7 +21,7 @@ from .source import Definition, Intrinsic, Namespace, UnsupportedBinding, finger
 
 @dataclass(frozen=True)
 class Value:
-    name: str
+    ir: ir.Value
     dtype: ScalarType | BufferSpec
 
 
@@ -48,31 +51,66 @@ class LoweredProgram:
     def compile(self, *, target: NVIDIATarget, fuse_pointwise=True, reuse_storage=True):
         """Compile device code and JIT its host entry point in this process."""
         from ..cuda import CompiledProgram
-        return CompiledProgram(self, target, fuse_pointwise=fuse_pointwise, reuse_storage=reuse_storage)
+
+        return CompiledProgram(
+            self, target, fuse_pointwise=fuse_pointwise, reuse_storage=reuse_storage
+        )
 
 
 def identity(definition: Definition, signature: BoundSignature) -> str:
-    payload = [definition.identity, [
-        [p.name, fingerprint(p.dtype) if isinstance(p.dtype, ScalarType) else
-         [p.dtype.shape, p.dtype.dtype.name, p.dtype.layout], p.value, p.is_constant]
-        for p in signature.parameters
-    ]]
+    payload = [
+        definition.identity,
+        [
+            [
+                p.name,
+                fingerprint(p.dtype)
+                if isinstance(p.dtype, ScalarType)
+                else [p.dtype.shape, p.dtype.dtype.name, p.dtype.layout],
+                p.value,
+                p.is_constant,
+            ]
+            for p in signature.parameters
+        ],
+    ]
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
-def quoted(text: str) -> str:
-    # MLIR string escapes use hexadecimal bytes, rather than Python/JSON unicode escapes.
-    return '"' + ''.join(chr(byte) if 32 <= byte < 127 and byte not in (34, 92)
-                         else f"\\{byte:02X}" for byte in text.encode("utf-8")) + '"'
+def mlir_type(dtype: ScalarType | BufferSpec) -> ir.Type:
+    if isinstance(dtype, BufferSpec):
+        return ir.MemRefType.get(dtype.shape, mlir_type(dtype.dtype))
+    if dtype == index:
+        return ir.IndexType.get()
+    if dtype in (f32, f64):
+        return (ir.F32Type if dtype == f32 else ir.F64Type).get()
+    if dtype.name == "!ckl.token":
+        return ir.OpaqueType.get("ckl", "token")
+    return ir.IntegerType.get_signless({bool_: 1, i32: 32, i64: 64}[dtype])
+
+
+class IRBuilder:
+    """Build operations with SSA operands at the current MLIR insertion point."""
+
+    @staticmethod
+    def create(name, *, operands=(), results=(), attributes=None, regions=0, loc=None):
+        return ir.Operation.create(
+            name,
+            operands=[v.ir for v in operands],
+            results=[mlir_type(t) for t in results],
+            attributes=attributes,
+            regions=regions,
+            loc=loc,
+        )
 
 
 class ModuleEmitter:
     def __init__(self):
-        self.kernels: dict[str, tuple[Specialization, str]] = {}
+        self.ir = ir.Module.create()
+        self.kernels: dict[str, tuple[Specialization, func.FuncOp]] = {}
 
     def specialize(self, definition: Definition, signature: BoundSignature) -> Specialization:
         key = identity(definition, signature)
         if key not in self.kernels:
+            # if the kernel has not been specialized yet, emit its MLIR body and record the specialization
             specialization = Specialization("kernel_" + key[:24], key, signature)
             body = FunctionEmitter(self, definition, signature).build(specialization.symbol)
             self.kernels[key] = specialization, body
@@ -80,62 +118,81 @@ class ModuleEmitter:
 
 
 class FunctionEmitter:
+    """Lower a typed AST directly to MLIR operations, regions, and SSA values."""
+
     def __init__(self, module: ModuleEmitter, definition: Definition, signature: BoundSignature):
         self.module = module
         self.definition = definition
         self.signature = signature
         self.env: dict[str, object] = {}
-        self.lines: list[str] = []
-        self.indent = 2
-        self.counter = 0
+        self.builder = IRBuilder()
         self.temporaries: list[Value] = []
         self.local_names = {p.name for p in signature.parameters} | {
-            node.id for node in ast.walk(definition.tree)
+            node.id
+            for node in ast.walk(definition.tree)
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
         }
         self.dimensions = dict(signature.dimensions)
-        for position, parameter in enumerate(signature.runtime):
-            self.env[parameter.name] = Value(f"%arg{position}", parameter.dtype)
         self.env.update({p.name: p.value for p in signature.parameters if p.is_constant})
 
     def fail(self, node: ast.AST, message: str):
         raise self.definition.error(node, message)
 
-    def location(self, node: ast.AST) -> str:
+    def location(self, node: ast.AST) -> ir.Location:
         line = self.definition.first_line + getattr(node, "lineno", 1) - 1
         column = self.definition.indentation + getattr(node, "col_offset", 0) + 1
-        return f"loc({quoted(self.definition.filename)}:{line}:{column})"
+        return ir.Location.file(self.definition.filename, line, column)
 
-    def line(self, text: str, node: ast.AST | None = None):
-        self.lines.append("  " * self.indent + text + (" " + self.location(node) if node else ""))
+    def operation(self, name, node, *, operands=(), results=(), attributes=None, regions=0):
+        return self.builder.create(
+            name,
+            operands=operands,
+            results=results,
+            attributes=attributes,
+            regions=regions,
+            loc=self.location(node),
+        )
 
-    def emit(self, text: str, dtype: ScalarType | BufferSpec, node: ast.AST) -> Value:
-        value = Value(f"%v{self.counter}", dtype)
-        self.counter += 1
-        self.line(f"{value.name} = {text}", node)
-        return value
+    def emit(self, name, dtype, node, *, operands=(), attributes=None) -> Value:
+        operation = self.operation(
+            name, node, operands=operands, results=[dtype], attributes=attributes
+        )
+        return Value(operation.result, dtype)
 
-    def build(self, symbol: str) -> str:
-        args = ", ".join(f"%arg{i}: {p.dtype.mlir}" for i, p in enumerate(self.signature.runtime))
-        marker = " attributes {ckl.kernel}" if self.definition.kind == "kernel" else ""
-        self.lines.append(f"  func.func @{symbol}({args}){marker} {{")
-        self.statements(self.definition.tree.body, top=True)
-        for temporary in reversed(self.temporaries):
-            self.line(f'"ckl.free"({temporary.name}) : ({temporary.dtype.mlir}) -> ()', self.definition.tree)
-        self.line("func.return", self.definition.tree)
-        self.lines.append("  } " + self.location(self.definition.tree))
-        return "\n".join(self.lines)
+    def build(self, symbol: str) -> func.FuncOp:
+        with ir.InsertionPoint(self.module.ir.body):
+            function = func.FuncOp(
+                symbol,
+                ([mlir_type(p.dtype) for p in self.signature.runtime], []),
+                loc=self.location(self.definition.tree),
+            )
+        if self.definition.kind == "kernel":
+            function.attributes["ckl.kernel"] = ir.UnitAttr.get()
+        block = function.add_entry_block()
+        for parameter, argument in zip(self.signature.runtime, block.arguments):
+            self.env[parameter.name] = Value(argument, parameter.dtype)
+        with ir.InsertionPoint(block):
+            self.statements(self.definition.tree.body, top=True)
+            for temporary in reversed(self.temporaries):
+                self.operation("ckl.free", self.definition.tree, operands=[temporary])
+            self.operation("func.return", self.definition.tree)
+        return function
 
     def typed(self, value: object, dtype: ScalarType, node: ast.AST) -> Value:
         if isinstance(value, Value):
             if value.dtype != dtype:
-                self.fail(node, f"expected {dtype.name}, got {value.dtype.mlir}; use ckl.cast explicitly")
+                self.fail(
+                    node, f"expected {dtype.name}, got {value.dtype.mlir}; use ckl.cast explicitly"
+                )
             return value
         value = constant(value, dtype, self.definition, node)
-        literal = ("true" if value else "false") if dtype == bool_ else (
-            format(value, ".17e") if dtype in (f32, f64) else str(value)
+        ty = mlir_type(dtype)
+        attribute = (
+            ir.FloatAttr.get(ty, value)
+            if dtype in (f32, f64)
+            else ir.IntegerAttr.get(ty, int(value))
         )
-        return self.emit(f"arith.constant {literal} : {dtype.mlir}", dtype, node)
+        return self.emit("arith.constant", dtype, node, attributes={"value": attribute})
 
     def buffer(self, node: ast.AST) -> Value:
         value = self.expression(node)
@@ -194,15 +251,14 @@ class FunctionEmitter:
                     self.fail(node, "buffer contents can only be accessed inside a kernel")
                 indices = self.indices(base, node)
                 operands = [base, *indices]
-                return self.emit(
-                    f'"ckl.load_element"({", ".join(v.name for v in operands)}) : '
-                    f'({", ".join(v.dtype.mlir for v in operands)}) -> {base.dtype.dtype.mlir}',
-                    base.dtype.dtype, node,
-                )
+                return self.emit("ckl.load_element", base.dtype.dtype, node, operands=operands)
             if type(base) is tuple:
                 position = self.expression(node.slice)
                 if type(position) is not int or not 0 <= position < len(base):
-                    self.fail(node, "tuple/shape axes require an in-range nonnegative compile-time integer")
+                    self.fail(
+                        node,
+                        "tuple/shape axes require an in-range nonnegative compile-time integer",
+                    )
                 return base[position]
             self.fail(node, "unsupported subscript; slices and negative indexing are not supported")
         if isinstance(node, ast.BinOp):
@@ -211,15 +267,19 @@ class FunctionEmitter:
             value = self.expression(node.operand)
             if type(value) in (int, float):
                 return -value if isinstance(node.op, ast.USub) else value
-            if not isinstance(value, Value) or not isinstance(value.dtype, ScalarType) or value.dtype == bool_:
+            if (
+                not isinstance(value, Value)
+                or not isinstance(value.dtype, ScalarType)
+                or value.dtype == bool_
+            ):
                 self.fail(node, "unary arithmetic requires a numeric scalar")
             self.require_kernel_arithmetic(node)
             if isinstance(node.op, ast.UAdd):
                 return value
             if value.dtype in (f32, f64):
-                return self.emit(f"arith.negf {value.name} : {value.dtype.mlir}", value.dtype, node)
+                return self.emit("arith.negf", value.dtype, node, operands=[value])
             zero = self.typed(0, value.dtype, node)
-            return self.emit(f"arith.subi {zero.name}, {value.name} : {value.dtype.mlir}", value.dtype, node)
+            return self.emit("arith.subi", value.dtype, node, operands=[zero, value])
         if isinstance(node, ast.Compare):
             if len(node.ops) != 1:
                 self.fail(node, "chained comparisons are not supported")
@@ -230,16 +290,27 @@ class FunctionEmitter:
 
     def require_kernel_arithmetic(self, node: ast.AST):
         if self.definition.kind != "kernel":
-            self.fail(node, "computed runtime host scalars are unsupported; forward the parameter unchanged")
+            self.fail(
+                node,
+                "computed runtime host scalars are unsupported; forward the parameter unchanged",
+            )
 
     def binary(self, node: ast.AST, comparison=False) -> object:
         left = self.expression(node.left)
         right = self.expression(node.comparators[0] if comparison else node.right)
         op = node.ops[0] if comparison else node.op
-        static_ops = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
-                      ast.Div: operator.truediv, ast.Lt: operator.lt, ast.LtE: operator.le,
-                      ast.Gt: operator.gt, ast.GtE: operator.ge, ast.Eq: operator.eq,
-                      ast.NotEq: operator.ne}
+        static_ops = {
+            ast.Add: operator.add,
+            ast.Sub: operator.sub,
+            ast.Mult: operator.mul,
+            ast.Div: operator.truediv,
+            ast.Lt: operator.lt,
+            ast.LtE: operator.le,
+            ast.Gt: operator.gt,
+            ast.GtE: operator.ge,
+            ast.Eq: operator.eq,
+            ast.NotEq: operator.ne,
+        }
         if type(op) not in static_ops:
             self.fail(node, f"unsupported numeric operator: {type(op).__name__}")
         if not isinstance(left, Value) and not isinstance(right, Value):
@@ -256,20 +327,40 @@ class FunctionEmitter:
         self.require_kernel_arithmetic(node)
         dynamic = left if isinstance(left, Value) else right
         dtype = dynamic.dtype
-        if not isinstance(dtype, ScalarType) or (dtype == bool_ and type(op) not in (ast.Eq, ast.NotEq)):
+        if not isinstance(dtype, ScalarType) or (
+            dtype == bool_ and type(op) not in (ast.Eq, ast.NotEq)
+        ):
             self.fail(node, "numeric expressions require compatible scalar types")
         left, right = self.typed(left, dtype, node), self.typed(right, dtype, node)
         floating = dtype in (f32, f64)
         if comparison:
-            predicates = {ast.Lt: "olt" if floating else "slt", ast.LtE: "ole" if floating else "sle",
-                          ast.Gt: "ogt" if floating else "sgt", ast.GtE: "oge" if floating else "sge",
-                          ast.Eq: "oeq" if floating else "eq", ast.NotEq: "une" if floating else "ne"}
-            text = f"arith.cmp{'f' if floating else 'i'} {predicates[type(op)]}, {left.name}, {right.name} : {dtype.mlir}"
-            return self.emit(text, bool_, node)
+            predicates = {
+                ast.Lt: "olt" if floating else "slt",
+                ast.LtE: "ole" if floating else "sle",
+                ast.Gt: "ogt" if floating else "sgt",
+                ast.GtE: "oge" if floating else "sge",
+                ast.Eq: "oeq" if floating else "eq",
+                ast.NotEq: "une" if floating else "ne",
+            }
+            predicate = getattr(
+                arith.CmpFPredicate if floating else arith.CmpIPredicate,
+                predicates[type(op)].upper() if floating else predicates[type(op)],
+            )
+            return self.emit(
+                "arith.cmpf" if floating else "arith.cmpi",
+                bool_,
+                node,
+                operands=[left, right],
+                attributes={
+                    "predicate": ir.IntegerAttr.get(ir.IntegerType.get_signless(64), int(predicate))
+                },
+            )
         if isinstance(op, ast.Div) and not floating:
             self.fail(node, "division requires floating operands")
         mnemonic = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.Div: "div"}[type(op)]
-        return self.emit(f"arith.{mnemonic}{'f' if floating else 'i'} {left.name}, {right.name} : {dtype.mlir}", dtype, node)
+        return self.emit(
+            f"arith.{mnemonic}{'f' if floating else 'i'}", dtype, node, operands=[left, right]
+        )
 
     def call(self, node: ast.Call) -> object:
         callee = self.expression(node.func)
@@ -277,7 +368,9 @@ class FunctionEmitter:
             self.fail(node, "kernel definitions are not ordinary calls; use ckl.launch")
         if not isinstance(callee, Intrinsic):
             self.fail(node, "calling arbitrary Python functions is unsupported")
-        if any(isinstance(arg, ast.Starred) for arg in node.args) or any(k.arg is None for k in node.keywords):
+        if any(isinstance(arg, ast.Starred) for arg in node.args) or any(
+            k.arg is None for k in node.keywords
+        ):
             self.fail(node, "argument expansion is unsupported")
         name = callee.name
         if name == "launch":
@@ -291,16 +384,35 @@ class FunctionEmitter:
                 self.fail(node, "device coordinates are only valid in kernels")
             if len(args) != 1 or keywords or type(args[0]) is not int or not 0 <= args[0] <= 2:
                 self.fail(node, "device coordinates require one constant axis 0, 1, or 2")
-            return self.emit(f'"ckl.{name}"() {{axis = {args[0]} : i32}} : () -> index', index, node)
+            return self.emit(
+                f"ckl.{name}",
+                index,
+                node,
+                attributes={"axis": ir.IntegerAttr.get(ir.IntegerType.get_signless(32), args[0])},
+            )
         if name == "cdiv":
-            if len(args) != 2 or keywords or any(type(v) is not int for v in args) or args[0] < 0 or args[1] <= 0:
-                self.fail(node, "cdiv requires a nonnegative constant extent and positive constant divisor")
+            if (
+                len(args) != 2
+                or keywords
+                or any(type(v) is not int for v in args)
+                or args[0] < 0
+                or args[1] <= 0
+            ):
+                self.fail(
+                    node,
+                    "cdiv requires a nonnegative constant extent and positive constant divisor",
+                )
             return (args[0] + args[1] - 1) // args[1]
         if name in ("empty", "empty_like"):
             if self.definition.kind != "program":
                 self.fail(node, "program temporaries cannot be allocated inside kernels")
             if name == "empty_like":
-                if len(args) != 1 or keywords or not isinstance(args[0], Value) or not isinstance(args[0].dtype, BufferSpec):
+                if (
+                    len(args) != 1
+                    or keywords
+                    or not isinstance(args[0], Value)
+                    or not isinstance(args[0].dtype, BufferSpec)
+                ):
                     self.fail(node, "empty_like requires one buffer")
                 spec = args[0].dtype
             else:
@@ -310,7 +422,7 @@ class FunctionEmitter:
                     spec = BufferSpec(args[0], keywords["dtype"])
                 except (ValueError, TypeError) as error:
                     self.fail(node, str(error))
-            value = self.emit(f'"ckl.alloc"() : () -> {spec.mlir}', spec, node)
+            value = self.emit("ckl.alloc", spec, node)
             self.temporaries.append(value)
             return value
         if name == "cast":
@@ -319,9 +431,14 @@ class FunctionEmitter:
             return self.cast(args[0], args[1], node)
         if name in ("exp", "rsqrt"):
             self.require_kernel_arithmetic(node)
-            if len(args) != 1 or keywords or not isinstance(args[0], Value) or args[0].dtype not in (f32, f64):
+            if (
+                len(args) != 1
+                or keywords
+                or not isinstance(args[0], Value)
+                or args[0].dtype not in (f32, f64)
+            ):
                 self.fail(node, f"{name} requires one typed floating-point scalar")
-            return self.emit(f"math.{name} {args[0].name} : {args[0].dtype.mlir}", args[0].dtype, node)
+            return self.emit(f"math.{name}", args[0].dtype, node, operands=[args[0]])
         if name == "select":
             self.require_kernel_arithmetic(node)
             if len(args) != 3 or keywords:
@@ -331,11 +448,15 @@ class FunctionEmitter:
             if dynamic is None or not isinstance(dynamic.dtype, ScalarType):
                 self.fail(node, "select requires a typed scalar alternative")
             lhs, rhs = [self.typed(v, dynamic.dtype, node) for v in args[1:]]
-            return self.emit(f"arith.select {condition.name}, {lhs.name}, {rhs.name} : {lhs.dtype.mlir}", lhs.dtype, node)
+            return self.emit("arith.select", lhs.dtype, node, operands=[condition, lhs, rhs])
         self.fail(node, f"unsupported intrinsic: {name}")
 
     def for_loop(self, node: ast.For, branch_outer):
-        if node.orelse or not isinstance(node.target, ast.Name) or not isinstance(node.iter, ast.Call):
+        if (
+            node.orelse
+            or not isinstance(node.target, ast.Name)
+            or not isinstance(node.iter, ast.Call)
+        ):
             self.fail(node, "for requires a simple induction variable and range without else")
         callee = self.expression(node.iter.func)
         if not isinstance(callee, Intrinsic) or callee.name != "range" or node.iter.keywords:
@@ -343,8 +464,11 @@ class FunctionEmitter:
         bounds = [self.expression(arg) for arg in node.iter.args]
         if not 1 <= len(bounds) <= 3:
             self.fail(node, "range requires one to three bounds")
-        start, stop, step = (0, bounds[0], 1) if len(bounds) == 1 else (
-            bounds[0], bounds[1], bounds[2] if len(bounds) == 3 else 1)
+        start, stop, step = (
+            (0, bounds[0], 1)
+            if len(bounds) == 1
+            else (bounds[0], bounds[1], bounds[2] if len(bounds) == 3 else 1)
+        )
         if type(step) is not int or step <= 0:
             self.fail(node, "range step must be a positive compile-time integer")
         induction = node.target.id
@@ -362,8 +486,12 @@ class FunctionEmitter:
             else:
                 self.env.pop(induction, None)
             return
-        assignments = {n.id for statement in node.body for n in ast.walk(statement)
-                       if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+        assignments = {
+            n.id
+            for statement in node.body
+            for n in ast.walk(statement)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+        }
         if induction in assignments:
             self.fail(node, "cannot assign to the loop induction variable")
         names = sorted(assignments & outer.keys())
@@ -380,30 +508,31 @@ class FunctionEmitter:
             initials.append(value)
         lower, upper, stride = [self.typed(v, index, node) for v in (start, stop, step)]
 
-        def fresh(dtype):
-            value = Value(f"%v{self.counter}", dtype)
-            self.counter += 1
-            return value
-
-        iv = fresh(index)
-        iterators = [fresh(v.dtype) for v in initials]
-        result = fresh(initials[0].dtype) if initials else None
-        prefix = "" if result is None else f"{result.name}" + (f":{len(initials)}" if len(initials) > 1 else "") + " = "
-        arguments = ", ".join(f"{arg.name} = {value.name}" for arg, value in zip(iterators, initials))
-        types = ", ".join(v.dtype.mlir for v in initials)
-        carried = f" iter_args({arguments}) -> ({types})" if initials else ""
-        self.line(f"{prefix}scf.for {iv.name} = {lower.name} to {upper.name} step {stride.name}{carried} {{")
-        self.indent += 1
-        self.env[induction] = iv
-        self.env.update(zip(names, iterators))
-        self.statements(node.body, branch_outer=branch_outer)
-        yielded = [self.typed(self.env[name], initial.dtype, node) for name, initial in zip(names, initials)]
-        self.line("scf.yield" + (" " + ", ".join(v.name for v in yielded) + f" : {types}" if yielded else ""), node)
-        self.indent -= 1
-        self.line("}", node)
+        loop = self.operation(
+            "scf.for",
+            node,
+            operands=[lower, upper, stride, *initials],
+            results=[v.dtype for v in initials],
+            regions=1,
+        )
+        block = loop.regions[0].blocks.append(
+            mlir_type(index), *[mlir_type(v.dtype) for v in initials]
+        )
+        self.env[induction] = Value(block.arguments[0], index)
+        self.env.update(
+            (name, Value(argument, initial.dtype))
+            for name, argument, initial in zip(names, list(block.arguments)[1:], initials)
+        )
+        with ir.InsertionPoint(block):
+            self.statements(node.body, branch_outer=branch_outer)
+            yielded = [
+                self.typed(self.env[name], initial.dtype, node)
+                for name, initial in zip(names, initials)
+            ]
+            self.operation("scf.yield", node, operands=yielded)
         self.env = outer
-        for i, (name, initial) in enumerate(zip(names, initials)):
-            self.env[name] = Value(result.name + (f"#{i}" if len(initials) > 1 else ""), initial.dtype)
+        for name, initial, result in zip(names, initials, loop.results):
+            self.env[name] = Value(result, initial.dtype)
 
     def cast(self, value: object, dtype: ScalarType, node: ast.AST) -> object:
         if not isinstance(value, Value):
@@ -430,7 +559,7 @@ class FunctionEmitter:
             operation = "index_cast"
         else:
             self.fail(node, "cast through an integer type to convert between index and float")
-        return self.emit(f"arith.{operation} {value.name} : {source.mlir} to {dtype.mlir}", dtype, node)
+        return self.emit(f"arith.{operation}", dtype, node, operands=[value])
 
     def launch(self, node: ast.Call):
         if self.definition.kind != "program":
@@ -444,21 +573,28 @@ class FunctionEmitter:
         if len(node.args) - 1 != len(parameters):
             self.fail(node, "launch argument count does not match kernel signature")
         keywords = {k.arg: self.expression(k.value) for k in node.keywords}
-        if set(keywords) - {"grid", "block", "shared_memory"} or not {"grid", "block"} <= set(keywords):
+        if set(keywords) - {"grid", "block", "shared_memory"} or not {"grid", "block"} <= set(
+            keywords
+        ):
             self.fail(node, "launch requires grid and block; only shared_memory is optional")
         geometry = []
         for name in ("grid", "block"):
             dimensions = keywords[name]
-            if type(dimensions) is not tuple or not 1 <= len(dimensions) <= 3 or any(
-                type(d) is not int or not 0 < d < (1 << 63) for d in dimensions
+            if (
+                type(dimensions) is not tuple
+                or not 1 <= len(dimensions) <= 3
+                or any(type(d) is not int or not 0 < d < (1 << 63) for d in dimensions)
             ):
-                self.fail(node, f"{name} requires a tuple of one to three positive compile-time integers")
+                self.fail(
+                    node, f"{name} requires a tuple of one to three positive compile-time integers"
+                )
             geometry.append(dimensions + (1,) * (3 - len(dimensions)))
         shared = keywords.get("shared_memory", 0)
         if type(shared) is not int or not 0 <= shared < (1 << 63):
             self.fail(node, "shared_memory requires nonnegative compile-time bytes")
         signature, constants, operands = {}, {}, []
         from ..types import ConstexprType
+
         for parameter, argument in zip(parameters, node.args[1:]):
             annotation = definition.annotations.get(parameter.arg)
             if isinstance(annotation, str) or annotation is None:
@@ -480,16 +616,20 @@ class FunctionEmitter:
         bound = bind(definition, signature, constants)
         specialization = self.module.specialize(definition, bound)
         grid, block = geometry
-        grid_text, block_text = ", ".join(map(str, grid)), ", ".join(map(str, block))
-        text = (f'"ckl.dispatch"({", ".join(v.name for v in operands)}) {{'
-                f'kernel = @{specialization.symbol}, grid = array<i64: {grid_text}>, '
-                f'block = array<i64: {block_text}>, shared_memory = {shared} : i64, '
-                f'device = "unassigned:0", capabilities = [], implementation = "{specialization.identity}", '
-                f'operandSegmentSizes = array<i32: {len(operands)}, 0>}} : '
-                f'({", ".join(v.dtype.mlir for v in operands)}) -> !ckl.token')
-        # Completion values are emitted, but memory dependencies are inferred rather than chained.
-        self.emit(text, ScalarType("!ckl.token"), node)
-        return None
+        attributes = {
+            "kernel": ir.FlatSymbolRefAttr.get(specialization.symbol),
+            "grid": ir.DenseI64ArrayAttr.get(grid),
+            "block": ir.DenseI64ArrayAttr.get(block),
+            "shared_memory": ir.IntegerAttr.get(ir.IntegerType.get_signless(64), shared),
+            "device": ir.StringAttr.get("unassigned:0"),
+            "capabilities": ir.ArrayAttr.get([]),
+            "implementation": ir.StringAttr.get(specialization.identity),
+            "operandSegmentSizes": ir.DenseI32ArrayAttr.get([len(operands), 0]),
+        }
+        # Dependencies are inferred from effects rather than chaining completion tokens.
+        self.emit(
+            "ckl.dispatch", ScalarType("!ckl.token"), node, operands=operands, attributes=attributes
+        )
 
     def statements(self, nodes: list[ast.stmt], *, top=False, branch_outer=None):
         for position, node in enumerate(nodes):
@@ -505,7 +645,10 @@ class FunctionEmitter:
                     if value is None:
                         self.fail(node, "launches do not return source values")
                     if branch_outer is not None and target.id in branch_outer:
-                        self.fail(target, "runtime branch results are deferred; write buffers or use branch-local variables")
+                        self.fail(
+                            target,
+                            "runtime branch results are deferred; write buffers or use branch-local variables",
+                        )
                     old = self.env.get(target.id)
                     if isinstance(old, Value) and isinstance(old.dtype, ScalarType):
                         value = self.typed(value, old.dtype, node.value)
@@ -517,36 +660,47 @@ class FunctionEmitter:
                     indices = self.indices(buffer, target)
                     value = self.typed(value, buffer.dtype.dtype, node.value)
                     operands = [value, buffer, *indices]
-                    self.line(f'"ckl.store_element"({", ".join(v.name for v in operands)}) : '
-                              f'({", ".join(v.dtype.mlir for v in operands)}) -> ()', node)
+                    self.operation("ckl.store_element", node, operands=operands)
                 else:
                     self.fail(target, "assignment requires a local name or indexed buffer element")
             elif isinstance(node, ast.If):
                 predicate = self.expression(node.test)
                 if type(predicate) is bool:
-                    self.statements(node.body if predicate else node.orelse, branch_outer=branch_outer)
+                    self.statements(
+                        node.body if predicate else node.orelse, branch_outer=branch_outer
+                    )
                     continue
-                if self.definition.kind != "kernel" or not isinstance(predicate, Value) or predicate.dtype != bool_:
-                    self.fail(node.test, "if requires a boolean predicate; program control flow must be compile-time")
+                if (
+                    self.definition.kind != "kernel"
+                    or not isinstance(predicate, Value)
+                    or predicate.dtype != bool_
+                ):
+                    self.fail(
+                        node.test,
+                        "if requires a boolean predicate; program control flow must be compile-time",
+                    )
                 outer = self.env.copy()
-                self.line(f"scf.if {predicate.name} {{")
-                self.indent += 1
-                self.statements(node.body, branch_outer=set(outer))
-                self.line("scf.yield")
-                self.indent -= 1
+                branch = self.operation("scf.if", node, operands=[predicate], regions=2)
+                then_block = branch.regions[0].blocks.append()
+                with ir.InsertionPoint(then_block):
+                    self.statements(node.body, branch_outer=set(outer))
+                    self.operation("scf.yield", node)
                 self.env = outer.copy()
                 if node.orelse:
-                    self.line("} else {")
-                    self.indent += 1
-                    self.statements(node.orelse, branch_outer=set(outer))
-                    self.line("scf.yield")
-                    self.indent -= 1
-                self.line("}", node)
+                    else_block = branch.regions[1].blocks.append()
+                    with ir.InsertionPoint(else_block):
+                        self.statements(node.orelse, branch_outer=set(outer))
+                        self.operation("scf.yield", node)
                 self.env = outer
             elif isinstance(node, ast.For):
                 self.for_loop(node, branch_outer)
             elif isinstance(node, ast.Expr):
-                if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str) and position == 0 and top:
+                if (
+                    isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)
+                    and position == 0
+                    and top
+                ):
                     continue  # source docstring
                 if not isinstance(node.value, ast.Call) or self.expression(node.value) is not None:
                     self.fail(node, "expression statements must be kernel launches")
@@ -556,16 +710,26 @@ class FunctionEmitter:
                 self.fail(node, f"unsupported statement: {type(node).__name__}")
 
 
-def lower_program(definition: Definition, signature, constants, *, verify=False, ckl_opt=None):
+def lower_program(
+    definition: Definition, signature, constants, *, verify=False, ckl_opt=None
+) -> LoweredProgram:
+    """
+    Lower a CKL program definition to MLIR.
+    Returns a LoweredProgram object containing the MLIR text, bound signature, kernel symbols, and a unique key.
+    """
     bound = bind(definition, signature, constants)
-    module = ModuleEmitter()
     program_identity = identity(definition, bound)
-    host = FunctionEmitter(module, definition, bound).build("program_" + program_identity[:24])
-    kernels = [body for _, body in module.kernels.values()]
-    mlir = "module {\n" + "\n\n".join([*kernels, host]) + "\n}\n"
-    semantic = re.sub(r' loc\("(?:[^"\\]|\\.)*":\d+:\d+\)', "", mlir)
-    key = hashlib.sha256((program_identity + semantic).encode()).hexdigest()
-    result = LoweredProgram(mlir, bound, tuple(s for s, _ in module.kernels.values()), key)
+    with ir.Context() as context, ir.Location.unknown():
+        # CKL ops use the generic builder; their native verifier runs in ckl-opt/compiler.
+        context.allow_unregistered_dialects = True
+        module = ModuleEmitter()
+        FunctionEmitter(module, definition, bound).build("program_" + program_identity[:24])
+        # Stable printing keeps source locations separate from the semantic cache identity.
+        module.ir.operation.verify()
+        mlir = module.ir.operation.get_asm(enable_debug_info=True, use_local_scope=True) + "\n"
+        semantic = module.ir.operation.get_asm(enable_debug_info=False, use_local_scope=True)
+        key = hashlib.sha256((program_identity + semantic).encode()).hexdigest()
+        result = LoweredProgram(mlir, bound, tuple(s for s, _ in module.kernels.values()), key)
     if verify:
         result.verify(ckl_opt=ckl_opt)
     return result

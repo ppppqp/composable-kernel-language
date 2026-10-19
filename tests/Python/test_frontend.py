@@ -86,7 +86,8 @@ class FrontendTest(unittest.TestCase):
         self.assertIn("grid = array<i64: 2, 1, 1>", result.mlir)
         self.assertIn("operandSegmentSizes = array<i32: 3, 0>", result.mlir)
         self.assertIn("scf.if", result.mlir)
-        self.assertIn('device = "unassigned:0", capabilities = []', result.mlir)
+        self.assertIn('device = "unassigned:0"', result.mlir)
+        self.assertIn("capabilities = []", result.mlir)
         self.assertIn("test_frontend.py", result.mlir)
         self.assertEqual(result.diagnostics, ())
 

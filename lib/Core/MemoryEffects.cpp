@@ -1,10 +1,10 @@
 #include "ckl/Core/MemoryEffects.h"
 
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "mlir/Interfaces/ViewLikeInterface.h"
 
 using namespace mlir;
 using namespace mlir::ckl;
@@ -65,6 +65,12 @@ bool mlir::ckl::isAllocationValue(Value value) {
 }
 
 Value mlir::ckl::getBaseResource(Value value) {
+  /*
+  Alias analysis for CKL resources. This function traverses the chain of view-like operations to
+  find the base resource that a given value ultimately refers to. It uses a SmallPtrSet to track
+  visited operations and avoid infinite loops in case of cycles. The function returns the base
+  resource value, which is the original allocation or resource that the input value is derived from.
+  */
   SmallPtrSet<Operation *, 8> visited;
   while (Operation *definition = value.getDefiningOp()) {
     if (!visited.insert(definition).second)

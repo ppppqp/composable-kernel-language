@@ -46,21 +46,21 @@ add_test(
 if(CKL_ENABLE_MLIR)
   add_test(NAME ckl-cuda-frontend-runtime
     COMMAND ${CMAKE_COMMAND} -E env
-      "PYTHONPATH=${PROJECT_SOURCE_DIR}/python"
+      "PYTHONPATH=${PROJECT_SOURCE_DIR}/python:${CKL_MLIR_PYTHON_PATH}:$ENV{PYTHONPATH}"
       "CKL_NATIVE_LIBRARY=$<TARGET_FILE:CKLCompiler>"
       ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_frontend_runtime.py"
       --toolkit "${CUDAToolkit_BIN_DIR}/.." --chip "sm_${CKL_RUNTIME_TEST_ARCH}")
   set_tests_properties(ckl-cuda-frontend-runtime PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME ckl-cuda-pointwise-fusion
     COMMAND ${CMAKE_COMMAND} -E env
-      "PYTHONPATH=${PROJECT_SOURCE_DIR}/python"
+      "PYTHONPATH=${PROJECT_SOURCE_DIR}/python:${CKL_MLIR_PYTHON_PATH}:$ENV{PYTHONPATH}"
       "CKL_NATIVE_LIBRARY=$<TARGET_FILE:CKLCompiler>"
       ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_pointwise_fusion.py"
       --toolkit "${CUDAToolkit_BIN_DIR}/.." --chip "sm_${CKL_RUNTIME_TEST_ARCH}")
   set_tests_properties(ckl-cuda-pointwise-fusion PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME ckl-cuda-kernel-loops
     COMMAND ${CMAKE_COMMAND} -E env
-      "PYTHONPATH=${PROJECT_SOURCE_DIR}/python"
+      "PYTHONPATH=${PROJECT_SOURCE_DIR}/python:${CKL_MLIR_PYTHON_PATH}:$ENV{PYTHONPATH}"
       "CKL_NATIVE_LIBRARY=$<TARGET_FILE:CKLCompiler>"
       ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_kernel_loops.py"
       --toolkit "${CUDAToolkit_BIN_DIR}/.." --chip "sm_${CKL_RUNTIME_TEST_ARCH}")

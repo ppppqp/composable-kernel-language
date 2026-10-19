@@ -6,7 +6,7 @@ Broader control-flow and asynchronous runtime APIs remain subsequent design stag
 ## Implemented subset
 
 The decorators, type declarations, `BufferSpec`, and `.lower(signature=..., constants=...)` are
-implemented. The authoring example below lowers without a GPU or MLIR Python bindings. Optional
+implemented. The authoring example below lowers without a GPU, using upstream MLIR Python bindings. Optional
 `.verify(ckl_opt=...)` and `.analyze(*passes, ckl_opt=...)` invoke the native optimizer; analysis
 returns the existing `CompiledModule` with its `.mlir` output.
 
@@ -285,13 +285,19 @@ Keep source capture, type/shape resolution, AST checking, and IR emission separa
 4. Lower typed kernel control flow and memory operations, then program allocations and dispatches.
 5. Verify emitted IR and reuse the existing effect/graph passes.
 
-Start with deterministic textual MLIR emission to keep frontend authoring independent of MLIR
-Python bindings. A scoped SSA/name builder handles blocks, values, types, and source locations;
-use centralized escaping for symbols and strings. Generated identifiers use compiler-controlled
-names, not arbitrary Python strings. Verification through `ckl-opt` is authoritative before
-backend compilation. Direct MLIR Python construction can be evaluated later without changing the
-source model.
+The emitter constructs MLIR directly with `mlir.ir` and an `IRBuilder` wrapping
+`Operation.create` at scoped `InsertionPoint`s. Values carry actual SSA handles; loops and
+branches own regions/blocks. Types, attributes, and file locations are built through binding
+APIs rather than assembling operation text. CKL operations use the generic builder with
+unregistered dialects allowed in the Python context. Upstream operations are verified before
+printing; `ckl-opt` and the native compiler provide authoritative CKL verification. MLIR's
+location-free printer supplies semantic cache input, so moving source files does not change
+specialization identity.
 
+Use the upstream `mlir` package from the same LLVM/MLIR build used by CKL. For a build tree,
+add `build/tools/mlir/python_packages/mlir_core` to `PYTHONPATH`. CMake's
+`CKL_MLIR_PYTHON_PATH` selects that directory for tests. The unrelated PyPI package named
+`mlir` is not a substitute.
 Proposed modules under `python/ckl/` are `types.py`, `frontend/source.py`, `frontend/checker.py`, and
 `frontend/emitter.py`. The current `compiler.py` stays responsible for optimizer invocation and
 raw compiler artifacts. No runtime, framework adapter, or foreign compiler dependency belongs in

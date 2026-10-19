@@ -53,7 +53,7 @@ def main():
                        for x, y in zip(actual, expected)), (count, mode, actual, expected)
         try:
             bound.run(mode="graph", batch_size=1000001)
-        except RuntimeError as error:
+        except ValueError as error:
             assert "one million" in str(error)
         else:
             raise AssertionError("oversized repeated plan accepted")
