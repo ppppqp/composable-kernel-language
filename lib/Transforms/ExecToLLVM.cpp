@@ -72,7 +72,9 @@ public:
         StringRef kind = slot.getAs<StringAttr>("kind").getValue();
         if (kind == "resource") {
           call("ckl_argument_resource", {frame,
-               number(resources.at(slot.getAs<StringAttr>("resource").getValue()))});
+               number(resources.at(slot.getAs<StringAttr>("resource").getValue())),
+               number(slot.getAs<IntegerAttr>("byte_offset") ?
+                      slot.getAs<IntegerAttr>("byte_offset").getInt() : 0)});
           continue;
         }
         Value value;

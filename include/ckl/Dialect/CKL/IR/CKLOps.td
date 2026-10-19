@@ -109,6 +109,16 @@ def CKL_ViewOp : CKL_Op<"view", [Pure, ViewLikeOpInterface,
   }];
 }
 
+def CKL_SubviewOp : CKL_Op<"subview", [Pure, ViewLikeOpInterface]> {
+  let summary = "a static contiguous slice, with an element offset relative to its source";
+  let arguments = (ins AnyMemRef:$source, I64Attr:$offset);
+  let results = (outs AnyMemRef:$result);
+  let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getSource(); }
+  }];
+}
+
 def CKL_DispatchOp : CKL_Op<"dispatch", [AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<DispatchOpInterface, ["getArgumentABI"]>]> {
   let summary = "describes a schedulable GPU kernel invocation";

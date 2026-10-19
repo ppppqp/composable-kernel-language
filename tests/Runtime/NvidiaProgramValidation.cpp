@@ -35,12 +35,12 @@ void entry(void **packed) {
   resource(frame, 3, 0, 0, nullptr);
   auto kernel = symbol<void (*)(void *, const char *, uint64_t, uint64_t, uint64_t,
                                uint64_t, uint64_t, uint64_t, uint64_t)>("ckl_kernel");
-  auto argument = symbol<void (*)(void *, uint64_t)>("ckl_argument_resource");
+  auto argument = symbol<void (*)(void *, uint64_t, uint64_t)>("ckl_argument_resource");
   for (uint64_t id : {2, 5}) {
     kernel(frame, "join", 1, 1, 1, 32, 1, 1, 0);
-    argument(frame, id == 2 ? 0 : 3);
-    argument(frame, 1);
-    argument(frame, id == 2 ? 3 : 2);
+    argument(frame, id == 2 ? 0 : 3, 0);
+    argument(frame, 1, 0);
+    argument(frame, id == 2 ? 3 : 2, 0);
     symbol<void (*)(void *, const void *, uint64_t)>("ckl_argument_value")(
         frame, args[3], sizeof(int32_t));
     if (id == 5)
@@ -50,9 +50,9 @@ void entry(void **packed) {
 }
 void failingEntry(void **packed) {
   void *frame = *static_cast<void **>(packed[0]);
-  auto argument = symbol<void (*)(void *, uint64_t)>("ckl_argument_resource");
-  argument(frame, 999); // Records an error rather than unwinding through JIT code.
-  argument(frame, 0);   // Subsequent callbacks must remain no-ops.
+  auto argument = symbol<void (*)(void *, uint64_t, uint64_t)>("ckl_argument_resource");
+  argument(frame, 999, 0); // Records an error rather than unwinding through JIT code.
+  argument(frame, 0, 0);   // Subsequent callbacks must remain no-ops.
 }
 } // namespace
 

@@ -24,8 +24,9 @@ struct KernelSummary {
   // first argument.
   SmallVector<unsigned> argumentEffects;
 
-  // unknownRegions[i] is true if the kernel may read or write to an unknown region
-  SmallVector<bool> unknownRegions;
+  // Regions are relative to the corresponding formal resource; multiple
+  // accesses merge to a conservative enclosing interval (or whole/unknown).
+  SmallVector<Attribute> regions;
 
   // orderingScopes is a list of scopes that the kernel synchronizes on.
   SmallVector<std::string> orderingScopes;
@@ -48,7 +49,7 @@ public:
 
     KernelSummary summary;
     summary.argumentEffects.resize(function.getNumArguments());
-    summary.unknownRegions.resize(function.getNumArguments());
+    summary.regions.resize(function.getNumArguments());
     // TODO: Do we really have external functions?
     if (function.isExternal()) {
       markUnknown(summary, function);
@@ -93,18 +94,20 @@ private:
       if (!isResourceType(function.getArgument(index).getType()))
         continue;
       summary.argumentEffects[index] |= Read | Write;
-      summary.unknownRegions[index] = true;
+      summary.regions[index] = StringAttr::get(function->getContext(), "unknown");
     }
   }
 
   LogicalResult addEffect(Value value, unsigned bits, FunctionOpInterface function,
-                          KernelSummary &summary, Operation *source, bool unknownRegion = false) {
+                          KernelSummary &summary, Operation *source, Attribute region = {}) {
     Value base = getBaseResource(value);
     if (auto argument = dyn_cast<BlockArgument>(base)) {
       if (argument.getOwner() == &function.getFunctionBody().front()) {
         summary.argumentEffects[argument.getArgNumber()] |= bits;
-        summary.unknownRegions[argument.getArgNumber()] =
-            summary.unknownRegions[argument.getArgNumber()] || unknownRegion;
+        if (!region) region = StringAttr::get(source->getContext(), "whole");
+        region = composeAccessRegion(value, region);
+        auto &existing = summary.regions[argument.getArgNumber()];
+        existing = mergeAccessRegions(existing, region);
         return success();
       }
     }
@@ -136,7 +139,7 @@ private:
     for (auto [index, actual] : llvm::enumerate(actuals)) {
       unsigned effects = calleeSummary->argumentEffects[index];
       if (effects && failed(addEffect(actual, effects, function, summary, operation,
-                                      calleeSummary->unknownRegions[index])))
+                                      calleeSummary->regions[index])))
         return failure();
     }
     return success();
@@ -217,19 +220,15 @@ private:
             return failure();
           continue;
         }
-        bool unknownRegion = false;
-        if (auto regionInterface = dyn_cast<AccessRegionOpInterface>(operation)) {
-          StringAttr region = regionInterface.getAccessRegion(value);
-          if (!region || (region.getValue() != "whole" && region.getValue() != "unknown")) {
-            if (failed(handleUnknown(operation, function, summary,
-                                     "access-region interface returned an unsupported region")))
-              return failure();
-            continue;
-          }
-          unknownRegion = region.getValue() == "unknown";
-        }
+        Attribute region = StringAttr::get(operation->getContext(), "whole");
+        if (auto interface = dyn_cast<AccessRegionOpInterface>(operation))
+          region = interface.getAccessRegion(value);
+        if (!region || (!isa<DictionaryAttr>(region) &&
+            region != StringAttr::get(operation->getContext(), "whole") &&
+            region != StringAttr::get(operation->getContext(), "unknown")))
+          return handleUnknown(operation, function, summary, "invalid access region");
         // add the effect to current kernel
-        if (failed(addEffect(value, bits, function, summary, operation, unknownRegion)))
+        if (failed(addEffect(value, bits, function, summary, operation, region)))
           return failure();
       }
     }
@@ -274,7 +273,7 @@ DictionaryAttr materializeSummary(MLIRContext *context, FunctionOpInterface func
         builder.getNamedAttr("arg", builder.getI64IntegerAttr(index)),
         builder.getNamedAttr("effects", builder.getArrayAttr(effects)),
         builder.getNamedAttr(
-            "region", builder.getStringAttr(summary.unknownRegions[index] ? "unknown" : "whole")),
+            "region", summary.regions[index]),
     }));
   }
 
@@ -317,7 +316,7 @@ struct SummarizeEffectsPass : public PassWrapper<SummarizeEffectsPass, Operation
 
   StringRef getArgument() const final { return "ckl-summarize-effects"; }
   StringRef getDescription() const final {
-    return "Infer whole-buffer interprocedural CKL effect summaries";
+    return "Infer region-aware interprocedural CKL effect summaries";
   }
 
   void runOnOperation() override {

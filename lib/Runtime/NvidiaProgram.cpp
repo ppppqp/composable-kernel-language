@@ -92,8 +92,8 @@ extern "C" void ckl_kernel(void *frame, const char *name, uint64_t gx, uint64_t 
     f.dependencies.clear();
   });
 }
-extern "C" void ckl_argument_resource(void *frame, uint64_t id) {
-  callback(frame, [&](NvidiaInvocationState &f) { f.pending.arguments.add(f.resources.at(id)); });
+extern "C" void ckl_argument_resource(void *frame, uint64_t id, uint64_t offset) {
+  callback(frame, [&](NvidiaInvocationState &f) { f.pending.arguments.add(f.resources.at(id) + offset); });
 }
 extern "C" void ckl_argument_value(void *frame, const void *value, uint64_t bytes) {
   callback(frame, [&](NvidiaInvocationState &f) { f.pending.arguments.addBytes(value, bytes); });

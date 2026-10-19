@@ -85,13 +85,16 @@ void registerRuntimeBindings(nb::module_ &m) {
   nb::class_<Buffer>(m, "Buffer")
       .def_prop_ro("address", [](const Buffer &b) { return b.buffer.address(); })
       .def_prop_ro("nbytes", [](const Buffer &b) { return b.buffer.size(); })
+      .def("slice", [](const Buffer &b, uint64_t offset, uint64_t length) {
+        return std::make_shared<Buffer>(Buffer{b.device, b.buffer.slice(offset, length)});
+      }, nb::keep_alive<0, 1>())
       .def("copy_from_host", [](Buffer &b, nb::handle data) { copyBuffer(b, data, true); })
       .def("copy_to_host", [](Buffer &b, nb::handle data) { copyBuffer(b, data, false); });
   nb::class_<Invocation>(m, "Invocation")
       .def("run", &NvidiaInvocation::run, nb::call_guard<nb::gil_scoped_release>())
       .def("benchmark", &NvidiaInvocation::benchmark, nb::call_guard<nb::gil_scoped_release>())
       .def_prop_ro("node_count", [](const Invocation &f) { return f.nodeCount(); });
-  m.def("bind", &bindProgram, nb::keep_alive<0, 1>());
+  m.def("bind", &bindProgram, nb::keep_alive<0, 1>(), nb::keep_alive<0, 3>());
   m.def("cuda_available", &nvidiaDeviceAvailable);
   m.def("profiler_start", &nvidiaProfilerStart);
   m.def("profiler_stop", &nvidiaProfilerStop);

@@ -73,6 +73,14 @@ if(CKL_ENABLE_MLIR)
       ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_kernel_loops.py"
       --toolkit "${CUDAToolkit_BIN_DIR}/.." --chip "sm_${CKL_RUNTIME_TEST_ARCH}")
 
+  add_test(NAME ckl-cuda-subviews
+    COMMAND ${CMAKE_COMMAND} -E env
+      "PYTHONPATH=${PROJECT_SOURCE_DIR}/python:${CKL_MLIR_PYTHON_PATH}:$ENV{PYTHONPATH}"
+      "CKL_NATIVE_LIBRARY=$<TARGET_FILE:CKLCompiler>"
+      ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_subviews_runtime.py"
+      --toolkit "${CUDAToolkit_BIN_DIR}/.." --chip "sm_${CKL_RUNTIME_TEST_ARCH}")
+  set_tests_properties(ckl-cuda-subviews PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+
 endif() # CKL_ENABLE_MLIR
 endif() # CKL_ENABLE_CUDA_RUNTIME
 

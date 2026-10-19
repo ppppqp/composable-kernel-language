@@ -152,8 +152,11 @@ report read/write effects and ordering scope. Synchronization and observable imp
 be modeled explicitly. Unsupported operations are rejected in strict mode.
 
 The internal access model records kind, base resource, region, ordering scope, and provenance.
-Initial regions are whole-buffer or unknown. Later intervals/strided/affine regions are an
-optimization aid; lack of precision cannot make a program incorrect.
+Regions are whole-buffer, unknown, or static byte intervals. Contiguous CKL subviews and constant
+indexed accesses provide interval precision, composed through calls and dispatch binding. Merged
+accesses may use a conservative enclosing interval. Disjoint intervals remove hazards only with
+a common proven base; distinct external arguments remain may-alias. Dynamic/strided/affine
+precision remains future work; lack of precision cannot make a program incorrect.
 
 Each compiler-visible allocation has a fresh resource identity. Casts and views retain base
 identity. Caller-owned arguments may alias unless a verified source/ABI assertion proves otherwise.
@@ -203,8 +206,9 @@ unknown resources, invalid slots, unsupported packing, and invalid dependency re
 
 The current executable subset requires unconditional dispatches in one host entry block. Nested
 host branches/loops and multi-block CFGs fail until predicates and trip counts have an executable
-representation. Whole-buffer alias normalization does not erase argument offsets: views/subviews
-and non-identity layouts fail direct-pointer lowering until CKL implements view-aware packing.
+representation. Contiguous static CKL subviews retain base identity and verified byte offsets and
+lengths through direct-pointer packing. Dynamic/strided or unmodeled upstream views and
+non-identity layouts fail executable lowering.
 
 The current host path supports pointer resources and i32/i64/f32/f64 scalar bindings/constants.
 Computed host scalars, dynamic geometry, and unknown ABIs fail with diagnostics. Backend lowering

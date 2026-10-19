@@ -6,16 +6,17 @@ include "mlir/IR/OpBase.td"
 def AccessRegionOpInterface : OpInterface<"AccessRegionOpInterface"> {
   let cppNamespace = "::mlir::ckl";
   let description = [{
-    Optionally refines a memory effect to a region of its resource. Milestone 1
-    supports the conservative `whole` region; CKL operations may override the method
-    as more precise region representations are introduced.
+    Refines a memory effect to whole, unknown, or a dictionary containing static
+    byte offset and length relative to the accessed operand. Indexed accesses
+    with constant indices expose one element; other indexed accesses cover the
+    operand. Analysis composes this region through supported contiguous subviews.
   }];
   let methods = [
     InterfaceMethod<
-      "Returns `whole` or `unknown` for an accessed resource.",
-      "::mlir::StringAttr", "getAccessRegion",
+      "Returns whole, unknown, or a byte interval relative to the accessed operand.",
+      "::mlir::Attribute", "getAccessRegion",
       (ins "::mlir::Value":$resource), [{}], [{
-        return ::mlir::StringAttr::get($_op->getContext(), "whole");
+        return ::mlir::ckl::getOperationAccessRegion($_op, resource);
       }]>
   ];
 }

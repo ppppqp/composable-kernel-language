@@ -42,6 +42,7 @@ INTRINSICS = {
         "exp",
         "rsqrt",
         "select",
+        "subview",
     )
 }
 

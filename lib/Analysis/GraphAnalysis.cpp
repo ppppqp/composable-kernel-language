@@ -28,7 +28,7 @@ namespace {
 struct BoundAccess {
   Value resource;
   unsigned bits = 0;
-  StringRef region;
+  Attribute region;
 };
 
 // represents a graph node before it is materialized as ckl.graph_node
@@ -330,9 +330,9 @@ FailureOr<NodeInfo> bindDispatch(DispatchOpInterface dispatch, func::FuncOp host
       return failure();
     Value resource = getBaseResource(actuals[argument]);
     ArrayAttr effects = access.getAs<ArrayAttr>("effects");
-    StringAttr region = access.getAs<StringAttr>("region");
+    Attribute region = composeAccessRegion(actuals[argument], access.get("region"));
     // record the access in the node and materialize it for the graph node
-    node.accesses.push_back({resource, parseEffects(effects), region.getValue()});
+    node.accesses.push_back({resource, parseEffects(effects), region});
     accesses.push_back(builder.getDictionaryAttr({
         builder.getNamedAttr("arg", builder.getI64IntegerAttr(argument)),
         builder.getNamedAttr("effects", effects),
@@ -379,7 +379,7 @@ LogicalResult appendLifetimeNode(Operation *operation, func::FuncOp host,
       return operation->emitError("lifetime effect has no addressable resource");
     resource = getBaseResource(resource);
     // record the access in the node
-    node.accesses.push_back({resource, bits, "whole"});
+    node.accesses.push_back({resource, bits, builder.getStringAttr("whole")});
     accesses.push_back(builder.getDictionaryAttr({
         builder.getNamedAttr(
             "effects", builder.getArrayAttr({builder.getStringAttr(stringifyAccessEffect(bits))})),
@@ -471,16 +471,19 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function, bool reuseStora
               !hasConflictingAccesses(lhs.bits, rhs.bits))
             // if the two accesses do not alias or do not conflict, no edge is needed
             continue;
+          bool lifetime = ((lhs.bits | rhs.bits) & (Allocate | Free)) != 0;
+          if (!lifetime && alias == WholeBufferAliasResult::MustAlias &&
+              areDisjointAccessRegions(lhs.region, rhs.region))
+            continue;
           std::string lhsName = resourceName(lhs.resource, function, allocationIds);
           std::string rhsName = resourceName(rhs.resource, function, allocationIds);
           std::string resource = lhsName == rhsName ? lhsName : lhsName + "~" + rhsName;
           StringRef aliasName = alias == WholeBufferAliasResult::MustAlias ? "must" : "may";
-          bool lifetime = ((lhs.bits | rhs.bits) & (Allocate | Free)) != 0;
           // if the two accesses alias and conflict, add an edge with a reason describing the
           // conflict
           addReason(from, to,
                     makeReason(builder, lifetime ? "lifetime" : "memory",
-                               lifetime ? "resource lifetime" : "whole-buffer conflict", resource,
+                               lifetime ? "resource lifetime" : "overlapping resource access", resource,
                                aliasName, nodes[from].source, nodes[to].source));
         }
       }
@@ -561,7 +564,12 @@ LogicalResult buildGraph(ModuleOp module, func::FuncOp function, bool reuseStora
           Value base = getBaseResource(argument);
           StringRef packing = "direct_pointer";
           if (base != argument) {
-            packing = "unsupported_view";
+            if (auto range = getStaticResourceRange(argument)) {
+              attributes.push_back(builder.getNamedAttr("byte_offset", range.get("offset")));
+              attributes.push_back(builder.getNamedAttr("byte_length", range.get("length")));
+            } else {
+              packing = "unsupported_view";
+            }
           } else if (auto type = dyn_cast<MemRefType>(argument.getType());
                      !type || !type.getLayout().isIdentity()) {
             packing = "unsupported_layout";

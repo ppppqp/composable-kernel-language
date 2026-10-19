@@ -86,7 +86,8 @@ build-mlir/tools/ckl-opt/ckl-opt tests/Runtime/host-plan.mlir \
 
 The host JIT consumes verified `ckl_exec.plan` IR. The current executable subset requires
 static launch dimensions and base identity-layout resources. Conditional dispatches, dynamic
-resources, view-derived pointer arguments, and unsupported ABI packing fail with diagnostics.
+resources, dynamic/strided views, and unsupported ABI packing fail with diagnostics. Static contiguous
+program subviews preserve their byte offsets through analysis and pointer packing.
 Compiler-owned effect summaries are always recomputed from kernel bodies.
 
 Install and test the Python utilities:

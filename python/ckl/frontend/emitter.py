@@ -425,6 +425,20 @@ class FunctionEmitter:
             value = self.emit("ckl.alloc", spec, node)
             self.temporaries.append(value)
             return value
+        if name == "subview":
+            if self.definition.kind != "program":
+                self.fail(node, "subview is currently supported only in programs")
+            if len(args) != 1 or set(keywords) != {"offset", "shape"} or not isinstance(args[0], Value) or not isinstance(args[0].dtype, BufferSpec):
+                self.fail(node, "use subview(buffer, offset=element_offset, shape=shape_tuple)")
+            source, offset = args[0], keywords["offset"]
+            try:
+                spec = BufferSpec(keywords["shape"], source.dtype.dtype)
+            except (TypeError, ValueError) as error:
+                self.fail(node, str(error))
+            if type(offset) is not int or offset < 0 or offset >= (1 << 63) or offset + math.prod(spec.shape) > math.prod(source.dtype.shape):
+                self.fail(node, "subview offset/shape must be constant and within the source")
+            return self.emit("ckl.subview", spec, node, operands=[source],
+                             attributes={"offset": ir.IntegerAttr.get(ir.IntegerType.get_signless(64), offset)})
         if name == "cast":
             if len(args) != 2 or keywords or not isinstance(args[1], ScalarType):
                 self.fail(node, "use cast(value, scalar_type)")

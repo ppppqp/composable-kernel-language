@@ -141,6 +141,14 @@ unspecified native node indices and does not support indexed kernel-parameter up
 ordered lifetimes. It preserves device bodies and dependency inference, enabling a storage-only
 ablation. The graph pass exposes the same choice as `--ckl-build-graph=reuse-storage=false`.
 
+## Subview packing
+
+Static contiguous program `ckl.subview` operations retain identity-layout kernel argument types.
+Executable descriptors carry `byte_offset` and `byte_length`, checked against the base resource
+and element alignment before host lowering. `ckl_argument_resource` packs the base address plus
+that offset; kernel indexing starts at zero within the logical view. Unmodeled `memref.subview`
+and other layouts remain rejected. Runtime `DeviceBuffer.subview` wraps a bounded native slice.
+
 ## Pointwise-chain fusion
 
 `.compile(target=...)` enables conservative pointwise fusion by default. Use
@@ -204,7 +212,7 @@ The initial ABI accepts static identity-layout default-space memrefs and f32/f64
 and elements. Each buffer occupies one pointer slot; shape and stride are compile-time values.
 Kernel IR and the Python frontend support structured kernel loops with scalar loop-carried values.
 Constant program loops unroll during specialization; runtime host/program control flow remains deferred.
-Dynamic shapes, views, nontrivial layouts, device calls, atomics, synchronization, and legacy
+Dynamic shapes, dynamic/strided views, nontrivial layouts, device calls, atomics, synchronization, and legacy
 whole-buffer operations are unsupported. Host composition is straight-line with static launches.
 Kernel authors guard partial blocks; the compiler does not insert bounds checks automatically.
 The HIP runtime remains available for infrastructure tests; the in-process source compiler is CUDA-only.

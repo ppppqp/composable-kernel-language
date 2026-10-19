@@ -139,6 +139,18 @@ class DeviceBuffer(_ContextManager):
     def nbytes(self):
         return self._native_resource.nbytes
 
+    def subview(self, *, offset: int, shape: tuple[int, ...]) -> DeviceBuffer:
+        """Create a bounded contiguous view; offset is in elements of this buffer."""
+        spec = BufferSpec(shape, self.spec.dtype)
+        size = _byte_count(spec)
+        if type(offset) is not int or offset < 0:
+            raise ValueError("subview requires a nonnegative element offset")
+        byte_offset = offset * _SCALARS[self.spec.dtype][1]
+        if byte_offset > self.nbytes or size > self.nbytes - byte_offset:
+            raise ValueError("subview exceeds its source buffer")
+        resource = self._native_resource.slice(byte_offset, size)
+        return DeviceBuffer(self.device, resource, spec, self)
+
     def copy_from_host(self, source):
         view = memoryview(source).cast("B")
         if view.nbytes != self.nbytes:

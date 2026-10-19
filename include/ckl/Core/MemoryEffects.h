@@ -3,6 +3,7 @@
 
 #include "llvm/ADT/StringRef.h"
 #include "mlir/IR/Value.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 namespace mlir {
@@ -29,6 +30,14 @@ bool isAllocationValue(Value value);
 
 /// Strip view-like operations and return the underlying whole-buffer resource.
 Value getBaseResource(Value value);
+
+/// Region attributes are "whole", "unknown", or {offset, length} in bytes.
+Attribute getOperationAccessRegion(Operation *operation, Value resource);
+Attribute composeAccessRegion(Value resource, Attribute relative);
+Attribute mergeAccessRegions(Attribute lhs, Attribute rhs);
+bool areDisjointAccessRegions(Attribute lhs, Attribute rhs);
+/// Static byte interval of a contiguous value relative to its base, or null.
+DictionaryAttr getStaticResourceRange(Value value);
 
 enum class WholeBufferAliasResult { NoAlias, MayAlias, MustAlias };
 

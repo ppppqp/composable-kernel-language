@@ -9,6 +9,7 @@ add_mlir_dialect_library(CKLDialect
   MLIRCKLOpsIncGen
 
   LINK_LIBS PUBLIC
+  CKLCore
   MLIRFuncDialect
   MLIRInferTypeOpInterface
   MLIRIR

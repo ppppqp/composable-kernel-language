@@ -7,6 +7,20 @@ using namespace mlir::ckl::exec;
 
 namespace {
 
+bool matchesByteLength(MemRefType type, int64_t length) {
+  if (!type || !type.hasStaticShape() || !type.getLayout().isIdentity() ||
+      !type.getElementType().isIntOrFloat()) return false;
+  int64_t bits = type.getElementType().getIntOrFloatBitWidth();
+  if (!bits || bits % 8 || length <= 0 || length % (bits / 8)) return false;
+  // Divide the known byte count rather than multiplying potentially huge shapes.
+  int64_t elements = length / (bits / 8);
+  for (int64_t dimension : type.getShape()) {
+    if (dimension <= 0 || elements % dimension) return false;
+    elements /= dimension;
+  }
+  return elements == 1;
+}
+
 LogicalResult verifyDimensions(Operation *operation, ArrayRef<int64_t> dimensions,
                                StringRef name) {
   if (dimensions.size() != 3)
@@ -126,6 +140,19 @@ LogicalResult PlanOp::verify() {
         auto resource = argument.getAs<StringAttr>("resource");
         if (!resource || !resources.contains(resource.getValue()))
           return kernel.emitOpError("argument references an unknown resource");
+        auto offset = argument.getAs<IntegerAttr>("byte_offset");
+        auto length = argument.getAs<IntegerAttr>("byte_length");
+        if (offset || length) {
+          IntegerAttr bound;
+          for (ResourceOp r : getBody().front().getOps<ResourceOp>())
+            if (r.getName() == resource.getValue()) bound = r.getBytesAttr();
+          auto buffer = dyn_cast<MemRefType>(type.getValue());
+          if (!offset || !length || offset.getInt() < 0 || length.getInt() <= 0 || !bound ||
+              offset.getInt() > bound.getInt() || length.getInt() > bound.getInt() - offset.getInt() ||
+              !matchesByteLength(buffer, length.getInt()) ||
+              offset.getInt() % (buffer.getElementType().getIntOrFloatBitWidth() / 8))
+            return kernel.emitOpError("invalid or out-of-bounds resource byte range");
+        }
         if (kernel.getAbi() == "cuda.direct") {
           auto packing = argument.getAs<StringAttr>("packing");
           if (!packing || packing.getValue() != "direct_pointer")

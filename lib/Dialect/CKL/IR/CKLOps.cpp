@@ -191,3 +191,17 @@ LogicalResult DispatchOp::verify() {
 
 #define GET_OP_CLASSES
 #include "ckl/Dialect/CKL/IR/CKLOps.cpp.inc"
+
+LogicalResult SubviewOp::verify() {
+  auto source = dyn_cast<MemRefType>(getSource().getType());
+  auto result = dyn_cast<MemRefType>(getResult().getType());
+  auto bytes = getStaticResourceRange(getSource());
+  if (!source || !result || !source.hasStaticShape() || !result.hasStaticShape() ||
+      !source.getLayout().isIdentity() || !result.getLayout().isIdentity() ||
+      source.getElementType() != result.getElementType() ||
+      source.getMemorySpace() != result.getMemorySpace() || !bytes)
+    return emitOpError("requires static contiguous source/result with matching element type and memory space");
+  if (getOffset() < 0 || !getStaticResourceRange(getResult()))
+    return emitOpError("subview is out of bounds or empty");
+  return success();
+}

@@ -1,6 +1,7 @@
 # Python frontend proposal
 
 **Status:** initial AST lowering and in-process CUDA compilation/execution implemented.
+Static contiguous program subviews are implemented.
 Broader control-flow and asynchronous runtime APIs remain subsequent design stages.
 
 ## Implemented subset
@@ -302,6 +303,23 @@ Proposed modules under `python/ckl/` are `types.py`, `frontend/source.py`, `fron
 `frontend/emitter.py`. The current `compiler.py` stays responsible for optimizer invocation and
 raw compiler artifacts. No runtime, framework adapter, or foreign compiler dependency belongs in
 frontend source capture.
+
+## Contiguous subviews
+
+Programs can derive contiguous slices without allocating or copying:
+
+```python
+left = ckl.subview(storage, offset=0, shape=(32,))
+right = ckl.subview(storage, offset=32, shape=(32,))
+```
+
+`offset` is a constant count of source elements, relative to the immediate source. `shape` is a
+constant identity-layout result shape; it may reshape the contiguous span. Nested offsets compose.
+The element type is inherited. Empty, out-of-bounds, dynamic, and strided slices are rejected.
+The initial frontend allows subviews in programs, to pass to kernels; kernel-local subviews are
+deferred. These views preserve base resource identity while exposing byte-range precision to
+analysis and pointer offsets to execution. Runtime `buffer.subview(offset=..., shape=...)`
+provides the equivalent bounded allocation view and retains its parent owner.
 
 ## Initial milestones and acceptance
 

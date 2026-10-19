@@ -46,13 +46,34 @@ Dynamic bounds are the kernel author's responsibility. These operations do not i
 clamping, masking, or bounds traps; an executed out-of-bounds access violates the kernel contract.
 A guarded access in `scf.if` is the initial way to handle partial blocks.
 
-Loads expose a read effect and stores a write effect on the buffer. Effect summaries conservatively
-cover its whole base resource, including accesses under conditionals and loops. Index arithmetic
-does not remove a required dependency. More precise regions remain future work.
+Loads expose a read effect and stores a write effect on the buffer. Effects under conditionals
+and loops are combined conservatively. Constant indices can describe one element; dynamic indices
+cover the operand's complete region. Subviews preserve the operand region relative to its base.
 
 The legacy `ckl.load`/`ckl.store` operations remain analysis-only whole-buffer fixtures. New device
 kernel bodies use `load_element`/`store_element`; a later device lowering must reject legacy
 operations rather than invent an index for them. The CUDA backend now enforces this rejection.
+
+## Static contiguous subviews and access regions
+
+`ckl.subview` has a source memref, an `offset` i64 attribute in source elements, and a result
+memref. Both types have static identity layouts, matching element types and memory spaces.
+The nonempty result span must fit within the source; nested offsets are relative to the immediate
+source. The result shape can differ, but describes a contiguous row-major span. The Python
+frontend exposes this in programs as `ckl.subview(buffer, offset=..., shape=...)`.
+
+`AccessRegionOpInterface.getAccessRegion(resource)` returns an `Attribute`: `"whole"`, `"unknown"`,
+or `{offset = ... : i64, length = ... : i64}` in bytes relative to the accessed operand. Constant
+indexed loads/stores report one element. Other accesses conservatively cover their operand.
+Analysis composes subview offsets, substitutes regions through calls and dispatches, and merges
+multiple accesses to an enclosing interval. Memory-conflict edges can be removed for disjoint
+intervals of the same proven base. May-alias external arguments and unknown views remain
+conservative. Allocation/free effects retain whole-base lifetime ordering, and storage planning
+continues to operate on complete base allocations.
+
+Static contiguous subviews are supported in CUDA program argument packing. Dynamic and strided
+views, upstream views without an implemented offset model, and kernel-local subviews remain
+outside the executable subset.
 
 ## Example and launch model
 

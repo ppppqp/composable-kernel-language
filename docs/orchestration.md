@@ -31,8 +31,11 @@ into interprocedural summaries. Private, nonescaping allocations do not become p
 Compiler-owned summary attributes are recomputed after body changes.
 
 Alias analysis traces views and casts to base resources. Compiler allocations have fresh
-identities; caller-supplied buffers may alias. The first correctness baseline is whole-buffer
-analysis. Region precision is added only when measured false dependencies justify it.
+identities; caller-supplied buffers may alias. Access regions are whole, unknown, or static byte
+intervals. Contiguous CKL subviews compose offsets to the base resource through calls and dispatch
+bindings. Constant indexed accesses expose one-element regions; dynamic indices conservatively
+cover the operand. Multiple accesses merge to an enclosing interval. Disjoint intervals eliminate
+conflicts only for a shared proven base; distinct external arguments remain may-alias.
 
 Strict mode rejects missing semantics. Conservative mode marks unknown operations as reading and
 writing reachable resources and imposing an ordering barrier. This supports diagnostics and
@@ -64,8 +67,9 @@ and the native execution engine JIT-compile its host entry point. See
 
 The current static subset requires unconditional host-entry-block dispatches. Conditional or
 repeated host nodes are rejected until executable IR can represent predicates and trip counts.
-Base identity-layout pointer arguments are supported; views/subviews require offset-aware packing
-and currently fail executable lowering. Supported scalar bindings/constants are i32, i64, f32,
+Base identity-layout pointer arguments and static contiguous `ckl.subview` arguments are supported.
+Subview descriptors retain a verified byte offset and length; host packing adds the offset to the
+base pointer. Dynamic/strided views and unmodeled upstream views fail executable lowering. Supported scalar bindings/constants are i32, i64, f32,
 and f64. Computed host scalars and dynamic launch/resource metadata remain unsupported.
 
 CKL CUDA preparation generates ABI identities and artifact metadata automatically. Some
